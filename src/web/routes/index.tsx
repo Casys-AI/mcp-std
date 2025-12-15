@@ -14,6 +14,10 @@ import {
   StructuralEmergenceIllustration,
   ThreeLoopIllustration,
 } from "../components/FeatureIllustrations.tsx";
+import { HeroRepl } from "../islands/HeroRepl.tsx";
+
+// Feature flag - set to true to show auth UI (Sign in, Dashboard links)
+const SHOW_AUTH = false;
 
 interface LandingPageData {
   latestPosts: Post[];
@@ -138,7 +142,7 @@ export default function LandingPage({ data }: { data: LandingPageData }) {
               <a href="#tech" class="nav-link">Tech</a>
               <a href="/docs" class="nav-link">Docs</a>
               <a href="/blog" class="nav-link">Blog</a>
-              {isCloudMode && <a href="/dashboard" class="nav-link">Dashboard</a>}
+              {SHOW_AUTH && isCloudMode && <a href="/dashboard" class="nav-link">Dashboard</a>}
               <a
                 href="https://github.com/Casys-AI/casys-pml"
                 class="nav-link nav-link-github"
@@ -150,7 +154,7 @@ export default function LandingPage({ data }: { data: LandingPageData }) {
                 </svg>
               </a>
               {/* Auth section: Sign in or Local mode badge */}
-              {isCloudMode
+              {SHOW_AUTH && (isCloudMode
                 ? (
                   user
                     ? (
@@ -187,7 +191,7 @@ export default function LandingPage({ data }: { data: LandingPageData }) {
                     </svg>
                     Local Mode
                   </span>
-                )}
+                ))}
             </nav>
           </div>
         </header>
@@ -235,21 +239,9 @@ export default function LandingPage({ data }: { data: LandingPageData }) {
               </div>
             </div>
 
-            {/* Concrete Example - Visual Proof */}
-            <div class="hero-example">
-              <div class="example-header">
-                <span class="example-badge">Captured Pattern</span>
-                <span class="example-id">#workflow-247</span>
-              </div>
-              <pre class="example-code"><code>{`// Agent discovered this combination
-fetch_data → validate_schema → transform_json
-
-// Now available to all agents as:
-capabilities.use("data_pipeline")`}</code></pre>
-              <div class="example-footer">
-                <span class="example-stat">12 reuses</span>
-                <span class="example-stat">3 agents</span>
-              </div>
+            {/* Interactive REPL - Learning Loop Demo */}
+            <div class="hero-repl-wrapper">
+              <HeroRepl />
             </div>
           </div>
         </main>
@@ -669,7 +661,7 @@ capabilities.use("data_pipeline")`}</code></pre>
                 GitHub
               </a>
               <a href="/docs">Docs</a>
-              {isCloudMode && <a href="/dashboard">Dashboard</a>}
+              {SHOW_AUTH && isCloudMode && <a href="/dashboard">Dashboard</a>}
             </div>
           </div>
         </footer>
@@ -977,6 +969,12 @@ capabilities.use("data_pipeline")`}</code></pre>
             display: flex;
             gap: 1rem;
             flex-wrap: wrap;
+          }
+
+          .hero-repl-wrapper {
+            display: flex;
+            justify-content: center;
+            align-items: center;
           }
 
           /* Buttons */
