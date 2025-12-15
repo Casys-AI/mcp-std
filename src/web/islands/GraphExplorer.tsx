@@ -15,7 +15,7 @@ import CytoscapeGraph, {
   type ViewMode,
 } from "./CytoscapeGraph.tsx";
 import CodePanel from "./CodePanel.tsx";
-import GraphLegendPanel from "../components/ui/molecules/GraphLegendPanel.tsx";
+import GraphLegendPanel, { type NodeMode } from "../components/ui/molecules/GraphLegendPanel.tsx";
 
 interface ToolSearchResult {
   tool_id: string;
@@ -74,7 +74,7 @@ export default function GraphExplorer({ apiBase: apiBaseProp }: GraphExplorerPro
   const [viewMode, setViewMode] = useState<ViewMode>("capabilities");
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [highlightDepth, setHighlightDepth] = useState(1);
-  const [layoutDirection, setLayoutDirection] = useState<"TB" | "LR">("TB");
+  const [nodeMode, setNodeMode] = useState<NodeMode>("definition");
 
   // Server filtering state (for GraphLegendPanel)
   const [servers, setServers] = useState<Set<string>>(new Set());
@@ -665,7 +665,7 @@ export default function GraphExplorer({ apiBase: apiBaseProp }: GraphExplorerPro
           viewMode={viewMode}
           expandedNodes={expandedNodes}
           onExpandedNodesChange={setExpandedNodes}
-          layoutDirection={layoutDirection}
+          nodeMode={nodeMode}
           refreshKey={graphRefreshKey}
         />
 
@@ -683,8 +683,8 @@ export default function GraphExplorer({ apiBase: apiBaseProp }: GraphExplorerPro
           onHighlightDepthChange={setHighlightDepth}
           viewMode={viewMode}
           onViewModeChange={setViewMode}
-          layoutDirection={layoutDirection}
-          onLayoutDirectionChange={setLayoutDirection}
+          nodeMode={nodeMode}
+          onNodeModeChange={setNodeMode}
         />
       </div>
 

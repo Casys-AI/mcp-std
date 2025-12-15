@@ -13,6 +13,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 
+// Tool invocation from API (snake_case)
+interface ApiToolInvocation {
+  id: string;
+  tool: string;
+  ts: number;
+  duration_ms: number;
+  sequence_index: number;
+}
+
 // Types matching the API response (snake_case from server)
 interface ApiNodeData {
   id: string;
@@ -23,6 +32,8 @@ interface ApiNodeData {
   success_rate?: number;
   usage_count?: number;
   tools_count?: number;
+  tools_used?: string[]; // Unique tools (deduplicated)
+  tool_invocations?: ApiToolInvocation[]; // Full sequence with timestamps
   pagerank?: number;
   // Tool fields
   server?: string;
@@ -65,6 +76,15 @@ interface HypergraphApiResponse {
   tools_count: number;
 }
 
+// Tool invocation (internal camelCase)
+interface ToolInvocation {
+  id: string;
+  tool: string;
+  ts: number;
+  durationMs: number;
+  sequenceIndex: number;
+}
+
 // Transformed types for internal use
 interface CapabilityNode {
   id: string;
@@ -75,6 +95,8 @@ interface CapabilityNode {
   communityId?: number;
   codeSnippet?: string;
   toolsCount?: number;
+  toolsUsed?: string[]; // Unique tools (deduplicated)
+  toolInvocations?: ToolInvocation[]; // Full sequence with timestamps
   parentCapabilityId?: string;
 }
 
@@ -87,18 +109,6 @@ interface ToolNode {
   parentCapabilities: string[];
   inputSchema?: Record<string, unknown>;
   description?: string;
-}
-
-interface ToolInvocationNode {
-  id: string;
-  name: string;
-  type: "tool_invocation";
-  tool: string; // Underlying tool ID
-  server: string;
-  parentCapability: string;
-  ts: number;
-  durationMs: number;
-  sequenceIndex: number;
 }
 
 interface Edge {
@@ -115,7 +125,6 @@ interface Edge {
 interface TransformedData {
   capabilities: CapabilityNode[];
   tools: ToolNode[];
-  invocations: ToolInvocationNode[];
   edges: Edge[];
 }
 
@@ -146,8 +155,8 @@ export interface ToolData {
 /** View mode for the graph */
 export type ViewMode = "capabilities" | "tools";
 
-/** Layout direction */
-export type LayoutDirection = "TB" | "LR";
+/** Node mode - definition (generic tools) vs invocation (actual calls) */
+export type NodeMode = "definition" | "invocation";
 
 interface CytoscapeGraphProps {
   apiBase: string;
@@ -160,8 +169,8 @@ interface CytoscapeGraphProps {
   highlightDepth?: number;
   /** Current view mode */
   viewMode?: ViewMode;
-  /** Layout direction (TB = top-bottom, LR = left-right) */
-  layoutDirection?: LayoutDirection;
+  /** Node mode - definition (generic tools) vs invocation (actual calls) */
+  nodeMode?: NodeMode;
   /** Callback when expand/collapse state changes */
   onExpandedNodesChange?: (expandedIds: Set<string>) => void;
   /** External control of expanded nodes */
@@ -207,7 +216,7 @@ export default function CytoscapeGraph({
   pathNodes,
   highlightDepth = 1,
   viewMode = "capabilities",
-  layoutDirection = "TB",
+  nodeMode = "definition",
   onExpandedNodesChange,
   expandedNodes: externalExpandedNodes,
   refreshKey = 0,
@@ -315,17 +324,17 @@ export default function CytoscapeGraph({
 
   // Track previous values for incremental updates
   const prevViewModeRef = useRef(viewMode);
-  const prevLayoutDirectionRef = useRef(layoutDirection);
+  const prevNodeModeRef = useRef(nodeMode);
   const isInitialRenderRef = useRef(true);
 
-  // Re-render when view mode or layout direction change (full re-render)
+  // Re-render when view mode or node mode change (full re-render)
   useEffect(() => {
     if (!rawDataRef.current || !cyRef.current) return;
 
     const viewModeChanged = prevViewModeRef.current !== viewMode;
-    const layoutChanged = prevLayoutDirectionRef.current !== layoutDirection;
+    const nodeModeChanged = prevNodeModeRef.current !== nodeMode;
 
-    if (isInitialRenderRef.current || viewModeChanged || layoutChanged) {
+    if (isInitialRenderRef.current || viewModeChanged || nodeModeChanged) {
       renderGraph(true); // Full render with layout
       isInitialRenderRef.current = false;
     } else {
@@ -334,11 +343,11 @@ export default function CytoscapeGraph({
     }
 
     prevViewModeRef.current = viewMode;
-    prevLayoutDirectionRef.current = layoutDirection;
-  }, [viewMode, expandedNodes, layoutDirection]);
+    prevNodeModeRef.current = nodeMode;
+  }, [viewMode, expandedNodes, nodeMode]);
 
   const getCytoscapeStyles = () => [
-    // Capability nodes (always expanded - bento boxes)
+    // Capability nodes (compound containers - bento boxes)
     {
       selector: 'node[type="capability"]',
       style: {
@@ -355,10 +364,11 @@ export default function CytoscapeGraph({
         color: "data(color)",
         "text-margin-y": -8,
         shape: "roundrectangle",
-        "padding": "20px",
+        // Reduced padding for tighter layout
+        "padding": "15px",
         "compound-sizing-wrt-labels": "include",
-        "min-width": "100px",
-        "min-height": "60px",
+        "min-width": "80px",
+        "min-height": "50px",
       },
     },
     // Tool nodes
@@ -577,7 +587,6 @@ export default function CytoscapeGraph({
       // Transform API response (snake_case) to internal format (camelCase)
       const capabilities: CapabilityNode[] = [];
       const tools: ToolNode[] = [];
-      const invocations: ToolInvocationNode[] = [];
 
       for (const node of apiData.nodes) {
         const d = node.data;
@@ -585,6 +594,15 @@ export default function CytoscapeGraph({
           const usageCount = d.usage_count ?? 0;
           // Only include capabilities that have been used at least once
           if (usageCount > 0) {
+            // Transform tool_invocations from snake_case to camelCase
+            const toolInvocations = d.tool_invocations?.map((inv) => ({
+              id: inv.id,
+              tool: inv.tool,
+              ts: inv.ts,
+              durationMs: inv.duration_ms,
+              sequenceIndex: inv.sequence_index,
+            }));
+
             capabilities.push({
               id: d.id,
               name: d.label,
@@ -592,6 +610,8 @@ export default function CytoscapeGraph({
               successRate: d.success_rate ?? 0,
               usageCount,
               toolsCount: d.tools_count ?? 0,
+              toolsUsed: d.tools_used, // Unique tools (deduplicated)
+              toolInvocations, // Full sequence with timestamps
               codeSnippet: d.code_snippet,
               communityId: d.community_id,
             });
@@ -609,20 +629,8 @@ export default function CytoscapeGraph({
               parentCapabilities: parents,
             });
           }
-        } else if (d.type === "tool_invocation") {
-          // Tool invocation nodes - individual calls with timestamps
-          invocations.push({
-            id: d.id,
-            name: d.label,
-            type: "tool_invocation",
-            tool: d.tool ?? "unknown",
-            server: d.server ?? "unknown",
-            parentCapability: d.parent ?? "",
-            ts: d.ts ?? 0,
-            durationMs: d.duration_ms ?? 0,
-            sequenceIndex: d.sequence_index ?? 0,
-          });
         }
+        // Note: tool_invocation nodes from API are ignored - we generate them from toolsUsed
       }
 
       const edges: Edge[] = apiData.edges.map((e) => ({
@@ -659,7 +667,7 @@ export default function CytoscapeGraph({
         }
       }
 
-      const transformedData: TransformedData = { capabilities, tools, invocations, edges };
+      const transformedData: TransformedData = { capabilities, tools, edges };
       rawDataRef.current = transformedData;
 
       // Build capability data map for CodePanel
@@ -721,7 +729,7 @@ export default function CytoscapeGraph({
 
     if (viewMode === "capabilities") {
       // Capabilities mode: hierarchical with expand/collapse
-      renderCapabilitiesMode(elements, data);
+      renderCapabilitiesMode(elements, data, nodeMode);
     } else {
       // Tools mode: flat tools with capability badges
       renderToolsMode(elements, data);
@@ -745,6 +753,7 @@ export default function CytoscapeGraph({
   const renderCapabilitiesMode = (
     elements: Array<{ group: "nodes" | "edges"; data: Record<string, unknown> }>,
     data: TransformedData,
+    currentNodeMode: NodeMode,
   ) => {
     // All capabilities are always expanded (bento mode)
     const allCapabilities = new Set(data.capabilities.map((c) => c.id));
@@ -772,71 +781,106 @@ export default function CytoscapeGraph({
       });
     }
 
-    // Add all tool nodes - one instance per parent capability
-    for (const tool of data.tools) {
-      const color = getServerColor(tool.server);
-      const isShared = tool.parentCapabilities.length > 1;
-      const label = tool.name.length > 12 ? tool.name.slice(0, 10) + ".." : tool.name;
+    // Add tool nodes only in "definition" mode
+    if (currentNodeMode === "definition") {
+      for (const tool of data.tools) {
+        const color = getServerColor(tool.server);
+        const isShared = tool.parentCapabilities.length > 1;
+        const label = tool.name.length > 12 ? tool.name.slice(0, 10) + ".." : tool.name;
 
-      // Create a tool instance in EACH parent capability
-      for (const parentCap of tool.parentCapabilities) {
-        if (!allCapabilities.has(parentCap)) continue;
+        // Create a tool instance in EACH parent capability
+        for (const parentCap of tool.parentCapabilities) {
+          if (!allCapabilities.has(parentCap)) continue;
 
-        const instanceId = isShared ? `${tool.id}__${parentCap}` : tool.id;
+          const instanceId = isShared ? `${tool.id}__${parentCap}` : tool.id;
 
-        elements.push({
-          group: "nodes",
-          data: {
-            id: instanceId,
-            toolId: tool.id,
-            label,
-            type: "tool",
-            server: tool.server,
-            pagerank: tool.pagerank,
-            color,
-            parent: parentCap,
-          },
-        });
+          elements.push({
+            group: "nodes",
+            data: {
+              id: instanceId,
+              toolId: tool.id,
+              label,
+              type: "tool",
+              server: tool.server,
+              pagerank: tool.pagerank,
+              color,
+              parent: parentCap,
+            },
+          });
+        }
       }
     }
 
-    // Add tool invocation nodes (individual calls with timestamps)
-    for (const inv of data.invocations) {
-      const color = getServerColor(inv.server);
-      const capId = inv.parentCapability;
-      if (!allCapabilities.has(capId)) continue;
+    // Add tool invocation nodes only in "invocation" mode
+    // Use toolInvocations (with timestamps) if available, fallback to toolsUsed
+    const generatedInvocations: Array<{ capId: string; invId: string; index: number; ts?: number }> = [];
+    if (currentNodeMode === "invocation") {
+      for (const cap of data.capabilities) {
+        // Prefer toolInvocations (full sequence with timestamps)
+        if (cap.toolInvocations && cap.toolInvocations.length > 0) {
+          for (const inv of cap.toolInvocations) {
+            const [server = "unknown", ...nameParts] = inv.tool.split(":");
+            const toolName = nameParts.join(":") || inv.tool;
+            const color = getServerColor(server);
+            const invId = `${cap.id}:inv-${inv.sequenceIndex}`;
 
-      // Format duration for display
-      const durationLabel = inv.durationMs > 1000
-        ? `${(inv.durationMs / 1000).toFixed(1)}s`
-        : `${inv.durationMs}ms`;
+            elements.push({
+              group: "nodes",
+              data: {
+                id: invId,
+                label: `#${inv.sequenceIndex + 1} ${toolName.length > 12 ? toolName.slice(0, 10) + ".." : toolName}`,
+                type: "tool_invocation",
+                tool: inv.tool,
+                server,
+                color,
+                parent: cap.id,
+                sequenceIndex: inv.sequenceIndex,
+                ts: inv.ts,
+                durationMs: inv.durationMs,
+              },
+            });
 
-      elements.push({
-        group: "nodes",
-        data: {
-          id: inv.id,
-          label: `#${inv.sequenceIndex + 1} ${inv.name}`,
-          type: "tool_invocation",
-          tool: inv.tool,
-          server: inv.server,
-          color,
-          parent: capId,
-          ts: inv.ts,
-          durationMs: inv.durationMs,
-          durationLabel,
-          sequenceIndex: inv.sequenceIndex,
-        },
-      });
+            generatedInvocations.push({ capId: cap.id, invId, index: inv.sequenceIndex, ts: inv.ts });
+          }
+        } else if (cap.toolsUsed && cap.toolsUsed.length > 0) {
+          // Fallback to toolsUsed (deduplicated, no timestamps)
+          for (let i = 0; i < cap.toolsUsed.length; i++) {
+            const toolId = cap.toolsUsed[i];
+            const [server = "unknown", ...nameParts] = toolId.split(":");
+            const toolName = nameParts.join(":") || toolId;
+            const color = getServerColor(server);
+            const invId = `${cap.id}:inv-${i}`;
+
+            elements.push({
+              group: "nodes",
+              data: {
+                id: invId,
+                label: `#${i + 1} ${toolName.length > 12 ? toolName.slice(0, 10) + ".." : toolName}`,
+                type: "tool_invocation",
+                tool: toolId,
+                server,
+                color,
+                parent: cap.id,
+                sequenceIndex: i,
+              },
+            });
+
+            generatedInvocations.push({ capId: cap.id, invId, index: i });
+          }
+        }
+      }
     }
 
-    // Build map for tool-to-tool edges
+    // Build map for tool-to-tool edges (only needed in definition mode)
     const toolInstanceMap = new Map<string, string>();
-    for (const tool of data.tools) {
-      const isShared = tool.parentCapabilities.length > 1;
-      for (const capId of tool.parentCapabilities) {
-        if (allCapabilities.has(capId)) {
-          const instanceId = isShared ? `${tool.id}__${capId}` : tool.id;
-          toolInstanceMap.set(`${tool.id}|${capId}`, instanceId);
+    if (currentNodeMode === "definition") {
+      for (const tool of data.tools) {
+        const isShared = tool.parentCapabilities.length > 1;
+        for (const capId of tool.parentCapabilities) {
+          if (allCapabilities.has(capId)) {
+            const instanceId = isShared ? `${tool.id}__${capId}` : tool.id;
+            toolInstanceMap.set(`${tool.id}|${capId}`, instanceId);
+          }
         }
       }
     }
@@ -846,7 +890,7 @@ export default function CytoscapeGraph({
       const sourceIsCap = edge.source.startsWith("cap-");
       const targetIsCap = edge.target.startsWith("cap-");
 
-      // Capability-to-capability: only dependency edges
+      // Capability-to-capability: only dependency edges (both modes)
       if (sourceIsCap && targetIsCap) {
         if (edge.edgeType !== "dependency") continue;
         if (!allCapabilities.has(edge.source) || !allCapabilities.has(edge.target)) continue;
@@ -862,49 +906,65 @@ export default function CytoscapeGraph({
           },
         });
       }
-      // Tool-to-tool edges within same capability
+      // Tool-to-tool edges (definition mode only)
+      // Note: sequence edges for invocation mode are generated from toolsUsed, not from API
       else if (!sourceIsCap && !targetIsCap) {
-        // Check if this is a sequence edge between invocations
-        if (edge.edgeType === "sequence") {
-          // Invocation sequence edges - connect invocation nodes directly
-          const sourceInv = data.invocations.find((i) => i.id === edge.source);
-          const targetInv = data.invocations.find((i) => i.id === edge.target);
-          if (sourceInv && targetInv) {
+        // Regular tool-to-tool edges (only in definition mode)
+        if (currentNodeMode === "definition") {
+          const sourceTools = data.tools.find((t) => t.id === edge.source);
+          const targetTools = data.tools.find((t) => t.id === edge.target);
+          if (!sourceTools || !targetTools) continue;
+
+          for (const capId of sourceTools.parentCapabilities) {
+            if (!targetTools.parentCapabilities.includes(capId)) continue;
+
+            const sourceInstance = toolInstanceMap.get(`${edge.source}|${capId}`);
+            const targetInstance = toolInstanceMap.get(`${edge.target}|${capId}`);
+            if (!sourceInstance || !targetInstance) continue;
+
             elements.push({
               group: "edges",
               data: {
-                id: `${edge.source}-${edge.target}-seq`,
-                source: edge.source,
-                target: edge.target,
-                edgeType: "sequence",
-                isParallel: edge.isParallel,
-                timeDeltaMs: edge.timeDeltaMs,
+                id: `${sourceInstance}-${targetInstance}-${edge.edgeType}`,
+                source: sourceInstance,
+                target: targetInstance,
+                edgeType: edge.edgeType,
+                weight: edge.weight,
               },
             });
-            continue;
           }
         }
+      }
+    }
 
-        // Regular tool-to-tool edges
-        const sourceTools = data.tools.find((t) => t.id === edge.source);
-        const targetTools = data.tools.find((t) => t.id === edge.target);
-        if (!sourceTools || !targetTools) continue;
+    // Generate sequence edges for invocation mode (connect consecutive invocations)
+    if (currentNodeMode === "invocation" && generatedInvocations.length > 0) {
+      // Group invocations by capability
+      const invocationsByCapability = new Map<string, Array<{ invId: string; index: number }>>();
+      for (const inv of generatedInvocations) {
+        if (!invocationsByCapability.has(inv.capId)) {
+          invocationsByCapability.set(inv.capId, []);
+        }
+        invocationsByCapability.get(inv.capId)!.push({ invId: inv.invId, index: inv.index });
+      }
 
-        for (const capId of sourceTools.parentCapabilities) {
-          if (!targetTools.parentCapabilities.includes(capId)) continue;
+      // Create sequence edges between consecutive invocations in each capability
+      for (const [_capId, invocations] of invocationsByCapability) {
+        // Sort by index to ensure correct order
+        invocations.sort((a, b) => a.index - b.index);
 
-          const sourceInstance = toolInstanceMap.get(`${edge.source}|${capId}`);
-          const targetInstance = toolInstanceMap.get(`${edge.target}|${capId}`);
-          if (!sourceInstance || !targetInstance) continue;
+        for (let i = 0; i < invocations.length - 1; i++) {
+          const current = invocations[i];
+          const next = invocations[i + 1];
 
           elements.push({
             group: "edges",
             data: {
-              id: `${sourceInstance}-${targetInstance}-${edge.edgeType}`,
-              source: sourceInstance,
-              target: targetInstance,
-              edgeType: edge.edgeType,
-              weight: edge.weight,
+              id: `seq-${current.invId}-${next.invId}`,
+              source: current.invId,
+              target: next.invId,
+              edgeType: "sequence",
+              isParallel: false,
             },
           });
         }
@@ -962,31 +1022,41 @@ export default function CytoscapeGraph({
     const cy = cyRef.current;
     if (!cy) return;
 
-    // Use cose layout for capabilities (handles compound nodes well)
+    // Use cose-bilkent layout for capabilities (optimized for compound nodes)
     if (viewMode === "capabilities") {
       cy.layout({
-        name: "cose",
-        animate: true,
-        animationDuration: fit ? 400 : 200,
+        name: "cose-bilkent",
+        animate: "end",
+        animationDuration: fit ? 500 : 250,
         fit,
         padding: 50,
-        // Compound node settings
-        nodeRepulsion: () => 8000,
-        idealEdgeLength: () => 80,
-        edgeElasticity: () => 100,
-        nestingFactor: 1.2,
-        gravity: 0.25,
-        numIter: 1000,
-        coolingFactor: 0.95,
-        minTemp: 1.0,
-        // Prevent overlap
-        nodeOverlap: 20,
-        componentSpacing: 60,
+        // Quality: proof = better convergence, less overlap
+        quality: "proof",
+        nodeDimensionsIncludeLabels: true,
+        // Node spacing: moderate repulsion, good edge length for internal spacing
+        nodeRepulsion: 8000,
+        idealEdgeLength: 120,
+        edgeElasticity: 0.45,
+        // Nesting: higher = more space for children within compounds
+        nestingFactor: 0.2,
+        // Gravity: high compound gravity pulls capabilities together
+        gravity: 0.4,
+        gravityRange: 3.8,
+        gravityCompound: 3.0,
+        gravityRangeCompound: 2.5,
+        // More iterations for convergence
+        numIter: 5000,
+        // Tiling for disconnected components
+        tile: true,
+        tilingPaddingVertical: 15,
+        tilingPaddingHorizontal: 15,
+        // Consistent layout
+        randomize: true,
       }).run();
     } else {
       cy.layout({
         name: "dagre",
-        rankDir: layoutDirection,
+        rankDir: "TB", // Top-to-bottom layout
         nodeSep: 40,
         rankSep: 80,
         padding: 50,

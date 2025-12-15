@@ -165,7 +165,8 @@ export class CapabilityStore {
         avg_duration_ms = (
           (workflow_pattern.avg_duration_ms * workflow_pattern.usage_count) + $11
         ) / (workflow_pattern.usage_count + 1),
-        parameters_schema = $12
+        parameters_schema = $12,
+        dag_structure = $2
       RETURNING *`,
       [
         patternHash,

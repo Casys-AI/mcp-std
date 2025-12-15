@@ -307,26 +307,8 @@ export class CapabilityDataService {
         capabilityPageranks,
       );
 
-      // 3b. Add tool invocation nodes for capabilities that have them
-      // This creates individual nodes for each tool call with sequence edges
-      const zoneColors = [
-        "#8b5cf6", "#3b82f6", "#10b981", "#f59e0b",
-        "#ef4444", "#ec4899", "#06b6d4", "#84cc16",
-      ];
-      for (let i = 0; i < capabilities.length; i++) {
-        const cap = capabilities[i];
-        if (cap.toolInvocations && cap.toolInvocations.length > 0) {
-          const capId = `cap-${cap.id}`;
-          const zoneColor = zoneColors[i % zoneColors.length];
-          builder.addToolInvocationNodes(
-            hypergraphResult.nodes,
-            hypergraphResult.edges,
-            capId,
-            cap.toolInvocations,
-            zoneColor,
-          );
-        }
-      }
+      // Note: tool_invocation nodes are now generated client-side from toolsUsed
+      // This preserves order and repetitions without needing stored toolInvocations
 
       // Track existing tool IDs for standalone tools
       const existingToolIds = new Set(

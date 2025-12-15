@@ -17,12 +17,9 @@ import type {
   CapabilityEdge,
   CapabilityNode,
   CapabilityResponseInternal,
-  CapabilityToolInvocation,
   GraphEdge,
   GraphNode,
   HierarchicalEdge,
-  SequenceEdge,
-  ToolInvocationNode,
   ToolNode,
 } from "./types.ts";
 import type { GraphSnapshot } from "../graphrag/graph-engine.ts";
@@ -140,6 +137,8 @@ export class HypergraphBuilder {
           usageCount: cap.usageCount,
           toolsCount: cap.toolsUsed.length,
           pagerank: capabilityPageranks?.get(cap.id) ?? 0,
+          toolsUsed: cap.toolsUsed, // Unique tools (deduplicated)
+          toolInvocations: cap.toolInvocations, // Full sequence with timestamps (for invocation mode)
         },
       };
       nodes.push(capNode);
@@ -384,96 +383,5 @@ export class HypergraphBuilder {
     };
   }
 
-  /**
-   * Add tool invocation nodes and sequence edges for a capability
-   *
-   * Creates individual nodes for each tool invocation (not deduplicated)
-   * and edges showing execution sequence with parallelism detection.
-   *
-   * @param nodes Existing nodes array to append to
-   * @param edges Existing edges array to append to
-   * @param capId Capability ID (e.g., "cap-uuid")
-   * @param invocations Tool invocations from capability
-   * @param zoneColor Color for invocation nodes (matches capability zone)
-   */
-  addToolInvocationNodes(
-    nodes: GraphNode[],
-    edges: GraphEdge[],
-    capId: string,
-    invocations: CapabilityToolInvocation[],
-    _zoneColor?: string, // Reserved for future styling
-  ): void {
-    if (!invocations || invocations.length === 0) {
-      return;
-    }
-
-    // Sort by sequence index to ensure correct order
-    const sortedInvocations = [...invocations].sort(
-      (a, b) => a.sequenceIndex - b.sequenceIndex,
-    );
-
-    // Create invocation nodes
-    for (const inv of sortedInvocations) {
-      const [server = "unknown", ...nameParts] = inv.tool.split(":");
-      const toolName = nameParts.join(":") || inv.tool;
-
-      const invNode: ToolInvocationNode = {
-        data: {
-          id: `${capId}:${inv.id}`, // Prefix with capId for uniqueness
-          parent: capId,
-          type: "tool_invocation",
-          tool: inv.tool,
-          server,
-          label: `${toolName} #${inv.sequenceIndex + 1}`,
-          ts: inv.ts,
-          durationMs: inv.durationMs,
-          sequenceIndex: inv.sequenceIndex,
-        },
-      };
-      nodes.push(invNode);
-
-      // Create hierarchy edge (capability → invocation)
-      const hierEdge: HierarchicalEdge = {
-        data: {
-          id: `edge-${capId}-inv-${inv.sequenceIndex}`,
-          source: capId,
-          target: invNode.data.id,
-          edgeType: "hierarchy",
-          edgeSource: "observed",
-          observedCount: 1,
-        },
-      };
-      edges.push(hierEdge);
-    }
-
-    // Create sequence edges between consecutive invocations
-    for (let i = 0; i < sortedInvocations.length - 1; i++) {
-      const current = sortedInvocations[i];
-      const next = sortedInvocations[i + 1];
-
-      // Calculate time delta and detect parallelism
-      // If next started before current finished, they're parallel
-      const currentEndTs = current.ts + current.durationMs;
-      const timeDelta = next.ts - currentEndTs;
-      const isParallel = next.ts < currentEndTs;
-
-      const seqEdge: SequenceEdge = {
-        data: {
-          id: `seq-${capId}-${i}-${i + 1}`,
-          source: `${capId}:${current.id}`,
-          target: `${capId}:${next.id}`,
-          edgeType: "sequence",
-          timeDeltaMs: timeDelta,
-          isParallel,
-        },
-      };
-      edges.push(seqEdge);
-    }
-
-    logger.debug("Added tool invocation nodes", {
-      capId,
-      invocationCount: sortedInvocations.length,
-      sequenceEdges: sortedInvocations.length - 1,
-    });
-  }
+  // Note: addToolInvocationNodes removed - invocations now generated client-side from toolsUsed
 }

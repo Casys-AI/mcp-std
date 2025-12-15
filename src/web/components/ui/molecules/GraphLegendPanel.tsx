@@ -12,8 +12,8 @@ import Slider from "../atoms/Slider.tsx";
 /** View mode for the graph */
 export type ViewMode = "capabilities" | "tools";
 
-/** Layout direction */
-export type LayoutDirection = "TB" | "LR";
+/** Node mode - definition (generic tools) vs invocation (actual calls) */
+export type NodeMode = "definition" | "invocation";
 
 interface GraphLegendPanelProps {
   servers: Set<string>;
@@ -30,9 +30,9 @@ interface GraphLegendPanelProps {
   // View mode control
   viewMode?: ViewMode;
   onViewModeChange?: (mode: ViewMode) => void;
-  // Layout direction
-  layoutDirection?: LayoutDirection;
-  onLayoutDirectionChange?: (dir: LayoutDirection) => void;
+  // Node mode (instance vs invocation)
+  nodeMode?: NodeMode;
+  onNodeModeChange?: (mode: NodeMode) => void;
 }
 
 export default function GraphLegendPanel({
@@ -50,9 +50,9 @@ export default function GraphLegendPanel({
   // View mode
   viewMode = "capabilities",
   onViewModeChange,
-  // Layout direction
-  layoutDirection = "TB",
-  onLayoutDirectionChange,
+  // Node mode
+  nodeMode = "definition",
+  onNodeModeChange,
 }: GraphLegendPanelProps): JSX.Element {
   return (
     <div
@@ -113,51 +113,51 @@ export default function GraphLegendPanel({
         </>
       )}
 
-      {/* Layout Direction */}
-      {onLayoutDirectionChange && (
+      {/* Node Mode */}
+      {onNodeModeChange && (
         <>
           <h3
             class="text-xs font-semibold uppercase tracking-widest mb-2"
             style={{ color: "var(--text-dim)" }}
           >
-            Layout Direction
+            Node Mode
           </h3>
           <div class="flex gap-1 mb-3">
             <button
               class="flex-1 px-2 py-1.5 rounded text-xs font-medium transition-all"
               style={{
-                background: layoutDirection === "TB"
+                background: nodeMode === "definition"
                   ? "var(--accent, #FFB86F)"
                   : "var(--bg-surface, #1a1816)",
-                color: layoutDirection === "TB"
+                color: nodeMode === "definition"
                   ? "var(--bg, #0a0908)"
                   : "var(--text-muted, #d5c3b5)",
-                border: layoutDirection === "TB"
+                border: nodeMode === "definition"
                   ? "1px solid var(--accent)"
                   : "1px solid var(--border)",
               }}
-              onClick={() => onLayoutDirectionChange("TB")}
-              title="Top to Bottom"
+              onClick={() => onNodeModeChange("definition")}
+              title="Generic tool definitions"
             >
-              ↓ Vertical
+              Definition
             </button>
             <button
               class="flex-1 px-2 py-1.5 rounded text-xs font-medium transition-all"
               style={{
-                background: layoutDirection === "LR"
+                background: nodeMode === "invocation"
                   ? "var(--accent, #FFB86F)"
                   : "var(--bg-surface, #1a1816)",
-                color: layoutDirection === "LR"
+                color: nodeMode === "invocation"
                   ? "var(--bg, #0a0908)"
                   : "var(--text-muted, #d5c3b5)",
-                border: layoutDirection === "LR"
+                border: nodeMode === "invocation"
                   ? "1px solid var(--accent)"
                   : "1px solid var(--border)",
               }}
-              onClick={() => onLayoutDirectionChange("LR")}
-              title="Left to Right"
+              onClick={() => onNodeModeChange("invocation")}
+              title="Actual tool invocations with sequence"
             >
-              → Horizontal
+              Invocation
             </button>
           </div>
           <Divider />

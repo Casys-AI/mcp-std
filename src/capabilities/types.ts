@@ -271,6 +271,8 @@ export interface CapabilityNode {
     usageCount: number;
     toolsCount: number; // Number of child tools
     pagerank: number; // Hypergraph PageRank score (0-1)
+    toolsUsed?: string[]; // Unique tools (deduplicated)
+    toolInvocations?: CapabilityToolInvocation[]; // Full sequence with timestamps (for invocation mode)
   };
 }
 

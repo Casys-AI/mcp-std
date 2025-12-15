@@ -402,7 +402,7 @@ export class WorkerBridge {
       },
     });
 
-    logger.debug("RPC call received", { id, server, tool, argsKeys: Object.keys(args) });
+    logger.debug("RPC call received", { id, server, tool, argsKeys: Object.keys(args || {}) });
 
     try {
       const client = this.mcpClients.get(server);
@@ -410,7 +410,7 @@ export class WorkerBridge {
         throw new Error(`MCP server "${server}" not connected`);
       }
 
-      const result = await client.callTool(tool, args);
+      const result = await client.callTool(tool, args || {});
       const endTime = Date.now();
       const durationMs = endTime - startTime;
 
@@ -538,7 +538,8 @@ export class WorkerBridge {
   }
 
   /**
-   * Get list of successfully called tools (for GraphRAG integration)
+   * Get list of successfully called tools - DEDUPLICATED (for GraphRAG algorithms)
+   * Used by spectral clustering, dag-suggester, and other graph algorithms
    */
   getToolsCalled(): string[] {
     const toolsCalled = new Set<string>();
@@ -550,6 +551,25 @@ export class WorkerBridge {
     }
 
     return Array.from(toolsCalled);
+  }
+
+  /**
+   * Get FULL sequence of tool calls with repetitions (for invocation mode visualization)
+   * Preserves execution order and repeated calls to the same tool
+   */
+  getToolsSequence(): string[] {
+    const toolsSequence: string[] = [];
+
+    // Sort traces by timestamp to preserve execution order
+    const sortedTraces = [...this.traces].sort((a, b) => a.ts - b.ts);
+
+    for (const trace of sortedTraces) {
+      if (trace.type === "tool_end" && trace.success) {
+        toolsSequence.push(trace.tool);
+      }
+    }
+
+    return toolsSequence;
   }
 
   /**

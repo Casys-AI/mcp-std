@@ -2861,6 +2861,7 @@ The system uses GraphRAG to find appropriate tools for the new requirement and i
           // Map camelCase to snake_case for external API
           const mapNodeData = (node: import("../capabilities/types.ts").GraphNode) => {
             if (node.data.type === "capability") {
+              const capNode = node as import("../capabilities/types.ts").CapabilityNode;
               return {
                 data: {
                   id: node.data.id,
@@ -2870,6 +2871,15 @@ The system uses GraphRAG to find appropriate tools for the new requirement and i
                   success_rate: node.data.successRate,
                   usage_count: node.data.usageCount,
                   tools_count: node.data.toolsCount,
+                  tools_used: capNode.data.toolsUsed, // Unique tools (deduplicated)
+                  // Transform toolInvocations to snake_case for API consistency
+                  tool_invocations: capNode.data.toolInvocations?.map((inv) => ({
+                    id: inv.id,
+                    tool: inv.tool,
+                    ts: inv.ts,
+                    duration_ms: inv.durationMs,
+                    sequence_index: inv.sequenceIndex,
+                  }))
                 },
               };
             } else if (node.data.type === "tool_invocation") {
