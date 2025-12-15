@@ -136,8 +136,9 @@ export default function LandingPage({ data }: { data: LandingPageData }) {
               <a href="#problem" class="nav-link">Why</a>
               <a href="#how" class="nav-link">How</a>
               <a href="#tech" class="nav-link">Tech</a>
+              <a href="/docs" class="nav-link">Docs</a>
               <a href="/blog" class="nav-link">Blog</a>
-              <a href="/dashboard" class="nav-link">Dashboard</a>
+              {isCloudMode && <a href="/dashboard" class="nav-link">Dashboard</a>}
               <a
                 href="https://github.com/Casys-AI/casys-pml"
                 class="nav-link nav-link-github"
@@ -667,7 +668,8 @@ capabilities.use("data_pipeline")`}</code></pre>
               >
                 GitHub
               </a>
-              <a href="/dashboard">Dashboard</a>
+              <a href="/docs">Docs</a>
+              {isCloudMode && <a href="/dashboard">Dashboard</a>}
             </div>
           </div>
         </footer>

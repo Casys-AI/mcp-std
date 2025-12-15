@@ -74,10 +74,10 @@ Deno.test("AC1: Get servers by protocol", async () => {
     name: Stdio Server
     command: python
     protocol: stdio
-  - id: sse-server
-    name: SSE Server
-    command: python
-    protocol: sse
+  - id: http-server
+    name: HTTP Server
+    url: https://example.com/mcp
+    protocol: http
 `;
 
     await Deno.writeTextFile(configPath, mixedConfig);
@@ -86,12 +86,12 @@ Deno.test("AC1: Get servers by protocol", async () => {
     await discovery.discoverServers();
 
     const stdioServers = discovery.getServersByProtocol("stdio");
-    const sseServers = discovery.getServersByProtocol("sse");
+    const httpServers = discovery.getServersByProtocol("http");
 
     assertEquals(stdioServers.length, 1);
     assertEquals(stdioServers[0].id, "stdio-server");
-    assertEquals(sseServers.length, 1);
-    assertEquals(sseServers[0].id, "sse-server");
+    assertEquals(httpServers.length, 1);
+    assertEquals(httpServers[0].id, "http-server");
   } finally {
     await Deno.remove(configPath).catch(() => {});
   }

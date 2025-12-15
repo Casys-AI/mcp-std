@@ -124,10 +124,12 @@ export class MCPServerDiscovery {
             return {
               id: String(srv.id || srv.name || "unknown"),
               name: String(srv.name || srv.id || "unknown"),
-              command: String(srv.command || ""),
+              command: srv.command ? String(srv.command) : undefined,
               args: Array.isArray(srv.args) ? srv.args.map(String) : undefined,
               env: typeof srv.env === "object" ? srv.env as Record<string, string> : undefined,
               protocol: String(srv.protocol || "stdio") as "stdio" | "http",
+              url: srv.url ? String(srv.url) : undefined,
+              headers: typeof srv.headers === "object" ? srv.headers as Record<string, string> : undefined,
             };
           }),
         };

@@ -9,15 +9,17 @@
  * @module tests/fixtures/mock-embedding-model
  */
 
+import type { EmbeddingModelInterface } from "../../src/vector/embeddings.ts";
+
 /**
  * MockEmbeddingModel - Drop-in replacement for EmbeddingModel in tests
  *
- * Compatible with the real EmbeddingModel interface but:
+ * Implements EmbeddingModelInterface for type safety:
  * - Loads instantly (no ONNX)
  * - Returns deterministic embeddings (hash-based)
  * - Zero external dependencies
  */
-export class MockEmbeddingModel {
+export class MockEmbeddingModel implements EmbeddingModelInterface {
   // deno-lint-ignore no-explicit-any
   private model: any = null; // Compatibility with EmbeddingModel
   private loading: Promise<void> | null = null; // Compatibility with EmbeddingModel

@@ -62,8 +62,8 @@ export default function BlogPost({ data }: { data: { post: Post } }) {
             </a>
             <nav class="nav">
               <a href="/" class="nav-link">Home</a>
+              <a href="/docs" class="nav-link">Docs</a>
               <a href="/blog" class="nav-link nav-link-active">Blog</a>
-              <a href="/dashboard" class="nav-link">Dashboard</a>
             </nav>
           </div>
         </header>

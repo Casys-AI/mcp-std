@@ -293,6 +293,49 @@ export function dagStats(dag: DAGWorkflow): string {
   - Workflow ID: ${dag.id || "N/A"}`;
 }
 
+/**
+ * Topological sort: organize DAG tasks into parallel execution layers
+ *
+ * @param dag - The DAG workflow to sort
+ * @returns Array of layers, where each layer contains tasks that can run in parallel
+ * @throws Error if a cycle is detected in the DAG
+ *
+ * @example
+ * ```typescript
+ * const layers = topologicalSort(workflow);
+ * // layers[0] = tasks with no dependencies (entry points)
+ * // layers[1] = tasks whose deps are all in layer 0
+ * // etc.
+ * ```
+ */
+export function topologicalSort(dag: DAGWorkflow): DAGTask[][] {
+  const layers: DAGTask[][] = [];
+  const completed = new Set<string>();
+  const remaining = [...dag.tasks];
+
+  while (remaining.length > 0) {
+    // Find tasks whose dependencies are all completed
+    const layer = remaining.filter((task) =>
+      (task.dependencies || []).every((dep) => completed.has(dep))
+    );
+
+    if (layer.length === 0) {
+      throw new Error("Cycle detected in DAG!");
+    }
+
+    layers.push(layer);
+
+    // Mark layer tasks as completed and remove from remaining
+    layer.forEach((task) => {
+      completed.add(task.id);
+      const idx = remaining.indexOf(task);
+      remaining.splice(idx, 1);
+    });
+  }
+
+  return layers;
+}
+
 // --- Helper functions ---
 
 function formatTaskLabel(task: DAGTask): string {

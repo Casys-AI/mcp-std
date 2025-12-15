@@ -56,6 +56,17 @@ export interface EmbeddingStats {
 }
 
 /**
+ * Interface for embedding models
+ * Allows mocking in tests while maintaining type safety
+ */
+export interface EmbeddingModelInterface {
+  load(): Promise<void>;
+  encode(text: string): Promise<number[]>;
+  isLoaded(): boolean;
+  dispose(): Promise<void>;
+}
+
+/**
  * BGE-M3 Embedding Model
  *
  * Lazy-loads the model on first use and provides encoding functionality

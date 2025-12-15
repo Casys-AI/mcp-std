@@ -93,6 +93,14 @@ export class MCPClient implements MCPClientBase {
     try {
       log.debug(`Connecting to MCP server: ${this.server.id}`);
 
+      // Validate command exists (required for stdio protocol)
+      if (!this.server.command) {
+        throw new MCPServerError(
+          this.server.id,
+          "No command specified for stdio server",
+        );
+      }
+
       // Start subprocess
       this.process = new Deno.Command(this.server.command, {
         args: this.server.args || [],

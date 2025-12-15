@@ -12,7 +12,10 @@
 
 import { assertEquals, assertExists } from "@std/assert";
 import { HypergraphBuilder } from "../../../src/capabilities/hypergraph-builder.ts";
-import type { CapabilityResponseInternal } from "../../../src/capabilities/types.ts";
+import type {
+  CapabilityResponseInternal,
+  CapabilityDependencyEdge,
+} from "../../../src/capabilities/types.ts";
 import type { GraphSnapshot } from "../../../src/graphrag/graph-engine.ts";
 
 /**
@@ -170,9 +173,8 @@ Deno.test("HypergraphBuilder - creates hierarchical edges from parents[]", () =>
     (e) => e.data.source === "cap-uuid-1" && e.data.target === "filesystem:read",
   );
   assertExists(edge);
-  assertEquals(edge.data.edgeSource, "observed");
-
   if (edge.data.edgeType === "hierarchy") {
+    assertEquals(edge.data.edgeSource, "observed");
     assertExists(edge.data.observedCount);
   }
 });
@@ -189,10 +191,9 @@ Deno.test("HypergraphBuilder - creates capability_link edges for shared tools", 
   assertEquals(linkEdges.length, 1);
 
   const linkEdge = linkEdges[0];
-  assertEquals(linkEdge.data.edgeSource, "inferred");
-
-  // Verify sharedTools count
+  // Verify sharedTools count and edgeSource
   if (linkEdge.data.edgeType === "capability_link") {
+    assertEquals(linkEdge.data.edgeSource, "inferred");
     assertEquals(linkEdge.data.sharedTools, 1);
   }
 });
@@ -338,14 +339,13 @@ Deno.test("HypergraphBuilder - addCapabilityDependencyEdges adds dependency edge
   const depEdges = result.edges.filter((e) => e.data.id.startsWith("dep-"));
   assertEquals(depEdges.length, 1);
 
-  const depEdge = depEdges[0];
+  const depEdge = depEdges[0] as CapabilityDependencyEdge;
   assertEquals(depEdge.data.source, "cap-uuid-1");
   assertEquals(depEdge.data.target, "cap-uuid-2");
 
-  if (depEdge.data.edgeType === "sequence") {
-    assertEquals(depEdge.data.edgeSource, "observed");
-    assertEquals(depEdge.data.observedCount, 5);
-  }
+  assertEquals(depEdge.data.edgeType, "sequence");
+  assertEquals(depEdge.data.edgeSource, "observed");
+  assertEquals(depEdge.data.observedCount, 5);
 });
 
 Deno.test("HypergraphBuilder - addCapabilityDependencyEdges skips missing capabilities", () => {
@@ -394,7 +394,9 @@ Deno.test("HypergraphBuilder - validates edge_type and edge_source", () => {
 
   builder.addCapabilityDependencyEdges(result.edges, dependencies, existingCapIds);
 
-  const depEdge = result.edges.find((e) => e.data.id.startsWith("dep-"));
+  const depEdge = result.edges.find((e) => e.data.id.startsWith("dep-")) as
+    | CapabilityDependencyEdge
+    | undefined;
   assertExists(depEdge);
 
   // Should default to valid values

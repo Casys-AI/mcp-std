@@ -50,8 +50,8 @@ export default function BlogIndex({ data }: { data: { posts: Post[] } }) {
             </a>
             <nav class="nav">
               <a href="/" class="nav-link">Home</a>
+              <a href="/docs" class="nav-link">Docs</a>
               <a href="/blog" class="nav-link nav-link-active">Blog</a>
-              <a href="/dashboard" class="nav-link">Dashboard</a>
               <a href="/blog/feed.xml" class="nav-link nav-link-rss" title="RSS Feed">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
                   <circle cx="6.18" cy="17.82" r="2.18" />
