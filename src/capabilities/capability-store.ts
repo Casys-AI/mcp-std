@@ -1,0 +1,922 @@
+/**
+ * Capability Store (Epic 7 - Story 7.2a)
+ *
+ * Persists learned capabilities with eager learning strategy:
+ * - Store on 1st successful execution (no waiting for patterns)
+ * - ON CONFLICT: update usage_count++, recalculate success_rate
+ * - Storage is cheap (~2KB/capability), filter at suggestion time
+ *
+ * @module capabilities/capability-store
+ */
+
+import type { PGliteClient } from "../db/client.ts";
+import type { EmbeddingModel } from "../vector/embeddings.ts";
+import type { Row } from "../db/client.ts";
+import type {
+  CacheConfig,
+  Capability,
+  CapabilityDependency,
+  CapabilityEdgeSource,
+  CapabilityEdgeType,
+  CreateCapabilityDependencyInput,
+  SaveCapabilityInput,
+} from "./types.ts";
+import { hashCode } from "./hash.ts";
+import { getLogger } from "../telemetry/logger.ts";
+import type { SchemaInferrer } from "./schema-inferrer.ts";
+// Story 6.5: EventBus integration (ADR-036)
+import { eventBus } from "../events/mod.ts";
+
+const logger = getLogger("default");
+
+/**
+ * Default cache configuration for new capabilities
+ */
+const DEFAULT_CACHE_CONFIG: CacheConfig = {
+  ttl_ms: 3600000, // 1 hour
+  cacheable: true,
+};
+
+/**
+ * CapabilityStore - Persistence layer for learned capabilities
+ *
+ * Implements eager learning: capabilities are stored on first successful
+ * execution rather than waiting for repeated patterns.
+ *
+ * @example
+ * ```typescript
+ * const store = new CapabilityStore(db, embeddingModel);
+ *
+ * // Save after successful execution
+ * const capability = await store.saveCapability({
+ *   code: "const result = await tools.search({query: 'test'});",
+ *   intent: "Search for test data",
+ *   durationMs: 150,
+ * });
+ *
+ * // Second execution updates stats
+ * await store.updateUsage(capability.codeHash, true, 120);
+ * ```
+ */
+export class CapabilityStore {
+  constructor(
+    private db: PGliteClient,
+    private embeddingModel: EmbeddingModel,
+    private schemaInferrer?: SchemaInferrer,
+  ) {
+    logger.debug("CapabilityStore initialized", {
+      schemaInferrerEnabled: !!schemaInferrer,
+    });
+  }
+
+  /**
+   * Save a capability after execution (eager learning)
+   *
+   * Uses UPSERT: INSERT ... ON CONFLICT to handle deduplication.
+   * - First execution: creates capability with usage_count=1, success_rate=1.0
+   * - Subsequent: increments usage_count, updates success_rate average
+   *
+   * @param input Capability data from execution
+   * @returns The saved/updated capability
+   */
+  async saveCapability(input: SaveCapabilityInput): Promise<Capability> {
+    const { code, intent, durationMs, success = true, name, description, toolsUsed, toolInvocations } = input;
+
+    // Generate code hash for deduplication
+    const codeHash = await hashCode(code);
+
+    // Generate intent embedding for semantic search
+    let embedding: number[];
+    try {
+      embedding = await this.embeddingModel.encode(intent);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger.error("Failed to generate embedding for capability", {
+        intent: intent.substring(0, 50),
+        error: errorMsg,
+      });
+      throw new Error(`Embedding generation failed: ${errorMsg}`);
+    }
+    const embeddingStr = `[${embedding.join(",")}]`;
+
+    // Infer parameters schema from code (Story 7.2b)
+    let parametersSchema: Capability["parametersSchema"] | undefined;
+    if (this.schemaInferrer) {
+      try {
+        parametersSchema = await this.schemaInferrer.inferSchema(code);
+        logger.debug("Schema inferred for capability", {
+          codeHash,
+          properties: Object.keys(parametersSchema.properties || {}),
+        });
+      } catch (error) {
+        logger.warn("Schema inference failed, continuing without schema", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    // Build dag_structure with tools used and invocations (for graph analysis)
+    const dagStructure = {
+      type: "code_execution",
+      tools_used: toolsUsed || [],
+      tool_invocations: toolInvocations || [], // Detailed invocations with timestamps
+      intent_text: intent,
+    };
+
+    // Generate pattern_hash (required by existing schema, distinct from code_hash)
+    // Use code_hash as pattern_hash to ensure uniqueness per code snippet
+    const patternHash = codeHash;
+
+    logger.debug("Saving capability", {
+      codeHash,
+      intent: intent.substring(0, 50),
+      durationMs,
+      success,
+    });
+
+    // UPSERT: Insert or update on conflict
+    const result = await this.db.query(
+      `INSERT INTO workflow_pattern (
+        pattern_hash,
+        dag_structure,
+        intent_embedding,
+        usage_count,
+        success_count,
+        last_used,
+        code_snippet,
+        code_hash,
+        cache_config,
+        name,
+        description,
+        success_rate,
+        avg_duration_ms,
+        parameters_schema,
+        created_at,
+        source
+      ) VALUES (
+        $1, $2, $3, 1, $4, NOW(), $5, $6, $7, $8, $9, $10, $11, $12, NOW(), 'emergent'
+      )
+      ON CONFLICT (code_hash) WHERE code_hash IS NOT NULL DO UPDATE SET
+        usage_count = workflow_pattern.usage_count + 1,
+        success_count = workflow_pattern.success_count + CASE WHEN $4 = 1 THEN 1 ELSE 0 END,
+        last_used = NOW(),
+        success_rate = (workflow_pattern.success_count + CASE WHEN $4 = 1 THEN 1 ELSE 0 END)::real
+          / (workflow_pattern.usage_count + 1)::real,
+        avg_duration_ms = (
+          (workflow_pattern.avg_duration_ms * workflow_pattern.usage_count) + $11
+        ) / (workflow_pattern.usage_count + 1),
+        parameters_schema = $12
+      RETURNING *`,
+      [
+        patternHash,
+        JSON.stringify(dagStructure),
+        embeddingStr,
+        success ? 1 : 0,
+        code,
+        codeHash,
+        JSON.stringify(DEFAULT_CACHE_CONFIG),
+        name || this.generateName(intent),
+        description || intent,
+        success ? 1.0 : 0.0,
+        durationMs,
+        parametersSchema ? JSON.stringify(parametersSchema) : null,
+      ],
+    );
+
+    if (result.length === 0) {
+      throw new Error("Failed to save capability - no result returned");
+    }
+
+    const row = result[0];
+    const capability = this.rowToCapability(row as Row);
+
+    logger.info("Capability saved", {
+      id: capability.id,
+      codeHash: capability.codeHash,
+      usageCount: capability.usageCount,
+      successRate: capability.successRate,
+    });
+
+    // Story 6.5: Emit capability.learned event (ADR-036)
+    const isNew = capability.usageCount === 1;
+    const capabilityName = capability.name ?? this.generateName(intent);
+    const capabilityTools = toolsUsed ?? [];
+
+    eventBus.emit({
+      type: "capability.learned",
+      source: "capability-store",
+      payload: {
+        capability_id: capability.id,
+        name: capabilityName,
+        intent: intent.substring(0, 100), // Truncate for event payload
+        tools_used: capabilityTools,
+        is_new: isNew,
+        usage_count: capability.usageCount,
+        success_rate: capability.successRate,
+      },
+    });
+
+    // Story 8.3: Emit zone events for hypergraph incremental updates
+    if (isNew) {
+      // New capability = new zone
+      const zonePayload = {
+        capabilityId: `cap-${capability.id}`,
+        label: capabilityName,
+        toolIds: capabilityTools,
+        successRate: capability.successRate,
+        usageCount: capability.usageCount,
+      };
+      logger.info("[SSE-DEBUG] Emitting capability.zone.created", {
+        capabilityId: zonePayload.capabilityId,
+        label: zonePayload.label,
+        toolCount: zonePayload.toolIds.length,
+      });
+      eventBus.emit({
+        type: "capability.zone.created",
+        source: "capability-store",
+        payload: zonePayload,
+      });
+    } else {
+      // Existing capability updated = zone metadata update
+      eventBus.emit({
+        type: "capability.zone.updated",
+        source: "capability-store",
+        payload: {
+          capabilityId: `cap-${capability.id}`,
+          label: capabilityName,
+          toolIds: capabilityTools,
+          successRate: capability.successRate,
+          usageCount: capability.usageCount,
+        },
+      });
+    }
+
+    return capability;
+  }
+
+  /**
+   * Find a capability by its code hash
+   *
+   * @param codeHash SHA-256 hash of normalized code
+   * @returns Capability if found, null otherwise
+   */
+  async findByCodeHash(codeHash: string): Promise<Capability | null> {
+    const result = await this.db.query(
+      `SELECT * FROM workflow_pattern WHERE code_hash = $1`,
+      [codeHash],
+    );
+
+    if (result.length === 0) {
+      return null;
+    }
+
+    return this.rowToCapability(result[0] as Row);
+  }
+
+  /**
+   * Update usage statistics after execution
+   *
+   * Called when a capability is reused (matched and executed again).
+   * Updates: usage_count++, success_rate, avg_duration_ms
+   *
+   * @param codeHash SHA-256 hash of the executed code
+   * @param success Whether execution succeeded
+   * @param durationMs Execution time in milliseconds
+   */
+  async updateUsage(
+    codeHash: string,
+    success: boolean,
+    durationMs: number,
+  ): Promise<void> {
+    // Use parameterized query to prevent SQL injection
+    // Round durationMs to integer for INTEGER column type
+    const durationMsInt = Math.round(durationMs);
+    await this.db.query(
+      `UPDATE workflow_pattern SET
+        usage_count = usage_count + 1,
+        success_count = success_count + $1,
+        last_used = NOW(),
+        success_rate = (success_count + $1)::real / (usage_count + 1)::real,
+        avg_duration_ms = ((avg_duration_ms * usage_count) + $2) / (usage_count + 1)
+      WHERE code_hash = $3`,
+      [success ? 1 : 0, durationMsInt, codeHash],
+    );
+
+    logger.debug("Capability usage updated", { codeHash, success, durationMs });
+  }
+
+  /**
+   * Search capabilities by semantic similarity to intent
+   *
+   * Uses HNSW index on intent_embedding for fast vector search.
+   *
+   * @param intent Natural language query
+   * @param limit Maximum results (default: 5)
+   * @param minSemanticScore Minimum semantic score threshold (default: 0.5)
+   * @returns Capabilities sorted by semanticScore (harmonized with HybridSearchResult)
+   */
+  async searchByIntent(
+    intent: string,
+    limit = 5,
+    minSemanticScore = 0.5,
+  ): Promise<Array<{ capability: Capability; semanticScore: number }>> {
+    const embedding = await this.embeddingModel.encode(intent);
+    const embeddingStr = `[${embedding.join(",")}]`;
+
+    const result = await this.db.query(
+      `SELECT *,
+        1 - (intent_embedding <=> $1::vector) as semantic_score
+      FROM workflow_pattern
+      WHERE code_hash IS NOT NULL
+        AND 1 - (intent_embedding <=> $1::vector) >= $2
+      ORDER BY intent_embedding <=> $1::vector
+      LIMIT $3`,
+      [embeddingStr, minSemanticScore, limit],
+    );
+
+    const matches = result.map((row) => ({
+      capability: this.rowToCapability(row as Row),
+      semanticScore: row.semantic_score as number,
+    }));
+
+    return matches;
+  }
+
+  /**
+   * Get total count of stored capabilities
+   */
+  async getCapabilityCount(): Promise<number> {
+    const result = await this.db.queryOne(
+      `SELECT COUNT(*) as count FROM workflow_pattern WHERE code_hash IS NOT NULL`,
+    );
+    return Number(result?.count ?? 0);
+  }
+
+  /**
+   * Get capabilities statistics
+   */
+  async getStats(): Promise<{
+    totalCapabilities: number;
+    totalExecutions: number;
+    avgSuccessRate: number;
+    avgDurationMs: number;
+  }> {
+    const result = await this.db.queryOne(
+      `SELECT
+        COUNT(*) as total,
+        COALESCE(SUM(usage_count), 0) as executions,
+        COALESCE(AVG(success_rate), 0) as avg_success,
+        COALESCE(AVG(avg_duration_ms), 0) as avg_duration
+      FROM workflow_pattern
+      WHERE code_hash IS NOT NULL`,
+    );
+
+    return {
+      totalCapabilities: Number(result?.total ?? 0),
+      totalExecutions: Number(result?.executions ?? 0),
+      avgSuccessRate: Number(result?.avg_success ?? 0),
+      avgDurationMs: Number(result?.avg_duration ?? 0),
+    };
+  }
+
+  /**
+   * Search capabilities by context tools overlap (Story 7.4 - AC#2)
+   *
+   * Finds capabilities whose `tools_used` overlap with the provided context tools.
+   * Used for Strategic Discovery Mode (ADR-038) to suggest capabilities
+   * that match the current tool context in a DAG workflow.
+   *
+   * Overlap score: `|intersection| / |capability.tools_used|`
+   * Only returns capabilities with overlap >= minOverlap (default 0.3)
+   *
+   * @param contextTools - Tools currently in use (from DAG context)
+   * @param limit - Maximum results (default: 5)
+   * @param minOverlap - Minimum overlap threshold (default: 0.3 = 30%)
+   * @returns Capabilities sorted by overlapScore descending
+   */
+  async searchByContext(
+    contextTools: string[],
+    limit = 5,
+    minOverlap = 0.3,
+  ): Promise<Array<{ capability: Capability; overlapScore: number }>> {
+    if (contextTools.length === 0) {
+      logger.debug("searchByContext called with empty contextTools");
+      return [];
+    }
+
+    // Issue #5 fix: Input validation for security (prevent injection via malformed strings)
+    const MAX_TOOL_LENGTH = 256;
+    const MAX_TOOLS = 100;
+    const validatedTools = contextTools
+      .filter((t): t is string =>
+        typeof t === "string" && t.length > 0 && t.length <= MAX_TOOL_LENGTH
+      )
+      .slice(0, MAX_TOOLS);
+
+    if (validatedTools.length === 0) {
+      logger.warn("searchByContext: All contextTools filtered out during validation");
+      return [];
+    }
+
+    if (validatedTools.length !== contextTools.length) {
+      logger.debug("searchByContext: Some tools filtered", {
+        original: contextTools.length,
+        validated: validatedTools.length,
+      });
+    }
+
+    // Query capabilities with tools_used in dag_structure JSONB
+    // Calculate overlap: count matching tools / total tools in capability
+    const result = await this.db.query(
+      `WITH capability_tools AS (
+        SELECT
+          pattern_id,
+          dag_structure,
+          code_snippet,
+          code_hash,
+          intent_embedding,
+          name,
+          description,
+          usage_count,
+          success_count,
+          success_rate,
+          avg_duration_ms,
+          created_at,
+          last_used,
+          source,
+          cache_config,
+          parameters_schema,
+          -- Extract tools_used array from JSONB
+          COALESCE(
+            (dag_structure->>'tools_used')::jsonb,
+            '[]'::jsonb
+          ) as tools_used_arr
+        FROM workflow_pattern
+        WHERE code_hash IS NOT NULL
+          AND dag_structure IS NOT NULL
+          AND dag_structure->>'tools_used' IS NOT NULL
+      ),
+      overlap_calc AS (
+        SELECT
+          ct.*,
+          -- Count how many context tools are in this capability's tools_used
+          (
+            SELECT COUNT(*)
+            FROM jsonb_array_elements_text(ct.tools_used_arr) as tool
+            WHERE tool = ANY($1::text[])
+          ) as matching_count,
+          -- Total tools in capability
+          jsonb_array_length(ct.tools_used_arr) as total_tools
+        FROM capability_tools ct
+      )
+      SELECT
+        *,
+        CASE
+          WHEN total_tools > 0
+          THEN matching_count::real / total_tools::real
+          ELSE 0
+        END as overlap_score
+      FROM overlap_calc
+      WHERE total_tools > 0
+        AND matching_count::real / total_tools::real >= $2
+      ORDER BY overlap_score DESC, usage_count DESC
+      LIMIT $3`,
+      [validatedTools, minOverlap, limit],
+    );
+
+    const matches = result.map((row) => ({
+      capability: this.rowToCapability(row as Row),
+      overlapScore: row.overlap_score as number,
+    }));
+
+    logger.debug("searchByContext results", {
+      contextTools: validatedTools.slice(0, 3),
+      matchCount: matches.length,
+      topScore: matches[0]?.overlapScore ?? 0,
+    });
+
+    return matches;
+  }
+
+  /**
+   * Find a capability by its ID (Story 7.4)
+   *
+   * @param id - Capability pattern_id
+   * @returns Capability if found, null otherwise
+   */
+  async findById(id: string): Promise<Capability | null> {
+    const result = await this.db.query(
+      `SELECT * FROM workflow_pattern WHERE pattern_id = $1`,
+      [id],
+    );
+
+    if (result.length === 0) {
+      return null;
+    }
+
+    return this.rowToCapability(result[0] as Row);
+  }
+
+  /**
+   * Convert database row to Capability object
+   */
+  private rowToCapability(row: Row): Capability {
+    // Parse embedding string to Float32Array
+    const embeddingStr = row.intent_embedding as string;
+    const embeddingArr = embeddingStr
+      .replace(/^\[|\]$/g, "")
+      .split(",")
+      .map(Number);
+    const intentEmbedding = new Float32Array(embeddingArr);
+
+    // Parse cache_config - may be object or string
+    let cacheConfig: CacheConfig = DEFAULT_CACHE_CONFIG;
+    if (row.cache_config) {
+      cacheConfig = typeof row.cache_config === "string"
+        ? JSON.parse(row.cache_config)
+        : row.cache_config as CacheConfig;
+    }
+
+    // Parse parameters_schema - may be object or string
+    let parametersSchema: Capability["parametersSchema"] = undefined;
+    if (row.parameters_schema) {
+      const schema = typeof row.parameters_schema === "string"
+        ? JSON.parse(row.parameters_schema)
+        : row.parameters_schema;
+      if (schema && typeof schema.type === "string") {
+        parametersSchema = schema as Capability["parametersSchema"];
+      }
+    }
+
+    // Story 7.4: Extract tools_used and tool_invocations from dag_structure JSONB
+    let toolsUsed: string[] | undefined;
+    let toolInvocations: Capability["toolInvocations"];
+    if (row.dag_structure) {
+      try {
+        const dagStruct = typeof row.dag_structure === "string"
+          ? JSON.parse(row.dag_structure)
+          : row.dag_structure;
+        if (Array.isArray(dagStruct?.tools_used)) {
+          toolsUsed = dagStruct.tools_used;
+        }
+        // Extract tool invocations for sequence visualization
+        if (Array.isArray(dagStruct?.tool_invocations)) {
+          toolInvocations = dagStruct.tool_invocations;
+        }
+      } catch {
+        // Ignore parse errors, toolsUsed/toolInvocations remain undefined
+      }
+    }
+
+    return {
+      id: row.pattern_id as string,
+      codeSnippet: (row.code_snippet as string) || "",
+      codeHash: (row.code_hash as string) || "",
+      intentEmbedding,
+      parametersSchema,
+      cacheConfig,
+      name: (row.name as string) || undefined,
+      description: (row.description as string) || undefined,
+      usageCount: row.usage_count as number,
+      successCount: row.success_count as number,
+      successRate: (row.success_rate as number) ?? 1.0,
+      avgDurationMs: (row.avg_duration_ms as number) ?? 0,
+      createdAt: new Date((row.created_at as string) || Date.now()),
+      lastUsed: new Date(row.last_used as string),
+      source: ((row.source as string) as "emergent" | "manual") || "emergent",
+      toolsUsed,
+      toolInvocations,
+    };
+  }
+
+  /**
+   * Generate a short name from intent
+   */
+  private generateName(intent: string): string {
+    // Take first 3-5 words, capitalize first letter
+    const words = intent.split(/\s+/).slice(0, 5);
+    const name = words.join(" ");
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  }
+
+  // ============================================
+  // Capability Dependency Methods (Tech-spec)
+  // ============================================
+
+  /**
+   * Threshold for edge_source upgrade from 'inferred' to 'observed'
+   */
+  private static readonly OBSERVED_THRESHOLD = 3;
+
+  /**
+   * Edge type weights for confidence score calculation
+   */
+  private static readonly EDGE_TYPE_WEIGHTS: Record<CapabilityEdgeType, number> = {
+    dependency: 1.0,
+    contains: 0.8,
+    alternative: 0.6,
+    sequence: 0.5,
+  };
+
+  /**
+   * Edge source modifiers for confidence score calculation
+   */
+  private static readonly EDGE_SOURCE_MODIFIERS: Record<CapabilityEdgeSource, number> = {
+    observed: 1.0,
+    inferred: 0.7,
+    template: 0.5,
+  };
+
+  /**
+   * Add a dependency relationship between two capabilities
+   *
+   * @param input - Dependency creation input
+   * @returns The created or updated dependency
+   */
+  async addDependency(input: CreateCapabilityDependencyInput): Promise<CapabilityDependency> {
+    const { fromCapabilityId, toCapabilityId, edgeType, edgeSource = "inferred" } = input;
+
+    // Calculate initial confidence score
+    const typeWeight = CapabilityStore.EDGE_TYPE_WEIGHTS[edgeType];
+    const sourceModifier = CapabilityStore.EDGE_SOURCE_MODIFIERS[edgeSource];
+    const confidenceScore = typeWeight * sourceModifier;
+
+    logger.debug("Adding capability dependency", {
+      fromCapabilityId,
+      toCapabilityId,
+      edgeType,
+      edgeSource,
+      confidenceScore,
+    });
+
+    const result = await this.db.query(
+      `INSERT INTO capability_dependency (
+        from_capability_id, to_capability_id, observed_count, confidence_score,
+        edge_type, edge_source, created_at, last_observed
+      ) VALUES ($1, $2, 1, $3::real, $4, $5, NOW(), NOW())
+      ON CONFLICT (from_capability_id, to_capability_id) DO UPDATE SET
+        observed_count = capability_dependency.observed_count + 1,
+        last_observed = NOW(),
+        edge_source = CASE
+          WHEN capability_dependency.observed_count + 1 >= $6::integer
+            AND capability_dependency.edge_source = 'inferred'
+          THEN 'observed'
+          ELSE capability_dependency.edge_source
+        END,
+        confidence_score = $7::real * CASE
+          WHEN capability_dependency.observed_count + 1 >= $6::integer
+            AND capability_dependency.edge_source = 'inferred'
+          THEN $8::real
+          ELSE $9::real
+        END
+      RETURNING *`,
+      [
+        fromCapabilityId,
+        toCapabilityId,
+        confidenceScore,
+        edgeType,
+        edgeSource,
+        CapabilityStore.OBSERVED_THRESHOLD,
+        typeWeight,
+        CapabilityStore.EDGE_SOURCE_MODIFIERS["observed"],
+        sourceModifier,
+      ],
+    );
+
+    if (result.length === 0) {
+      throw new Error("Failed to add capability dependency - no result returned");
+    }
+
+    const dep = this.rowToDependency(result[0]);
+
+    logger.info("Capability dependency added", {
+      fromCapabilityId: dep.fromCapabilityId,
+      toCapabilityId: dep.toCapabilityId,
+      observedCount: dep.observedCount,
+      edgeSource: dep.edgeSource,
+    });
+
+    // Warn if contains cycle detected (potential paradox)
+    if (edgeType === "contains") {
+      const reverseExists = await this.db.queryOne(
+        `SELECT 1 FROM capability_dependency
+         WHERE from_capability_id = $1 AND to_capability_id = $2 AND edge_type = 'contains'`,
+        [toCapabilityId, fromCapabilityId],
+      );
+      if (reverseExists) {
+        logger.warn(`Potential paradox: contains cycle detected between capabilities ${fromCapabilityId} ↔ ${toCapabilityId}`);
+      }
+    }
+
+    // Emit event for graph sync
+    eventBus.emit({
+      type: "capability.dependency.created",
+      source: "capability-store",
+      payload: {
+        from_capability_id: dep.fromCapabilityId,
+        to_capability_id: dep.toCapabilityId,
+        edge_type: dep.edgeType,
+        edge_source: dep.edgeSource,
+        observed_count: dep.observedCount,
+      },
+    });
+
+    return dep;
+  }
+
+  /**
+   * Update a dependency's observation count
+   *
+   * @param fromId - Source capability ID
+   * @param toId - Target capability ID
+   * @param incrementBy - Amount to increment observed_count (default: 1)
+   */
+  async updateDependency(fromId: string, toId: string, incrementBy = 1): Promise<void> {
+    await this.db.query(
+      `UPDATE capability_dependency SET
+        observed_count = observed_count + $1,
+        last_observed = NOW(),
+        edge_source = CASE
+          WHEN observed_count + $1 >= $2 AND edge_source = 'inferred'
+          THEN 'observed'
+          ELSE edge_source
+        END,
+        confidence_score = (
+          CASE edge_type
+            WHEN 'dependency' THEN 1.0
+            WHEN 'contains' THEN 0.8
+            WHEN 'alternative' THEN 0.6
+            ELSE 0.5
+          END
+        ) * (
+          CASE
+            WHEN observed_count + $1 >= $2 AND edge_source = 'inferred' THEN 1.0
+            WHEN edge_source = 'observed' THEN 1.0
+            WHEN edge_source = 'inferred' THEN 0.7
+            ELSE 0.5
+          END
+        )
+      WHERE from_capability_id = $3 AND to_capability_id = $4`,
+      [incrementBy, CapabilityStore.OBSERVED_THRESHOLD, fromId, toId],
+    );
+
+    logger.debug("Capability dependency updated", { fromId, toId, incrementBy });
+  }
+
+  /**
+   * Get dependencies for a capability
+   *
+   * @param capabilityId - Capability ID
+   * @param direction - 'from' (outgoing), 'to' (incoming), or 'both'
+   * @returns List of dependency relationships
+   */
+  async getDependencies(
+    capabilityId: string,
+    direction: "from" | "to" | "both" = "both",
+  ): Promise<CapabilityDependency[]> {
+    let query: string;
+    let params: string[];
+
+    switch (direction) {
+      case "from":
+        query = `SELECT * FROM capability_dependency WHERE from_capability_id = $1 ORDER BY confidence_score DESC`;
+        params = [capabilityId];
+        break;
+      case "to":
+        query = `SELECT * FROM capability_dependency WHERE to_capability_id = $1 ORDER BY confidence_score DESC`;
+        params = [capabilityId];
+        break;
+      case "both":
+        query = `SELECT * FROM capability_dependency
+          WHERE from_capability_id = $1 OR to_capability_id = $1
+          ORDER BY confidence_score DESC`;
+        params = [capabilityId];
+        break;
+    }
+
+    const result = await this.db.query(query, params);
+    return result.map((row) => this.rowToDependency(row));
+  }
+
+  /**
+   * Get count of dependencies for a capability
+   *
+   * @param capabilityId - Capability ID
+   * @returns Number of dependencies (both directions)
+   */
+  async getDependenciesCount(capabilityId: string): Promise<number> {
+    const result = await this.db.queryOne(
+      `SELECT COUNT(*) as count FROM capability_dependency
+       WHERE from_capability_id = $1 OR to_capability_id = $1`,
+      [capabilityId],
+    );
+    return Number(result?.count ?? 0);
+  }
+
+  /**
+   * Remove a dependency relationship
+   *
+   * @param fromId - Source capability ID
+   * @param toId - Target capability ID
+   */
+  async removeDependency(fromId: string, toId: string): Promise<void> {
+    await this.db.query(
+      `DELETE FROM capability_dependency WHERE from_capability_id = $1 AND to_capability_id = $2`,
+      [fromId, toId],
+    );
+
+    logger.info("Capability dependency removed", { fromId, toId });
+
+    eventBus.emit({
+      type: "capability.dependency.removed",
+      source: "capability-store",
+      payload: {
+        from_capability_id: fromId,
+        to_capability_id: toId,
+      },
+    });
+  }
+
+  /**
+   * Get all capability dependencies (for graph sync)
+   *
+   * @param minConfidence - Minimum confidence score (default: 0.3)
+   * @returns All dependencies above threshold
+   */
+  async getAllDependencies(minConfidence = 0.3): Promise<CapabilityDependency[]> {
+    const result = await this.db.query(
+      `SELECT * FROM capability_dependency WHERE confidence_score > $1`,
+      [minConfidence],
+    );
+    return result.map((row) => this.rowToDependency(row));
+  }
+
+  /**
+   * Search capabilities by intent and include their dependencies
+   * Tech-spec Task 6: Enhanced search that returns dependencies with results
+   *
+   * @param intent - Natural language query
+   * @param limit - Maximum results (default: 5)
+   * @param minSemanticScore - Minimum semantic score (default: 0.5)
+   * @returns Capabilities with their dependencies
+   */
+  async searchByIntentWithDeps(
+    intent: string,
+    limit = 5,
+    minSemanticScore = 0.5,
+  ): Promise<Array<{
+    capability: Capability;
+    semanticScore: number;
+    dependencies: Capability[];
+  }>> {
+    // First, get the base search results
+    const results = await this.searchByIntent(intent, limit, minSemanticScore);
+
+    // For each result, fetch its dependencies (edge_type = 'dependency')
+    const enhancedResults = await Promise.all(
+      results.map(async ({ capability, semanticScore }) => {
+        // Get outgoing dependencies only
+        const depRows = await this.db.query(
+          `SELECT to_capability_id FROM capability_dependency
+           WHERE from_capability_id = $1 AND edge_type = 'dependency'
+           ORDER BY confidence_score DESC
+           LIMIT 10`,
+          [capability.id],
+        );
+
+        // Fetch the dependent capabilities
+        const dependencies: Capability[] = [];
+        for (const row of depRows) {
+          const depCap = await this.findById(row.to_capability_id as string);
+          if (depCap) {
+            dependencies.push(depCap);
+          }
+        }
+
+        return {
+          capability,
+          semanticScore,
+          dependencies,
+        };
+      }),
+    );
+
+    return enhancedResults;
+  }
+
+  /**
+   * Convert database row to CapabilityDependency object
+   */
+  private rowToDependency(row: Row): CapabilityDependency {
+    return {
+      fromCapabilityId: row.from_capability_id as string,
+      toCapabilityId: row.to_capability_id as string,
+      observedCount: row.observed_count as number,
+      confidenceScore: row.confidence_score as number,
+      edgeType: row.edge_type as CapabilityEdgeType,
+      edgeSource: row.edge_source as CapabilityEdgeSource,
+      createdAt: new Date(row.created_at as string),
+      lastObserved: new Date(row.last_observed as string),
+    };
+  }
+}

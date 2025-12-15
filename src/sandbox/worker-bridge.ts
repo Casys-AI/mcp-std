@@ -1,0 +1,632 @@
+/**
+ * Worker RPC Bridge - Native Tool Tracing via Web Workers
+ *
+ * Story 7.1b / ADR-032: Replaces subprocess-based sandbox with Web Worker + RPC bridge.
+ * Story 7.3b: Capability injection with BroadcastChannel tracing (ADR-036).
+ *
+ * Architecture:
+ * - WorkerBridge (this file): Main process coordinator
+ * - SandboxWorker: Worker script that executes user code
+ * - RPC Protocol: postMessage-based tool invocation
+ * - BroadcastChannel: Real-time capability trace collection (ADR-036)
+ *
+ * Benefits:
+ * - MCP tools work in sandbox (proxies instead of serialized functions)
+ * - Native tracing (no stdout parsing)
+ * - Structured RPC communication
+ * - Real-time capability tracing via BroadcastChannel
+ *
+ * @module sandbox/worker-bridge
+ */
+
+import type { MCPClientBase } from "../mcp/types.ts";
+import type {
+  CapabilityTraceEvent,
+  ExecutionCompleteMessage,
+  ExecutionResult,
+  InitMessage,
+  RPCCallMessage,
+  RPCResultMessage,
+  ToolDefinition,
+  TraceEvent,
+  WorkerToBridgeMessage,
+} from "./types.ts";
+import type { CapabilityStore } from "../capabilities/capability-store.ts";
+import type { Capability } from "../capabilities/types.ts";
+import type { GraphRAGEngine } from "../graphrag/graph-engine.ts";
+import { CapabilityCodeGenerator } from "../capabilities/code-generator.ts";
+import { getLogger } from "../telemetry/logger.ts";
+// Story 6.5: EventBus integration (ADR-036)
+import { eventBus } from "../events/mod.ts";
+
+const logger = getLogger("default");
+
+/**
+ * Configuration for WorkerBridge
+ */
+export interface WorkerBridgeConfig {
+  /** Maximum execution time in milliseconds (default: 30000) */
+  timeout?: number;
+  /** RPC call timeout in milliseconds (default: 10000) */
+  rpcTimeout?: number;
+  /** Optional CapabilityStore for eager learning (Story 7.2a) */
+  capabilityStore?: CapabilityStore;
+  /** Optional GraphRAGEngine for trace learning (Story 7.3b - AC#5) */
+  graphRAG?: GraphRAGEngine;
+}
+
+/**
+ * Default configuration values
+ */
+const DEFAULTS = {
+  TIMEOUT_MS: 30000,
+  RPC_TIMEOUT_MS: 10000,
+} as const;
+
+/**
+ * WorkerBridge - RPC Bridge for Sandbox Code Execution
+ *
+ * Coordinates between main process (MCP clients) and Worker (sandbox code).
+ * All tool calls are traced natively in the bridge, not via stdout parsing.
+ * Story 7.3b: Capability traces received via BroadcastChannel (ADR-036).
+ *
+ * @example
+ * ```typescript
+ * const bridge = new WorkerBridge(mcpClients);
+ * const toolDefs = buildToolDefinitions(searchResults);
+ * const capContext = bridge.buildCapabilityContext(capabilities);
+ * const result = await bridge.execute(code, toolDefs, context, capContext);
+ * const traces = bridge.getTraces(); // Tool + Capability traces!
+ * ```
+ */
+export class WorkerBridge {
+  private config: Omit<Required<WorkerBridgeConfig>, "capabilityStore" | "graphRAG">;
+  private capabilityStore?: CapabilityStore;
+  private graphRAG?: GraphRAGEngine;
+  private worker: Worker | null = null;
+  private traces: TraceEvent[] = [];
+  private pendingRPCs: Map<string, {
+    resolve: (value: unknown) => void;
+    reject: (error: Error) => void;
+    timeoutId: ReturnType<typeof setTimeout>;
+  }> = new Map();
+  private completionPromise: {
+    resolve: (result: ExecutionResult) => void;
+    reject: (error: Error) => void;
+  } | null = null;
+  private startTime: number = 0;
+  private lastExecutedCode: string = "";
+  private lastIntent?: string;
+
+  // Story 7.3b: BroadcastChannel for real-time capability trace collection (ADR-036)
+  private traceChannel: BroadcastChannel;
+  private codeGenerator: CapabilityCodeGenerator;
+
+  constructor(
+    private mcpClients: Map<string, MCPClientBase>,
+    config?: WorkerBridgeConfig,
+  ) {
+    this.config = {
+      timeout: config?.timeout ?? DEFAULTS.TIMEOUT_MS,
+      rpcTimeout: config?.rpcTimeout ?? DEFAULTS.RPC_TIMEOUT_MS,
+    };
+    this.capabilityStore = config?.capabilityStore;
+    this.graphRAG = config?.graphRAG;
+
+    // Story 7.3b: Setup BroadcastChannel for capability traces
+    // Story 6.5: Bridge capability traces to unified EventBus (ADR-036)
+    // Channel name: PML_TRACES_CHANNEL from src/events/event-bus.ts
+    this.traceChannel = new BroadcastChannel("pml-traces");
+    this.traceChannel.onmessage = (e: MessageEvent<CapabilityTraceEvent>) => {
+      // Add capability traces to unified trace array in real-time (backward compat)
+      this.traces.push(e.data);
+
+      // Story 6.5: Forward capability traces to unified EventBus
+      // ADR-041: Include parentTraceId for hierarchical tracking
+      if (e.data.type === "capability_start") {
+        eventBus.emit({
+          type: "capability.start",
+          source: "sandbox-worker",
+          payload: {
+            capabilityId: e.data.capabilityId,
+            capability: e.data.capability,
+            traceId: e.data.traceId,
+            parentTraceId: e.data.parentTraceId, // ADR-041
+            args: e.data.args, // ADR-041
+          },
+        });
+      } else if (e.data.type === "capability_end") {
+        eventBus.emit({
+          type: "capability.end",
+          source: "sandbox-worker",
+          payload: {
+            capabilityId: e.data.capabilityId,
+            capability: e.data.capability,
+            traceId: e.data.traceId,
+            parentTraceId: e.data.parentTraceId, // ADR-041
+            success: e.data.success ?? true,
+            durationMs: e.data.durationMs ?? 0,
+            error: e.data.error,
+          },
+        });
+      }
+    };
+
+    // Story 7.3b: Code generator for capability injection
+    this.codeGenerator = new CapabilityCodeGenerator();
+
+    logger.debug("WorkerBridge initialized", {
+      mcpClientsCount: mcpClients.size,
+      timeout: this.config.timeout,
+      rpcTimeout: this.config.rpcTimeout,
+      capabilityStoreEnabled: !!this.capabilityStore,
+      graphRAGEnabled: !!this.graphRAG,
+    });
+  }
+
+  /**
+   * Build capability context code for injection into Worker
+   * Story 7.3b: Generates inline JavaScript functions with tracing
+   *
+   * @param capabilities - Array of capabilities to inject
+   * @returns JavaScript code string defining capabilities object
+   */
+  buildCapabilityContext(capabilities: Capability[]): string {
+    return this.codeGenerator.buildCapabilitiesObject(capabilities);
+  }
+
+  /**
+   * Execute code in Worker sandbox with RPC bridge for tool calls
+   *
+   * @param code TypeScript code to execute
+   * @param toolDefinitions Tool definitions for proxy generation
+   * @param context Optional context variables to inject (may include 'intent' for capability learning)
+   * @param capabilityContext Optional capability code (Story 7.3b - generated by buildCapabilityContext)
+   * @param parentTraceId Optional parent trace ID for hierarchical tracking (ADR-041)
+   * @returns Execution result with traces available via getTraces()
+   */
+  async execute(
+    code: string,
+    toolDefinitions: ToolDefinition[],
+    context?: Record<string, unknown>,
+    capabilityContext?: string,
+    parentTraceId?: string,
+  ): Promise<ExecutionResult> {
+    this.startTime = performance.now();
+    this.traces = []; // Reset traces for new execution
+    this.lastExecutedCode = code;
+    this.lastIntent = context?.intent as string | undefined;
+
+    try {
+      logger.debug("Starting Worker execution", {
+        codeLength: code.length,
+        toolCount: toolDefinitions.length,
+        contextKeys: context ? Object.keys(context) : [],
+      });
+
+      // 1. Spawn Worker with no permissions (sandboxed)
+      const workerUrl = new URL("./sandbox-worker.ts", import.meta.url).href;
+      this.worker = new Worker(workerUrl, {
+        type: "module",
+        // @ts-ignore: Deno-specific Worker option for permissions
+        deno: { permissions: "none" },
+      });
+
+      // 2. Setup message handler
+      this.worker.onmessage = (e: MessageEvent<WorkerToBridgeMessage>) => {
+        this.handleWorkerMessage(e.data);
+      };
+
+      this.worker.onerror = (e: ErrorEvent) => {
+        logger.error("Worker error", { message: e.message });
+        if (this.completionPromise) {
+          this.completionPromise.reject(new Error(`Worker error: ${e.message}`));
+        }
+      };
+
+      // 3. Create completion promise
+      const result = await new Promise<ExecutionResult>((resolve, reject) => {
+        this.completionPromise = { resolve, reject };
+
+        // Setup overall timeout
+        const timeoutId = setTimeout(() => {
+          this.terminate();
+          reject(new Error("TIMEOUT"));
+        }, this.config.timeout);
+
+        // Send init message (Story 7.3b: include capabilityContext, ADR-041: include parentTraceId)
+        const initMessage: InitMessage = {
+          type: "init",
+          code,
+          toolDefinitions,
+          context,
+          capabilityContext,
+          parentTraceId, // ADR-041: Propagate trace hierarchy
+        };
+
+        this.worker!.postMessage(initMessage);
+
+        // Clear timeout on completion (handled in handleWorkerMessage)
+        this.completionPromise.resolve = (result) => {
+          clearTimeout(timeoutId);
+          resolve(result);
+        };
+      });
+
+      logger.info("Worker execution completed", {
+        success: result.success,
+        executionTimeMs: result.executionTimeMs,
+        tracesCount: this.traces.length,
+      });
+
+      // Eager Learning: Save capability after successful execution (Story 7.2a)
+      // Only save if ALL tools succeeded - partial failures create inconsistent capabilities
+      const hasToolFailures = this.hasAnyToolFailed();
+      if (result.success && this.capabilityStore && this.lastIntent && !hasToolFailures) {
+        try {
+          // Get detailed invocations for sequence visualization
+          const invocations = this.getToolInvocations();
+          const toolInvocations = invocations
+            .filter((inv) => inv.success) // Only successful invocations
+            .map((inv) => ({
+              id: inv.id,
+              tool: inv.tool,
+              ts: inv.ts,
+              durationMs: inv.durationMs,
+              sequenceIndex: inv.sequenceIndex,
+            }));
+
+          await this.capabilityStore.saveCapability({
+            code: this.lastExecutedCode,
+            intent: this.lastIntent,
+            durationMs: Math.round(result.executionTimeMs),
+            success: true,
+            toolsUsed: this.getToolsCalled(),
+            toolInvocations,
+          });
+          logger.debug("Capability saved via eager learning", {
+            intent: this.lastIntent.substring(0, 50),
+            toolsUsed: this.getToolsCalled().length,
+            toolInvocations: toolInvocations.length,
+          });
+        } catch (capError) {
+          // Don't fail execution if capability storage fails
+          logger.warn("Failed to save capability", {
+            error: capError instanceof Error ? capError.message : String(capError),
+          });
+        }
+      } else if (hasToolFailures) {
+        const failedTools = this.traces
+          .filter((t): t is TraceEvent & { tool: string } =>
+            t.type === "tool_end" && !t.success && "tool" in t
+          )
+          .map((t) => t.tool);
+        logger.info("Capability not saved due to tool failures", {
+          intent: this.lastIntent?.substring(0, 50),
+          failedTools,
+        });
+      }
+
+      // Story 7.3b (AC#5): Update GraphRAG with execution traces for dependency learning
+      if (this.graphRAG && this.traces.length >= 2) {
+        try {
+          await this.graphRAG.updateFromCodeExecution(this.getTraces());
+          logger.debug("GraphRAG updated from code execution", {
+            tracesCount: this.traces.length,
+          });
+        } catch (graphError) {
+          // Don't fail execution if GraphRAG update fails
+          logger.warn("Failed to update GraphRAG from execution", {
+            error: graphError instanceof Error ? graphError.message : String(graphError),
+          });
+        }
+      }
+
+      return result;
+    } catch (error) {
+      const executionTimeMs = performance.now() - this.startTime;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
+      logger.debug("Worker execution failed", {
+        error: errorMessage,
+        executionTimeMs,
+      });
+
+      // Map error types
+      if (errorMessage.includes("TIMEOUT")) {
+        return {
+          success: false,
+          error: {
+            type: "TimeoutError",
+            message: `Execution exceeded timeout of ${this.config.timeout}ms`,
+          },
+          executionTimeMs,
+        };
+      }
+
+      return {
+        success: false,
+        error: {
+          type: "RuntimeError",
+          message: errorMessage,
+        },
+        executionTimeMs,
+      };
+    } finally {
+      this.terminate();
+    }
+  }
+
+  /**
+   * Handle messages from Worker
+   */
+  private handleWorkerMessage(msg: WorkerToBridgeMessage): void {
+    if (msg.type === "rpc_call") {
+      this.handleRPCCall(msg as RPCCallMessage);
+    } else if (msg.type === "execution_complete") {
+      this.handleExecutionComplete(msg as ExecutionCompleteMessage);
+    }
+  }
+
+  /**
+   * Handle RPC call from Worker - route to MCPClient with native tracing
+   * Story 6.5: Also emits events to EventBus (ADR-036)
+   * ADR-041: Extracts parentTraceId for hierarchical tracking
+   */
+  private async handleRPCCall(msg: RPCCallMessage): Promise<void> {
+    const { id, server, tool, args, parentTraceId } = msg;
+    const toolId = `${server}:${tool}`;
+    const startTime = Date.now();
+
+    // TRACE START - native tracing in bridge!
+    // ADR-041: Include args and parentTraceId for hierarchical tracking
+    this.traces.push({
+      type: "tool_start",
+      tool: toolId,
+      traceId: id,
+      ts: startTime,
+      args: args,
+      parentTraceId: parentTraceId, // ADR-041: Propagate hierarchy
+    });
+
+    // Story 6.5: Emit tool.start event to EventBus
+    // ADR-041: Include parentTraceId in event payload
+    eventBus.emit({
+      type: "tool.start",
+      source: "worker-bridge",
+      payload: {
+        toolId: toolId,
+        traceId: id,
+        args: args,
+        parentTraceId: parentTraceId, // ADR-041
+      },
+    });
+
+    logger.debug("RPC call received", { id, server, tool, argsKeys: Object.keys(args) });
+
+    try {
+      const client = this.mcpClients.get(server);
+      if (!client) {
+        throw new Error(`MCP server "${server}" not connected`);
+      }
+
+      const result = await client.callTool(tool, args);
+      const endTime = Date.now();
+      const durationMs = endTime - startTime;
+
+      // ADR-043: Check if MCP tool returned isError (soft failure)
+      const mcpResult = result as { isError?: boolean; content?: Array<{ text?: string }> };
+      const isToolError = mcpResult.isError === true;
+      const errorMessage = isToolError && mcpResult.content?.[0]?.text
+        ? mcpResult.content[0].text
+        : undefined;
+
+      // TRACE END - success or soft failure
+      // ADR-041: Include parentTraceId for hierarchical tracking
+      this.traces.push({
+        type: "tool_end",
+        tool: toolId,
+        traceId: id,
+        ts: endTime,
+        success: !isToolError,
+        durationMs: durationMs,
+        parentTraceId: parentTraceId, // ADR-041
+        ...(isToolError && errorMessage ? { error: errorMessage } : {}),
+      });
+
+      // Story 6.5: Emit tool.end event to EventBus
+      eventBus.emit({
+        type: "tool.end",
+        source: "worker-bridge",
+        payload: {
+          toolId: toolId,
+          traceId: id,
+          success: !isToolError,
+          durationMs: durationMs,
+          parentTraceId: parentTraceId, // ADR-041
+        },
+      });
+
+      // Send result back to Worker (still send the result, let user code handle it)
+      const response: RPCResultMessage = {
+        type: "rpc_result",
+        id,
+        success: true, // RPC succeeded, but tool may have returned isError
+        result,
+      };
+      this.worker?.postMessage(response);
+
+      logger.debug("RPC call succeeded", { id, tool: toolId, durationMs: durationMs });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const endTime = Date.now();
+      const durationMs = endTime - startTime;
+
+      // TRACE END - failure
+      // ADR-041: Include parentTraceId for hierarchical tracking
+      this.traces.push({
+        type: "tool_end",
+        tool: toolId,
+        traceId: id,
+        ts: endTime,
+        success: false,
+        durationMs: durationMs,
+        error: errorMessage,
+        parentTraceId: parentTraceId, // ADR-041
+      });
+
+      // Story 6.5: Emit tool.end event to EventBus (failure)
+      eventBus.emit({
+        type: "tool.end",
+        source: "worker-bridge",
+        payload: {
+          toolId: toolId,
+          traceId: id,
+          success: false,
+          durationMs: durationMs,
+          error: errorMessage,
+          parentTraceId: parentTraceId, // ADR-041
+        },
+      });
+
+      // Send error back to Worker
+      const response: RPCResultMessage = {
+        type: "rpc_result",
+        id,
+        success: false,
+        error: errorMessage,
+      };
+      this.worker?.postMessage(response);
+
+      logger.debug("RPC call failed", { id, tool: toolId, error: errorMessage });
+    }
+  }
+
+  /**
+   * Handle execution complete message from Worker
+   */
+  private handleExecutionComplete(msg: ExecutionCompleteMessage): void {
+    const executionTimeMs = performance.now() - this.startTime;
+
+    if (this.completionPromise) {
+      if (msg.success) {
+        this.completionPromise.resolve({
+          success: true,
+          result: msg.result,
+          executionTimeMs,
+        });
+      } else {
+        this.completionPromise.resolve({
+          success: false,
+          error: {
+            type: "RuntimeError",
+            message: msg.error || "Unknown error",
+          },
+          executionTimeMs,
+        });
+      }
+    }
+  }
+
+  /**
+   * Get all trace events from the execution (sorted chronologically)
+   * Story 7.3b: Includes both tool traces (from RPC) and capability traces (from BroadcastChannel)
+   */
+  getTraces(): TraceEvent[] {
+    // Return copy sorted by timestamp (tool and capability traces interleaved correctly)
+    return [...this.traces].sort((a, b) => a.ts - b.ts);
+  }
+
+  /**
+   * Get list of successfully called tools (for GraphRAG integration)
+   */
+  getToolsCalled(): string[] {
+    const toolsCalled = new Set<string>();
+
+    for (const trace of this.traces) {
+      if (trace.type === "tool_end" && trace.success) {
+        toolsCalled.add(trace.tool);
+      }
+    }
+
+    return Array.from(toolsCalled);
+  }
+
+  /**
+   * Check if any tool call failed during execution
+   * Used to prevent saving capabilities with partial tool failures
+   */
+  hasAnyToolFailed(): boolean {
+    for (const trace of this.traces) {
+      if (trace.type === "tool_end" && !trace.success) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Get detailed tool invocations with timestamps for sequence visualization
+   * Unlike getToolsCalled() which deduplicates, this returns EVERY invocation.
+   * Enables graph visualization of execution order and parallelism detection.
+   */
+  getToolInvocations(): import("./types.ts").ToolInvocation[] {
+    const invocations: import("./types.ts").ToolInvocation[] = [];
+    let sequenceIndex = 0;
+
+    // Sort traces by timestamp to get execution order
+    const sortedTraces = [...this.traces].sort((a, b) => a.ts - b.ts);
+
+    for (const trace of sortedTraces) {
+      if (trace.type === "tool_end" && "tool" in trace) {
+        invocations.push({
+          id: `${trace.tool}#${sequenceIndex}`,
+          tool: trace.tool,
+          traceId: trace.traceId,
+          ts: trace.ts,
+          durationMs: trace.durationMs ?? 0,
+          success: trace.success ?? false,
+          sequenceIndex,
+          error: trace.error,
+        });
+        sequenceIndex++;
+      }
+    }
+
+    return invocations;
+  }
+
+  /**
+   * Terminate the Worker and cleanup resources
+   * Story 7.3b: Also closes BroadcastChannel
+   */
+  terminate(): void {
+    // Cancel pending RPC calls
+    for (const [id, pending] of this.pendingRPCs) {
+      clearTimeout(pending.timeoutId);
+      pending.reject(new Error("Worker terminated"));
+      this.pendingRPCs.delete(id);
+    }
+
+    // Terminate worker
+    if (this.worker) {
+      this.worker.terminate();
+      this.worker = null;
+    }
+
+    // Note: Don't close traceChannel here - it may be reused for next execution
+    // The channel is closed when WorkerBridge is garbage collected
+
+    logger.debug("WorkerBridge terminated", { tracesCount: this.traces.length });
+  }
+
+  /**
+   * Cleanup resources (call when WorkerBridge is no longer needed)
+   * Story 7.3b: Closes BroadcastChannel
+   */
+  cleanup(): void {
+    this.terminate();
+    this.traceChannel.close();
+    logger.debug("WorkerBridge cleanup complete");
+  }
+}
