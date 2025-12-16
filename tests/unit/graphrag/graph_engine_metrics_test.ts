@@ -365,12 +365,12 @@ Deno.test("GraphRAGEngine.getMetrics - localAlpha structure is correct with trac
 
   // Insert test algorithm traces with local alpha data
   await db.query(`
-    INSERT INTO algorithm_traces (algorithm_mode, target_type, params, signals, final_score, decision)
+    INSERT INTO algorithm_traces (algorithm_mode, target_type, params, signals, final_score, threshold_used, decision)
     VALUES
-      ('active_search', 'tool', '{"alpha": 0.65}', '{"graphDensity": 0.1, "alphaAlgorithm": "embeddings_hybrides", "coldStart": false}', 0.85, 'accepted'),
-      ('active_search', 'tool', '{"alpha": 0.70}', '{"graphDensity": 0.1, "alphaAlgorithm": "embeddings_hybrides", "coldStart": false}', 0.80, 'accepted'),
-      ('passive_suggestion', 'tool', '{"alpha": 0.80}', '{"graphDensity": 0.1, "alphaAlgorithm": "heat_diffusion", "coldStart": false}', 0.75, 'accepted'),
-      ('passive_suggestion', 'capability', '{"alpha": 0.90}', '{"graphDensity": 0.1, "alphaAlgorithm": "heat_hierarchical", "coldStart": true}', 0.70, 'accepted')
+      ('active_search', 'tool', '{"alpha": 0.65}', '{"graphDensity": 0.1, "alphaAlgorithm": "embeddings_hybrides", "coldStart": false}', 0.85, 0.70, 'accepted'),
+      ('active_search', 'tool', '{"alpha": 0.70}', '{"graphDensity": 0.1, "alphaAlgorithm": "embeddings_hybrides", "coldStart": false}', 0.80, 0.70, 'accepted'),
+      ('passive_suggestion', 'tool', '{"alpha": 0.80}', '{"graphDensity": 0.1, "alphaAlgorithm": "heat_diffusion", "coldStart": false}', 0.75, 0.70, 'accepted'),
+      ('passive_suggestion', 'capability', '{"alpha": 0.90}', '{"graphDensity": 0.1, "alphaAlgorithm": "heat_hierarchical", "coldStart": true}', 0.70, 0.70, 'accepted')
   `);
 
   const metrics = await engine.getMetrics("24h");
@@ -407,10 +407,10 @@ Deno.test("GraphRAGEngine.getMetrics - localAlpha avgAlpha is in valid range", a
 
   // Insert traces with various alpha values
   await db.query(`
-    INSERT INTO algorithm_traces (algorithm_mode, target_type, params, signals, final_score, decision)
+    INSERT INTO algorithm_traces (algorithm_mode, target_type, params, signals, final_score, threshold_used, decision)
     VALUES
-      ('active_search', 'tool', '{"alpha": 0.5}', '{"graphDensity": 0.5, "alphaAlgorithm": "embeddings_hybrides"}', 0.9, 'accepted'),
-      ('active_search', 'tool', '{"alpha": 1.0}', '{"graphDensity": 0.0, "alphaAlgorithm": "bayesian", "coldStart": true}', 0.6, 'accepted')
+      ('active_search', 'tool', '{"alpha": 0.5}', '{"graphDensity": 0.5, "alphaAlgorithm": "embeddings_hybrides"}', 0.9, 0.70, 'accepted'),
+      ('active_search', 'tool', '{"alpha": 1.0}', '{"graphDensity": 0.0, "alphaAlgorithm": "bayesian", "coldStart": true}', 0.6, 0.70, 'accepted')
   `);
 
   const metrics = await engine.getMetrics("24h");

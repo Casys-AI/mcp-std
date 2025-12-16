@@ -103,7 +103,7 @@ agent cis/brainstorming-coach
 
 ## Configuration
 
-Edit `/.bmad/cis/config.yaml`:
+Edit `/.bmad/core/config.yaml`:
 
 ```yaml
 output_folder: ./creative-outputs

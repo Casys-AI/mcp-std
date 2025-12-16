@@ -33,7 +33,9 @@ import type { TraceEvent } from "../sandbox/types.ts";
 // Story 6.5: EventBus integration (ADR-036)
 import { eventBus } from "../events/mod.ts";
 // ADR-048: Local adaptive alpha
-import { LocalAlphaCalculator, type AlphaMode, type NodeType } from "./local-alpha.ts";
+import { LocalAlphaCalculator, type NodeType } from "./local-alpha.ts";
+// Story 7.6: Algorithm tracing
+import type { AlgorithmTracer } from "../telemetry/algorithm-tracer.ts";
 
 // Extract exports from Graphology packages
 const { DirectedGraph } = graphologyPkg as any;
@@ -54,6 +56,7 @@ export class GraphRAGEngine {
   private eventTarget: EventTarget;
   private listenerMap: Map<(event: GraphEvent) => void, EventListener> = new Map();
   private localAlphaCalculator: LocalAlphaCalculator | null = null; // ADR-048
+  private algorithmTracer: AlgorithmTracer | null = null; // Story 7.6 - Algorithm tracing
 
   constructor(private db: PGliteClient) {
     this.graph = new DirectedGraph({ allowSelfLoops: false });
@@ -1583,13 +1586,34 @@ export class GraphRAGEngine {
       );
 
       // 4. Compute hybrid scores for each candidate with local alpha (ADR-048)
+      // Store alpha breakdown for tracing (keyed by toolId for post-sort lookup)
+      const alphaBreakdowns = new Map<string, {
+        alpha: number;
+        algorithm: string;
+        coldStart: boolean;
+      }>();
+
       const results: HybridSearchResult[] = semanticResults.map((result) => {
         const graphScore = this.computeGraphRelatedness(result.toolId, contextTools);
 
-        // ADR-048: Use local alpha per tool (Active Search mode)
-        const localAlpha = this.localAlphaCalculator
-          ? this.localAlphaCalculator.getLocalAlpha("active", result.toolId, "tool", contextTools)
-          : globalAlpha;
+        // ADR-048: Use local alpha per tool (Active Search mode) with breakdown for tracing
+        let localAlpha = globalAlpha;
+        let alphaAlgorithm = "none";
+        let coldStart = false;
+
+        if (this.localAlphaCalculator) {
+          const breakdown = this.localAlphaCalculator.getLocalAlphaWithBreakdown(
+            "active",
+            result.toolId,
+            "tool",
+            contextTools,
+          );
+          localAlpha = breakdown.alpha;
+          alphaAlgorithm = breakdown.algorithm;
+          coldStart = breakdown.coldStart;
+        }
+
+        alphaBreakdowns.set(result.toolId, { alpha: localAlpha, algorithm: alphaAlgorithm, coldStart });
 
         const finalScore = localAlpha * result.score + (1 - localAlpha) * graphScore;
 
@@ -1638,10 +1662,44 @@ export class GraphRAGEngine {
         }
       }
 
+      // Story 7.6: Log algorithm traces for observability (fire-and-forget)
+      if (this.algorithmTracer) {
+        for (const result of topResults) {
+          const breakdown = alphaBreakdowns.get(result.toolId) || {
+            alpha: globalAlpha,
+            algorithm: "none",
+            coldStart: false,
+          };
+
+          this.algorithmTracer.logTrace({
+            algorithmMode: "active_search",
+            targetType: "tool",
+            intent: query.substring(0, 200),
+            signals: {
+              semanticScore: result.semanticScore,
+              graphScore: result.graphScore,
+              graphDensity: density,
+              spectralClusterMatch: false, // N/A for hybrid search
+              localAlpha: breakdown.alpha,
+              alphaAlgorithm: breakdown.algorithm as "embeddings_hybrides" | "heat_diffusion" | "heat_hierarchical" | "bayesian" | "none",
+              coldStart: breakdown.coldStart,
+            },
+            params: {
+              alpha: breakdown.alpha,
+              reliabilityFactor: 1.0,
+              structuralBoost: 0,
+            },
+            finalScore: result.finalScore,
+            thresholdUsed: 0.5, // minScore threshold
+            decision: "accepted",
+          });
+        }
+      }
+
       const elapsedMs = performance.now() - startTime;
       log.info(
         `[searchToolsHybrid] "${query}" → ${topResults.length} results (alpha=${
-          alpha.toFixed(2)
+          globalAlpha.toFixed(2)
         }, ${elapsedMs.toFixed(1)}ms)`,
       );
 
@@ -1719,6 +1777,18 @@ export class GraphRAGEngine {
    */
   getLocalAlphaCalculator(): LocalAlphaCalculator | null {
     return this.localAlphaCalculator;
+  }
+
+  /**
+   * Set AlgorithmTracer for observability (Story 7.6)
+   *
+   * Enables tracing of hybrid search decisions including local alpha values.
+   *
+   * @param tracer - AlgorithmTracer instance
+   */
+  setAlgorithmTracer(tracer: AlgorithmTracer): void {
+    this.algorithmTracer = tracer;
+    log.debug("[GraphRAGEngine] Algorithm tracer enabled");
   }
 
   /**

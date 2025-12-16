@@ -14,6 +14,7 @@ build/
 _fresh/
 *.exe
 cai
+lib/primitives/bundle.js
 
 # Logs
 *.log

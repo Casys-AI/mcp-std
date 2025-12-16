@@ -9,7 +9,16 @@
  */
 
 import { assertEquals, assertAlmostEquals, assert } from "@std/assert";
-import { LocalAlphaCalculator, type AlphaMode, type NodeType } from "../../../src/graphrag/local-alpha.ts";
+import { assertRejects } from "@std/assert";
+import {
+  LocalAlphaCalculator,
+  loadLocalAlphaConfig,
+  DEFAULT_LOCAL_ALPHA_CONFIG,
+  LocalAlphaConfigError,
+  type AlphaMode,
+  type NodeType,
+  type LocalAlphaConfig,
+} from "../../../src/graphrag/local-alpha.ts";
 
 // Mock Graphology-like graph
 function createMockGraph() {
@@ -414,4 +423,306 @@ Deno.test("LocalAlphaCalculator - cache invalidation clears heat cache", () => {
   // Should still work after invalidation
   const result = calculator.getLocalAlpha("passive", "tool:a", "tool");
   assert(result >= 0.5 && result <= 1.0, "Should return valid alpha after cache invalidation");
+});
+
+// =============================================================================
+// Config Loading Tests (ADR-048)
+// =============================================================================
+
+Deno.test("loadLocalAlphaConfig - returns defaults when file not found", async () => {
+  const config = await loadLocalAlphaConfig("./nonexistent/path.yaml");
+
+  assertEquals(config.alphaMin, DEFAULT_LOCAL_ALPHA_CONFIG.alphaMin);
+  assertEquals(config.alphaMax, DEFAULT_LOCAL_ALPHA_CONFIG.alphaMax);
+  assertEquals(config.coldStart.threshold, DEFAULT_LOCAL_ALPHA_CONFIG.coldStart.threshold);
+});
+
+Deno.test("loadLocalAlphaConfig - loads from YAML file", async () => {
+  const config = await loadLocalAlphaConfig("./config/local-alpha.yaml");
+
+  // Should have valid structure
+  assertEquals(typeof config.alphaMin, "number");
+  assertEquals(typeof config.alphaMax, "number");
+  assertEquals(typeof config.coldStart.threshold, "number");
+  assertEquals(typeof config.heatDiffusion.intrinsicWeight, "number");
+
+  // Should respect bounds
+  assert(config.alphaMin >= 0 && config.alphaMin <= 1, "alphaMin should be in [0, 1]");
+  assert(config.alphaMax >= 0 && config.alphaMax <= 1, "alphaMax should be in [0, 1]");
+  assert(config.alphaMin <= config.alphaMax, "alphaMin should be <= alphaMax");
+});
+
+Deno.test("DEFAULT_LOCAL_ALPHA_CONFIG - has valid default values", () => {
+  const config = DEFAULT_LOCAL_ALPHA_CONFIG;
+
+  // Alpha bounds
+  assertEquals(config.alphaMin, 0.5);
+  assertEquals(config.alphaMax, 1.0);
+
+  // Cold start
+  assertEquals(config.coldStart.threshold, 5);
+  assertEquals(config.coldStart.priorAlpha, 1.0);
+  assertEquals(config.coldStart.targetAlpha, 0.7);
+
+  // Heat diffusion weights should sum to ~1.0
+  const heatSum = config.heatDiffusion.intrinsicWeight + config.heatDiffusion.neighborWeight;
+  assertAlmostEquals(heatSum, 1.0, 0.01);
+
+  // Hierarchy weights should sum to 1.0 for each type
+  for (const nodeType of ["tool", "capability", "meta"] as const) {
+    const weights = config.hierarchy[nodeType];
+    const sum = weights.intrinsic + weights.neighbor + weights.hierarchy;
+    assertAlmostEquals(sum, 1.0, 0.01, `Hierarchy weights for ${nodeType} should sum to 1.0`);
+  }
+
+  // Structural confidence weights should sum to 1.0
+  const scSum = config.structuralConfidence.targetHeat +
+                config.structuralConfidence.contextHeat +
+                config.structuralConfidence.pathHeat;
+  assertAlmostEquals(scSum, 1.0, 0.01);
+});
+
+// =============================================================================
+// Custom Config Tests
+// =============================================================================
+
+Deno.test("LocalAlphaCalculator - respects custom cold start threshold", () => {
+  const graph = createMockGraph();
+  graph._addNode("tool:a", 3);
+
+  const customConfig: LocalAlphaConfig = {
+    ...DEFAULT_LOCAL_ALPHA_CONFIG,
+    coldStart: { threshold: 3, priorAlpha: 1.0, targetAlpha: 0.7 },
+  };
+
+  const calculator = new LocalAlphaCalculator({
+    graph: graph as any,
+    spectralClustering: null,
+    getSemanticEmbedding: () => null,
+    getObservationCount: () => 2, // Below custom threshold of 3
+    getParent: () => null,
+    getChildren: () => [],
+  }, customConfig);
+
+  const result = calculator.getLocalAlphaWithBreakdown("active", "tool:a", "tool");
+
+  assertEquals(result.coldStart, true);
+  assertEquals(result.algorithm, "bayesian");
+});
+
+Deno.test("LocalAlphaCalculator - respects custom alpha bounds", () => {
+  const graph = createMockGraph();
+  graph._addNode("tool:a", 5);
+  graph._addNode("tool:b", 5);
+  graph._addEdge("e1", "tool:a", "tool:b");
+
+  const customConfig: LocalAlphaConfig = {
+    ...DEFAULT_LOCAL_ALPHA_CONFIG,
+    alphaMin: 0.6, // Higher minimum
+    alphaMax: 0.9, // Lower maximum
+  };
+
+  const calculator = new LocalAlphaCalculator({
+    graph: graph as any,
+    spectralClustering: null,
+    getSemanticEmbedding: () => null,
+    getObservationCount: () => 10,
+    getParent: () => null,
+    getChildren: () => [],
+  }, customConfig);
+
+  const result = calculator.getLocalAlpha("passive", "tool:a", "tool", ["tool:b"]);
+
+  assert(result >= 0.6, `Alpha should be >= custom alphaMin (0.6), got ${result}`);
+  assert(result <= 0.9, `Alpha should be <= custom alphaMax (0.9), got ${result}`);
+});
+
+Deno.test("LocalAlphaCalculator - respects custom hierarchy weights", () => {
+  const graph = createMockGraph();
+  graph._addNode("cap:test", 5);
+  graph._addNode("meta:parent", 5);
+
+  // Custom config with high hierarchy weight for capabilities
+  const customConfig: LocalAlphaConfig = {
+    ...DEFAULT_LOCAL_ALPHA_CONFIG,
+    hierarchy: {
+      ...DEFAULT_LOCAL_ALPHA_CONFIG.hierarchy,
+      capability: { intrinsic: 0.1, neighbor: 0.1, hierarchy: 0.8 }, // High hierarchy weight
+    },
+  };
+
+  const calculator = new LocalAlphaCalculator({
+    graph: graph as any,
+    spectralClustering: null,
+    getSemanticEmbedding: () => null,
+    getObservationCount: () => 10,
+    getParent: (nodeId, parentType) => {
+      if (nodeId === "cap:test" && parentType === "meta") return "meta:parent";
+      return null;
+    },
+    getChildren: () => [],
+  }, customConfig);
+
+  const result = calculator.getLocalAlphaWithBreakdown("passive", "cap:test", "capability", []);
+
+  assertEquals(result.algorithm, "heat_hierarchical");
+  // With high hierarchy weight, parent's heat should have more influence
+  assert(result.inputs.heat !== undefined, "Should compute hierarchical heat");
+});
+
+// =============================================================================
+// Config Validation Tests
+// =============================================================================
+
+Deno.test("loadLocalAlphaConfig - rejects alphaMin >= alphaMax", async () => {
+  // Create a temp file with invalid config
+  const tempPath = await Deno.makeTempFile({ suffix: ".yaml" });
+  try {
+    await Deno.writeTextFile(tempPath, `
+alpha_min: 0.8
+alpha_max: 0.5
+alpha_scaling_factor: 0.5
+cold_start:
+  threshold: 5
+  prior_alpha: 1.0
+  target_alpha: 0.7
+heat_diffusion:
+  intrinsic_weight: 0.6
+  neighbor_weight: 0.4
+  common_neighbor_factor: 0.2
+hierarchy:
+  tool: { intrinsic: 0.5, neighbor: 0.3, hierarchy: 0.2 }
+  capability: { intrinsic: 0.3, neighbor: 0.4, hierarchy: 0.3 }
+  meta: { intrinsic: 0.2, neighbor: 0.2, hierarchy: 0.6 }
+hierarchy_inheritance:
+  meta_to_capability: 0.7
+  capability_to_tool: 0.5
+structural_confidence:
+  target_heat: 0.4
+  context_heat: 0.3
+  path_heat: 0.3
+`);
+
+    await assertRejects(
+      () => loadLocalAlphaConfig(tempPath),
+      LocalAlphaConfigError,
+      "alphaMin",
+    );
+  } finally {
+    await Deno.remove(tempPath);
+  }
+});
+
+Deno.test("loadLocalAlphaConfig - rejects hierarchy weights not summing to 1.0", async () => {
+  const tempPath = await Deno.makeTempFile({ suffix: ".yaml" });
+  try {
+    await Deno.writeTextFile(tempPath, `
+alpha_min: 0.5
+alpha_max: 1.0
+alpha_scaling_factor: 0.5
+cold_start:
+  threshold: 5
+  prior_alpha: 1.0
+  target_alpha: 0.7
+heat_diffusion:
+  intrinsic_weight: 0.6
+  neighbor_weight: 0.4
+  common_neighbor_factor: 0.2
+hierarchy:
+  tool: { intrinsic: 0.5, neighbor: 0.3, hierarchy: 0.5 }  # Sum = 1.3, invalid!
+  capability: { intrinsic: 0.3, neighbor: 0.4, hierarchy: 0.3 }
+  meta: { intrinsic: 0.2, neighbor: 0.2, hierarchy: 0.6 }
+hierarchy_inheritance:
+  meta_to_capability: 0.7
+  capability_to_tool: 0.5
+structural_confidence:
+  target_heat: 0.4
+  context_heat: 0.3
+  path_heat: 0.3
+`);
+
+    await assertRejects(
+      () => loadLocalAlphaConfig(tempPath),
+      LocalAlphaConfigError,
+      "sum to 1.0",
+    );
+  } finally {
+    await Deno.remove(tempPath);
+  }
+});
+
+Deno.test("loadLocalAlphaConfig - rejects values outside [0, 1] range", async () => {
+  const tempPath = await Deno.makeTempFile({ suffix: ".yaml" });
+  try {
+    await Deno.writeTextFile(tempPath, `
+alpha_min: 0.5
+alpha_max: 1.5  # Invalid: > 1.0
+alpha_scaling_factor: 0.5
+cold_start:
+  threshold: 5
+  prior_alpha: 1.0
+  target_alpha: 0.7
+heat_diffusion:
+  intrinsic_weight: 0.6
+  neighbor_weight: 0.4
+  common_neighbor_factor: 0.2
+hierarchy:
+  tool: { intrinsic: 0.5, neighbor: 0.3, hierarchy: 0.2 }
+  capability: { intrinsic: 0.3, neighbor: 0.4, hierarchy: 0.3 }
+  meta: { intrinsic: 0.2, neighbor: 0.2, hierarchy: 0.6 }
+hierarchy_inheritance:
+  meta_to_capability: 0.7
+  capability_to_tool: 0.5
+structural_confidence:
+  target_heat: 0.4
+  context_heat: 0.3
+  path_heat: 0.3
+`);
+
+    await assertRejects(
+      () => loadLocalAlphaConfig(tempPath),
+      LocalAlphaConfigError,
+      "must be in [0, 1]",
+    );
+  } finally {
+    await Deno.remove(tempPath);
+  }
+});
+
+Deno.test("loadLocalAlphaConfig - rejects cold_start threshold < 1", async () => {
+  const tempPath = await Deno.makeTempFile({ suffix: ".yaml" });
+  try {
+    await Deno.writeTextFile(tempPath, `
+alpha_min: 0.5
+alpha_max: 1.0
+alpha_scaling_factor: 0.5
+cold_start:
+  threshold: 0  # Invalid: must be >= 1
+  prior_alpha: 1.0
+  target_alpha: 0.7
+heat_diffusion:
+  intrinsic_weight: 0.6
+  neighbor_weight: 0.4
+  common_neighbor_factor: 0.2
+hierarchy:
+  tool: { intrinsic: 0.5, neighbor: 0.3, hierarchy: 0.2 }
+  capability: { intrinsic: 0.3, neighbor: 0.4, hierarchy: 0.3 }
+  meta: { intrinsic: 0.2, neighbor: 0.2, hierarchy: 0.6 }
+hierarchy_inheritance:
+  meta_to_capability: 0.7
+  capability_to_tool: 0.5
+structural_confidence:
+  target_heat: 0.4
+  context_heat: 0.3
+  path_heat: 0.3
+`);
+
+    await assertRejects(
+      () => loadLocalAlphaConfig(tempPath),
+      LocalAlphaConfigError,
+      "threshold must be >= 1",
+    );
+  } finally {
+    await Deno.remove(tempPath);
+  }
 });

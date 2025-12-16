@@ -409,8 +409,8 @@ class MockVectorSearch {
 
   async searchTools(
     _query: string,
-    _topK: number = 5,
-    _minScore: number = 0.7,
+    topK: number = 5,
+    minScore: number = 0.7,
   ): Promise<
     Array<{
       toolId: string;
@@ -420,10 +420,14 @@ class MockVectorSearch {
       schema: { description?: string };
     }>
   > {
-    return this.mockResults.map((r) => ({
-      ...r,
-      schema: r.schema || { description: `Test tool ${r.toolName}` },
-    }));
+    // Respect topK and minScore parameters like real VectorSearch
+    return this.mockResults
+      .filter((r) => r.score >= minScore)
+      .slice(0, topK)
+      .map((r) => ({
+        ...r,
+        schema: r.schema || { description: `Test tool ${r.toolName}` },
+      }));
   }
 }
 

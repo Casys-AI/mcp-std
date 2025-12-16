@@ -113,7 +113,7 @@ interface ActiveWorkflow {
   currentLayer: number;
   totalLayers: number;
   layerResults: TaskResult[];
-  status: "running" | "paused" | "complete" | "aborted";
+  status: "running" | "paused" | "complete" | "aborted" | "awaiting_approval";
   createdAt: Date;
   lastActivityAt: Date;
   latestCheckpointId: string | null;
@@ -743,7 +743,12 @@ The system uses GraphRAG to find appropriate tools for the new requirement and i
           }
           return await client.callTool(toolName, args);
         },
-        { taskTimeout: 30000, userId: userId ?? "local" },
+        {
+          taskTimeout: 30000,
+          userId: userId ?? "local",
+          // Story 2.5-3: Enable HIL for tasks with sideEffects flag
+          hil: { enabled: true, approval_required: "critical_only" },
+        },
       );
 
       controlledExecutor.setDAGSuggester(this.dagSuggester);
@@ -903,7 +908,12 @@ The system uses GraphRAG to find appropriate tools for the new requirement and i
         }
         return await client.callTool(toolName, args);
       },
-      { taskTimeout: 30000, userId: userId ?? "local" }, // Story 9.5: Multi-tenant isolation
+      {
+        taskTimeout: 30000,
+        userId: userId ?? "local", // Story 9.5: Multi-tenant isolation
+        // Story 2.5-3: Enable HIL for tasks with sideEffects flag
+        hil: { enabled: true, approval_required: "critical_only" },
+      },
     );
 
     // Configure checkpointing
@@ -935,6 +945,47 @@ The system uses GraphRAG to find appropriate tools for the new requirement and i
             : undefined,
           error: event.type === "task_error" ? event.error : undefined,
         });
+      }
+
+      // Story 2.5-3 HIL Fix: Handle decision_required events
+      if (event.type === "decision_required") {
+        // Store active workflow state for continuation after approval
+        const activeWorkflow: ActiveWorkflow = {
+          workflowId,
+          executor: controlledExecutor,
+          generator,
+          dag,
+          currentLayer,
+          totalLayers,
+          layerResults: [...layerResults],
+          status: "awaiting_approval",
+          createdAt: new Date(),
+          lastActivityAt: new Date(),
+          latestCheckpointId: event.checkpointId ?? null,
+        };
+        this.activeWorkflows.set(workflowId, activeWorkflow);
+
+        // Return approval_required status to client
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  status: "approval_required",
+                  workflow_id: workflowId,
+                  checkpoint_id: event.checkpointId,
+                  decision_type: event.decisionType,
+                  description: event.description,
+                  context: event.context,
+                  options: ["approve", "reject"],
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
       }
 
       if (event.type === "checkpoint") {
@@ -1604,6 +1655,11 @@ The system uses GraphRAG to find appropriate tools for the new requirement and i
         }
         return await client.callTool(toolName, toolArgs);
       },
+      {
+        taskTimeout: 30000,
+        // Story 2.5-3: Enable HIL for tasks with sideEffects flag
+        hil: { enabled: true, approval_required: "critical_only" },
+      },
     );
 
     controlledExecutor.setCheckpointManager(this.db, true);
@@ -1684,6 +1740,47 @@ The system uses GraphRAG to find appropriate tools for the new requirement and i
             : undefined,
           error: event.type === "task_error" ? event.error : undefined,
         });
+      }
+
+      // Story 2.5-3 HIL Fix: Handle decision_required events
+      if (event.type === "decision_required") {
+        // Store active workflow state for continuation after approval
+        const activeWorkflow: ActiveWorkflow = {
+          workflowId,
+          executor,
+          generator,
+          dag,
+          currentLayer,
+          totalLayers,
+          layerResults: [...layerResults],
+          status: "awaiting_approval",
+          createdAt: this.activeWorkflows.get(workflowId)?.createdAt ?? new Date(),
+          lastActivityAt: new Date(),
+          latestCheckpointId: event.checkpointId ?? null,
+        };
+        this.activeWorkflows.set(workflowId, activeWorkflow);
+
+        // Return approval_required status to client
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  status: "approval_required",
+                  workflow_id: workflowId,
+                  checkpoint_id: event.checkpointId,
+                  decision_type: event.decisionType,
+                  description: event.description,
+                  context: event.context,
+                  options: ["approve", "reject"],
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
       }
 
       if (event.type === "checkpoint") {

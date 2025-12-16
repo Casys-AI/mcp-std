@@ -60,7 +60,11 @@ Deno.test("Smoke test - Fresh dashboard.tsx exists and contains required element
     true,
     "Route doit avoir le titre",
   );
-  assertEquals(routeCode.includes("d3") || routeCode.includes("D3"), true, "Route doit utiliser D3 pour la visualisation");
+  assertEquals(
+    routeCode.includes("cytoscape") || routeCode.includes("Cytoscape") || routeCode.includes("GraphExplorer"),
+    true,
+    "Route doit utiliser Cytoscape ou GraphExplorer pour la visualisation",
+  );
   assertEquals(
     routeCode.includes("GraphExplorer"),
     true,

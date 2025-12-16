@@ -15,7 +15,12 @@ import type { CapabilityMatcher } from "../capabilities/matcher.ts";
 import type { Capability, CapabilityMatch } from "../capabilities/types.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import { type ClusterableCapability, SpectralClusteringManager } from "./spectral-clustering.ts";
-import { LocalAlphaCalculator, type AlphaMode, type NodeType } from "./local-alpha.ts";
+import { LocalAlphaCalculator, type NodeType } from "./local-alpha.ts";
+import {
+  type DagScoringConfig,
+  DEFAULT_DAG_SCORING_CONFIG,
+  loadDagScoringConfig,
+} from "./dag-scoring-config.ts";
 import type {
   CompletedTask,
   DAGStructure,
@@ -43,6 +48,7 @@ export class DAGSuggester {
   private spectralClustering: SpectralClusteringManager | null = null; // Story 7.4 - Cluster boost
   private algorithmTracer: AlgorithmTracer | null = null; // Story 7.6 - Algorithm tracing
   private localAlphaCalculator: LocalAlphaCalculator | null = null; // ADR-048 - Local adaptive alpha
+  private scoringConfig: DagScoringConfig = DEFAULT_DAG_SCORING_CONFIG; // Scoring configuration
 
   constructor(
     private graphEngine: GraphRAGEngine,
@@ -52,6 +58,31 @@ export class DAGSuggester {
   ) {
     this.capabilityMatcher = capabilityMatcher || null;
     this.capabilityStore = capabilityStore || null;
+  }
+
+  /**
+   * Initialize scoring config from YAML file
+   *
+   * Call this after construction to load config from file.
+   * If not called, uses DEFAULT_DAG_SCORING_CONFIG.
+   */
+  async initScoringConfig(configPath?: string): Promise<void> {
+    this.scoringConfig = await loadDagScoringConfig(configPath);
+    log.debug("[DAGSuggester] Scoring config initialized");
+  }
+
+  /**
+   * Set scoring config directly (for testing)
+   */
+  setScoringConfig(config: DagScoringConfig): void {
+    this.scoringConfig = config;
+  }
+
+  /**
+   * Get current scoring config (for inspection/debugging)
+   */
+  getScoringConfig(): DagScoringConfig {
+    return this.scoringConfig;
   }
 
   /**
@@ -190,7 +221,7 @@ export class DAGSuggester {
       const hybridCandidates = await this.graphEngine.searchToolsHybrid(
         this.vectorSearch,
         intent.text,
-        10, // top-10 candidates
+        this.scoringConfig.limits.hybridSearchCandidates,
         contextTools,
         false, // no related tools needed here
       );
@@ -221,13 +252,14 @@ export class DAGSuggester {
             schema: c.schema,
           };
         })
-        // Combine finalScore with PageRank: 80% finalScore + 20% PageRank
+        // Combine finalScore with PageRank using configured weights
         .map((c) => ({
           ...c,
-          combinedScore: c.score * 0.8 + c.pageRank * 0.2,
+          combinedScore: c.score * this.scoringConfig.weights.candidateRanking.hybridScore +
+                        c.pageRank * this.scoringConfig.weights.candidateRanking.pagerank,
         }))
         .sort((a, b) => b.combinedScore - a.combinedScore)
-        .slice(0, 5);
+        .slice(0, this.scoringConfig.limits.rankedCandidates);
 
       log.debug(
         `Ranked candidates (hybrid+PageRank): ${
@@ -259,7 +291,7 @@ export class DAGSuggester {
           // Fallback to default alpha if no calculator
           candidateAlphas.push({
             toolId: candidate.toolId,
-            alpha: 0.75,
+            alpha: this.scoringConfig.defaults.alpha,
             algorithm: "none",
             coldStart: false,
           });
@@ -269,7 +301,7 @@ export class DAGSuggester {
       // Calculate average alpha for confidence calculation
       const avgAlpha = candidateAlphas.length > 0
         ? candidateAlphas.reduce((sum, c) => sum + c.alpha, 0) / candidateAlphas.length
-        : 0.75;
+        : this.scoringConfig.defaults.alpha;
 
       log.debug(`[suggestDAG] Average local alpha: ${avgAlpha.toFixed(2)} across ${candidateAlphas.length} candidates`);
 
@@ -295,10 +327,10 @@ export class DAGSuggester {
           params: {
             alpha: alphaInfo.alpha, // ADR-048: Use local alpha
             reliabilityFactor: 1.0, // No reliability filter for tools
-            structuralBoost: 0.2, // PageRank contribution
+            structuralBoost: this.scoringConfig.weights.candidateRanking.pagerank,
           },
           finalScore: candidate.combinedScore,
-          thresholdUsed: 0.5, // ADR-026 threshold
+          thresholdUsed: this.scoringConfig.thresholds.dependencyThreshold,
           decision: "accepted", // All top-5 candidates are accepted
         });
 
@@ -321,7 +353,7 @@ export class DAGSuggester {
               localAlpha: alphaInfo.alpha,
             },
             finalScore: candidate.combinedScore,
-            threshold: 0.5,
+            threshold: this.scoringConfig.thresholds.dependencyThreshold,
             decision: "accepted",
           },
         });
@@ -355,14 +387,14 @@ export class DAGSuggester {
       // 6. Find alternatives from same community (Graphology)
       const alternatives = this.graphEngine
         .findCommunityMembers(rankedCandidates[0].toolId)
-        .slice(0, 3);
+        .slice(0, this.scoringConfig.limits.alternatives);
 
       // 7. Generate rationale (updated for hybrid)
       const rationale = this.generateRationaleHybrid(rankedCandidates, dependencyPaths);
 
       // ADR-026: Never return null if we have valid candidates
       // Instead, return suggestion with warning for low confidence
-      if (confidence < 0.50) {
+      if (confidence < this.scoringConfig.thresholds.suggestionFloor) {
         log.info(
           `Confidence below threshold (${
             confidence.toFixed(2)
@@ -410,7 +442,7 @@ export class DAGSuggester {
 
         const path = this.graphEngine.findShortestPath(fromTool, toTool);
 
-        if (path && path.length <= 4) {
+        if (path && path.length <= this.scoringConfig.limits.maxPathLength) {
           paths.push({
             from: fromTool,
             to: toTool,
@@ -450,10 +482,11 @@ export class DAGSuggester {
    * @returns Confidence score between 0 and 1
    */
   private calculatePathConfidence(hops: number): number {
-    if (hops === 1) return 0.95;
-    if (hops === 2) return 0.80;
-    if (hops === 3) return 0.65;
-    return 0.50;
+    const { hop1, hop2, hop3, hop4Plus } = this.scoringConfig.hopConfidence;
+    if (hops === 1) return hop1;
+    if (hops === 2) return hop2;
+    if (hops === 3) return hop3;
+    return hop4Plus;
   }
 
   // =============================================================================
@@ -483,10 +516,12 @@ export class DAGSuggester {
     const alpha = Math.max(0.5, Math.min(1.0, avgAlpha));
     const factor = (alpha - 0.5) * 2; // Normalize to 0-1 range
 
+    const { confidenceBase, confidenceScaling } = this.scoringConfig.weights;
+
     // Linear interpolation: high alpha → trust semantic, low alpha → trust graph
-    const hybrid = 0.55 + factor * 0.30;     // [0.55, 0.85]
-    const pageRank = 0.30 - factor * 0.25;   // [0.05, 0.30]
-    const path = 0.15 - factor * 0.05;       // [0.10, 0.15]
+    const hybrid = confidenceBase.hybrid + factor * confidenceScaling.hybridDelta;
+    const pageRank = confidenceBase.pagerank - factor * confidenceScaling.pagerankDelta;
+    const path = confidenceBase.path - factor * confidenceScaling.pathDelta;
 
     log.debug(`[DAGSuggester] Adaptive weights from alpha=${alpha.toFixed(2)}: hybrid=${hybrid.toFixed(2)}, pageRank=${pageRank.toFixed(2)}, path=${path.toFixed(2)}`);
 
@@ -515,8 +550,10 @@ export class DAGSuggester {
       combinedScore: number;
     }>,
     dependencyPaths: DependencyPath[],
-    avgAlpha: number = 0.75,
+    avgAlpha?: number,
   ): { confidence: number; semanticScore: number; pageRankScore: number; pathStrength: number } {
+    const effectiveAlpha = avgAlpha ?? this.scoringConfig.defaults.alpha;
+
     if (candidates.length === 0) {
       return { confidence: 0, semanticScore: 0, pageRankScore: 0, pathStrength: 0 };
     }
@@ -526,16 +563,16 @@ export class DAGSuggester {
     const semanticScore = candidates[0].semanticScore;
 
     // PageRank score (average of top 3)
-    const pageRankScore = candidates.slice(0, 3).reduce((sum, c) => sum + c.pageRank, 0) /
-      Math.min(3, candidates.length);
+    const top3Count = Math.min(this.scoringConfig.limits.alternatives, candidates.length);
+    const pageRankScore = candidates.slice(0, top3Count).reduce((sum, c) => sum + c.pageRank, 0) / top3Count;
 
     // Path strength (average confidence of all paths)
     const pathStrength = dependencyPaths.length > 0
-      ? dependencyPaths.reduce((sum, p) => sum + (p.confidence || 0.5), 0) / dependencyPaths.length
-      : 0.5;
+      ? dependencyPaths.reduce((sum, p) => sum + (p.confidence || this.scoringConfig.defaults.pathConfidence), 0) / dependencyPaths.length
+      : this.scoringConfig.defaults.pathConfidence;
 
     // ADR-048: Use adaptive weights based on local alpha
-    const weights = this.getAdaptiveWeightsFromAlpha(avgAlpha);
+    const weights = this.getAdaptiveWeightsFromAlpha(effectiveAlpha);
     const confidence = hybridScore * weights.hybrid + pageRankScore * weights.pageRank +
       pathStrength * weights.path;
 
@@ -578,7 +615,7 @@ export class DAGSuggester {
     }
 
     // PageRank importance
-    if (topTool.pageRank > 0.01) {
+    if (topTool.pageRank > this.scoringConfig.weights.pagerankRationaleThreshold) {
       parts.push(`PageRank: ${(topTool.pageRank * 100).toFixed(1)}%`);
     }
 
@@ -628,8 +665,8 @@ export class DAGSuggester {
       // 1. Query GraphRAG vector search for relevant tools
       const candidates = await this.vectorSearch.searchTools(
         context.newRequirement,
-        5, // Top-5 candidates
-        0.5, // Lower threshold for replanning (more permissive)
+        this.scoringConfig.limits.replanCandidates,
+        this.scoringConfig.thresholds.replanThreshold,
       );
 
       if (candidates.length === 0) {
@@ -645,7 +682,7 @@ export class DAGSuggester {
           pageRank: this.graphEngine.getPageRank(c.toolId),
         }))
         .sort((a, b) => b.pageRank - a.pageRank)
-        .slice(0, 3); // Top-3 for replanning
+        .slice(0, this.scoringConfig.limits.replanTop);
 
       log.debug(
         `Ranked replan candidates: ${
@@ -796,7 +833,7 @@ export class DAGSuggester {
       const graphDensity = this.graphEngine.getGraphDensity();
       const contextToolsList = Array.from(executedTools);
       const communityMembers = this.graphEngine.findCommunityMembers(lastToolId);
-      for (const memberId of communityMembers.slice(0, 5)) {
+      for (const memberId of communityMembers.slice(0, this.scoringConfig.limits.communityMembers)) {
         if (seenTools.has(memberId) || executedTools.has(memberId)) continue;
         if (this.isDangerousOperation(memberId)) continue;
 
@@ -855,7 +892,7 @@ export class DAGSuggester {
 
         // Calculate Recency Boost (Story 7.4 - ADR-038)
         // Check if tool was used in recent tasks of this workflow
-        const recencyBoost = executedTools.has(neighborId) ? 0.10 : 0.0;
+        const recencyBoost = executedTools.has(neighborId) ? this.scoringConfig.cooccurrence.recencyBoost : 0.0;
 
         const baseConfidence = this.calculateCooccurrenceConfidence(edgeData, recencyBoost);
 
@@ -1006,7 +1043,7 @@ export class DAGSuggester {
       };
 
       const episodes = await this.episodicMemory.retrieveRelevant(context, {
-        limit: 10,
+        limit: this.scoringConfig.limits.episodeRetrieval,
         eventTypes: ["speculation_start", "task_complete"],
       });
 
@@ -1139,8 +1176,10 @@ export class DAGSuggester {
       return { confidence: baseConfidence, adjustment: 0 };
     }
 
-    // Task 4.4: Exclude if failure rate > 50%
-    if (stats.failureRate > 0.50) {
+    const { successBoostFactor, successBoostCap, failurePenaltyFactor, failurePenaltyCap, failureExclusionRate } = this.scoringConfig.episodic;
+
+    // Task 4.4: Exclude if failure rate above threshold
+    if (stats.failureRate > failureExclusionRate) {
       log.debug(
         `[DAGSuggester] Excluding ${toolId} due to high failure rate: ${
           (stats.failureRate * 100).toFixed(0)
@@ -1150,10 +1189,10 @@ export class DAGSuggester {
     }
 
     // Task 3.2: Calculate boost for successful patterns
-    const boost = Math.min(0.15, stats.successRate * 0.20);
+    const boost = Math.min(successBoostCap, stats.successRate * successBoostFactor);
 
     // Task 4.2: Calculate penalty for failed patterns
-    const penalty = Math.min(0.15, stats.failureRate * 0.25);
+    const penalty = Math.min(failurePenaltyCap, stats.failureRate * failurePenaltyFactor);
 
     // Net adjustment
     const adjustment = boost - penalty;
@@ -1162,7 +1201,7 @@ export class DAGSuggester {
     const adjustedConfidence = Math.max(0, Math.min(1.0, baseConfidence + adjustment));
 
     // Task 3.4: Log adjustments for observability
-    if (Math.abs(adjustment) > 0.01) {
+    if (Math.abs(adjustment) > this.scoringConfig.episodic.adjustmentLogThreshold) {
       log.debug(
         `[DAGSuggester] Confidence adjusted for ${toolId}: ${baseConfidence.toFixed(2)} → ${
           adjustedConfidence.toFixed(2)
@@ -1198,7 +1237,7 @@ export class DAGSuggester {
   ): { confidence: number; alpha: number; algorithm: string } {
     // If no calculator configured, return unchanged
     if (!this.localAlphaCalculator) {
-      return { confidence: baseConfidence, alpha: 0.75, algorithm: "none" };
+      return { confidence: baseConfidence, alpha: this.scoringConfig.defaults.alpha, algorithm: "none" };
     }
 
     const result = this.localAlphaCalculator.getLocalAlphaWithBreakdown(
@@ -1211,7 +1250,7 @@ export class DAGSuggester {
     // Apply alpha adjustment: higher alpha = less trust in graph
     // graphTrustFactor ranges from 1.0 (alpha=0.5) to 0.5 (alpha=1.0)
     const graphTrustFactor = 1.5 - result.alpha;
-    const adjustedConfidence = Math.min(0.95, baseConfidence * graphTrustFactor);
+    const adjustedConfidence = Math.min(this.scoringConfig.caps.maxConfidence, baseConfidence * graphTrustFactor);
 
     log.debug(
       `[DAGSuggester] Local alpha applied: ${targetId} base=${baseConfidence.toFixed(2)} alpha=${result.alpha.toFixed(2)} → ${adjustedConfidence.toFixed(2)} (${result.algorithm})`,
@@ -1237,25 +1276,27 @@ export class DAGSuggester {
     sourceToolId: string,
     pageRank: number,
   ): number {
-    // Base confidence for community membership: 0.40
-    let confidence = 0.40;
+    const { baseConfidence, pagerankBoostCap, edgeWeightBoostCap, adamicAdarBoostCap } = this.scoringConfig.community;
 
-    // Boost by PageRank (up to +0.20)
-    confidence += Math.min(pageRank * 2, 0.20);
+    // Base confidence for community membership
+    let confidence = baseConfidence;
+
+    // Boost by PageRank (up to configured cap)
+    confidence += Math.min(pageRank * 2, pagerankBoostCap);
 
     // Boost if direct edge exists (historical pattern)
     const edgeData = this.graphEngine.getEdgeData(sourceToolId, toolId);
     if (edgeData) {
-      confidence += Math.min(edgeData.weight * 0.25, 0.25);
+      confidence += Math.min(edgeData.weight * 0.25, edgeWeightBoostCap);
     }
 
     // Boost by Adamic-Adar similarity (indirect patterns)
     const aaScore = this.graphEngine.adamicAdarBetween(sourceToolId, toolId);
     if (aaScore > 0) {
-      confidence += Math.min(aaScore * 0.1, 0.10);
+      confidence += Math.min(aaScore * 0.1, adamicAdarBoostCap);
     }
 
-    return Math.min(confidence, 0.95); // Cap at 0.95
+    return Math.min(confidence, this.scoringConfig.caps.maxConfidence);
   }
 
   /**
@@ -1269,20 +1310,21 @@ export class DAGSuggester {
     edgeData: { weight: number; count: number } | null,
     recencyBoost: number = 0,
   ): number {
-    if (!edgeData) return 0.30;
+    const { countBoostFactor, countBoostCap, recencyBoostCap } = this.scoringConfig.cooccurrence;
 
-    // Base: edge weight (confidence_score from DB) - Max 0.60 (ADR-038)
-    let confidence = Math.min(edgeData.weight, 0.60);
+    if (!edgeData) return this.scoringConfig.caps.edgeConfidenceFloor;
 
-    // Boost by observation count (diminishing returns) - Max 0.20
-    // 1 observation: +0, 5: +0.10, 10: +0.15, 20+: +0.20
-    const countBoost = Math.min(Math.log2(edgeData.count + 1) * 0.05, 0.20);
+    // Base: edge weight (confidence_score from DB) - Max configured (ADR-038)
+    let confidence = Math.min(edgeData.weight, this.scoringConfig.caps.edgeWeightMax);
+
+    // Boost by observation count (diminishing returns)
+    const countBoost = Math.min(Math.log2(edgeData.count + 1) * countBoostFactor, countBoostCap);
     confidence += countBoost;
 
-    // Boost by recency - Max 0.10
-    confidence += Math.min(recencyBoost, 0.10);
+    // Boost by recency
+    confidence += Math.min(recencyBoost, recencyBoostCap);
 
-    return Math.min(confidence, 0.95); // Cap at 0.95
+    return Math.min(confidence, this.scoringConfig.caps.maxConfidence);
   }
 
   /**
@@ -1317,7 +1359,11 @@ export class DAGSuggester {
 
     try {
       // Search for capabilities matching context tools
-      const matches = await this.capabilityStore.searchByContext(contextTools, 5, 0.3);
+      const matches = await this.capabilityStore.searchByContext(
+        contextTools,
+        this.scoringConfig.limits.contextSearch,
+        this.scoringConfig.thresholds.contextSearch,
+      );
 
       if (matches.length === 0) {
         return [];
@@ -1341,9 +1387,9 @@ export class DAGSuggester {
         const clusterBoost = clusterBoosts.get(capability.id) ?? 0;
         const discoveryScore = match.overlapScore * (1 + clusterBoost);
 
-        // Scale to 0.4-0.85 confidence range (capabilities need confirmation)
-        // discoveryScore is in [0, ~1.5], map to [0.4, 0.85]
-        const baseConfidence = Math.min(0.85, 0.4 + (discoveryScore * 0.30));
+        // Scale to configured confidence range (capabilities need confirmation)
+        const { confidenceFloor, confidenceCeiling, scoreScaling } = this.scoringConfig.capability;
+        const baseConfidence = Math.min(confidenceCeiling, confidenceFloor + (discoveryScore * scoreScaling));
 
         // ADR-048: Apply local alpha adjustment for capability
         const alphaResult = this.applyLocalAlpha(baseConfidence, capabilityToolId, "capability", contextTools);
@@ -1470,14 +1516,14 @@ export class DAGSuggester {
         const altCap = await this.capabilityStore.findById(altCapId);
         if (!altCap) continue;
 
-        // ADR-042: Only suggest alternatives with success rate > 0.7
-        if (altCap.successRate <= 0.7) {
+        // ADR-042: Only suggest alternatives with success rate above threshold
+        if (altCap.successRate <= this.scoringConfig.thresholds.alternativeSuccessRate) {
           log.debug(`[suggestAlternatives] Skipping ${altCapId} due to low success rate: ${altCap.successRate}`);
           continue;
         }
 
-        // ADR-042: Score is 90% of matched capability's score (slight reduction)
-        const baseConfidence = matchedScore * 0.9;
+        // ADR-042: Score is reduced by multiplier (slight reduction for alternatives)
+        const baseConfidence = matchedScore * this.scoringConfig.alternatives.scoreMultiplier;
 
         // Apply episodic learning adjustments
         const adjusted = this.adjustConfidenceFromEpisodes(
@@ -1508,12 +1554,12 @@ export class DAGSuggester {
             spectralClusterMatch: false,
           },
           params: {
-            alpha: 0.9, // Alternative penalty factor
+            alpha: this.scoringConfig.alternatives.penaltyFactor, // Alternative penalty factor
             reliabilityFactor: 1.0,
             structuralBoost: 0,
           },
           finalScore: adjusted.confidence,
-          thresholdUsed: 0.7, // Alternative success rate threshold
+          thresholdUsed: this.scoringConfig.thresholds.alternativeSuccessRate,
           decision: "accepted",
         });
 
@@ -1547,21 +1593,23 @@ export class DAGSuggester {
    *
    * @param toToolId - Tool that typically follows
    * @param fromToolId - Tool that typically precedes
-   * @param confidence - Optional confidence override (default: 0.60)
+   * @param confidence - Optional confidence override (uses default from config)
    */
   async registerAgentHint(
     toToolId: string,
     fromToolId: string,
-    confidence: number = 0.60,
+    confidence?: number,
   ): Promise<void> {
+    // Use config default if not provided
+    const effectiveConfidence = confidence ?? this.scoringConfig.caps.defaultNodeConfidence;
     try {
       log.info(
-        `[DAGSuggester] Registering agent hint: ${fromToolId} -> ${toToolId} (confidence: ${confidence})`,
+        `[DAGSuggester] Registering agent hint: ${fromToolId} -> ${toToolId} (confidence: ${effectiveConfidence})`,
       );
 
       // Add or update edge in graph
       await this.graphEngine.addEdge(fromToolId, toToolId, {
-        weight: confidence,
+        weight: effectiveConfidence,
         count: 1,
         source: "hint",
       });
@@ -1752,7 +1800,9 @@ export class DAGSuggester {
 
     try {
       // 1. Search for capabilities matching context tools
-      const matches = await this.capabilityStore.searchByContext(contextTools, 3, 0.3);
+      const { capabilityMatches } = this.scoringConfig.limits;
+      const { contextSearch: contextSearchThreshold } = this.scoringConfig.thresholds;
+      const matches = await this.capabilityStore.searchByContext(contextTools, capabilityMatches, contextSearchThreshold);
 
       if (matches.length === 0) {
         log.debug("[DAGSuggester] No matching capabilities for context tools");
@@ -1779,7 +1829,7 @@ export class DAGSuggester {
         const finalScore = match.overlapScore * (1 + clusterBoost);
 
         // Skip low-scoring capabilities
-        if (finalScore < 0.4) {
+        if (finalScore < this.scoringConfig.caps.finalScoreMinimum) {
           log.debug(
             `[DAGSuggester] Skipping capability ${capability.id} (score: ${finalScore.toFixed(2)})`,
           );
@@ -1895,12 +1945,13 @@ export class DAGSuggester {
 
       // Story 7.4 AC#8: Apply HypergraphPageRank scoring for centrality boost
       // (PageRank is already computed, either fresh or from cache)
+      const pagerankWeight = this.scoringConfig.defaults.pagerankWeight;
       for (const capData of clusterableCapabilities) {
         const prScore = this.spectralClustering.getPageRank(capData.id);
         if (prScore > 0) {
           const existingBoost = boosts.get(capData.id) ?? 0;
-          // Weight PageRank at 30% (0.3 * prScore gives max ~0.15 additional boost)
-          boosts.set(capData.id, existingBoost + prScore * 0.3);
+          // Weight PageRank (prScore * weight gives max ~0.15 additional boost)
+          boosts.set(capData.id, existingBoost + prScore * pagerankWeight);
         }
       }
 

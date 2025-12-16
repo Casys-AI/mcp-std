@@ -3,7 +3,7 @@ name: "retrospective"
 description: "Run after epic completion to review overall success, extract lessons learned, and explore if new information emerged that might impact the next epic"
 author: "BMad"
 
-config_source: "{project-root}/.bmad/bmm/config.yaml"
+config_source: "{project-root}/.bmad/core/config.yaml"
 output_folder: "{config_source}:output_folder"
 user_name: "{config_source}:user_name"
 communication_language: "{config_source}:communication_language"

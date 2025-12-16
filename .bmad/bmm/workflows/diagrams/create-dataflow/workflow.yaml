@@ -3,7 +3,7 @@ description: "Create data flow diagrams (DFD) in Excalidraw format"
 author: "BMad"
 
 # Config values
-config_source: "{project-root}/.bmad/bmm/config.yaml"
+config_source: "{project-root}/.bmad/core/config.yaml"
 output_folder: "{config_source}:output_folder"
 
 # Workflow components

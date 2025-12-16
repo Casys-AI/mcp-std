@@ -60,6 +60,7 @@ export type UserAction = "selected" | "ignored" | "explicit_rejection";
  */
 export interface AlgorithmSignals {
   semanticScore?: number;
+  graphScore?: number; // Graph relatedness score (Adamic-Adar / direct edges)
   toolsOverlap?: number;
   successRate?: number;
   pagerank?: number;

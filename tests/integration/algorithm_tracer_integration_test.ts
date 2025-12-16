@@ -132,6 +132,7 @@ Deno.test("Integration: CapabilityMatcher logs traces via AlgorithmTracer", asyn
   assertExists(trace.threshold_used);
   assertExists(trace.decision);
 
+  await tracer.stop();
   await db.close();
 });
 
@@ -178,6 +179,7 @@ Deno.test("Integration: AlgorithmTracer metrics aggregate correctly after multip
   // Conversion: 2/3 = 0.666...
   assertGreater(activeMetrics.conversionRate, 0.65);
 
+  await tracer.stop();
   await db.close();
 });
 
@@ -222,6 +224,7 @@ Deno.test("Integration: Feedback updates trace outcomes correctly", async () => 
   assertEquals(outcome.executionSuccess, true);
   assertEquals(outcome.durationMs, 150);
 
+  await tracer.stop();
   await db.close();
 });
 
@@ -267,6 +270,7 @@ Deno.test("Integration: Spectral cluster match is properly tracked", async () =>
   // Spectral relevance should only average cluster-matched traces: (0.90 + 0.80) / 2 = 0.85
   assertAlmostEquals(metrics.spectralRelevance, 0.85, 0.01);
 
+  await tracer.stop();
   await db.close();
 });
 
@@ -317,5 +321,6 @@ Deno.test("Integration: 7-day retention cleanup works correctly", async () => {
   result = await db.query("SELECT COUNT(*) as count FROM algorithm_traces");
   assertEquals(Number(result[0]?.count), 1);
 
+  await tracer.stop();
   await db.close();
 });

@@ -4,6 +4,8 @@
  * @module graphrag/types
  */
 
+import type { PermissionSet } from "../capabilities/types.ts";
+
 /**
  * DAG task representation
  *
@@ -50,11 +52,15 @@ export interface Task {
 
   /**
    * Sandbox configuration (only for type="code_execution")
+   *
+   * Story 7.7c: permissionSet enables network/filesystem access with HIL escalation
    */
   sandboxConfig?: {
     timeout?: number;
     memoryLimit?: number;
     allowedReadPaths?: string[];
+    /** Permission set for sandbox execution (Story 7.7c). Default: "minimal" */
+    permissionSet?: PermissionSet;
   };
 
   /**

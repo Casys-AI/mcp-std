@@ -1022,35 +1022,37 @@ export default function CytoscapeGraph({
     const cy = cyRef.current;
     if (!cy) return;
 
-    // Use cose-bilkent layout for capabilities (optimized for compound nodes)
+    // Use fcose layout for capabilities (fast, good compound support, tight packing)
     if (viewMode === "capabilities") {
       cy.layout({
-        name: "cose-bilkent",
-        animate: "end",
+        name: "fcose",
+        animate: true,
         animationDuration: fit ? 500 : 250,
         fit,
-        padding: 50,
-        // Quality: proof = better convergence, less overlap
+        padding: 20,
+        // Quality: proof for best results
         quality: "proof",
         nodeDimensionsIncludeLabels: true,
-        // Node spacing: moderate repulsion, good edge length for internal spacing
-        nodeRepulsion: 8000,
-        idealEdgeLength: 120,
+        // Node spacing
+        nodeRepulsion: 4500,
+        idealEdgeLength: 50,
         edgeElasticity: 0.45,
-        // Nesting: higher = more space for children within compounds
-        nestingFactor: 0.2,
-        // Gravity: high compound gravity pulls capabilities together
-        gravity: 0.4,
+        // Nesting for compound nodes
+        nestingFactor: 0.1,
+        // Gravity to pull nodes together
+        gravity: 0.25,
         gravityRange: 3.8,
-        gravityCompound: 3.0,
-        gravityRangeCompound: 2.5,
-        // More iterations for convergence
-        numIter: 5000,
-        // Tiling for disconnected components
+        gravityCompound: 1.0,
+        gravityRangeCompound: 1.5,
+        // Iterations
+        numIter: 2500,
+        // Pack disconnected components tightly together
+        packComponents: true,
+        // Tiling for degree-zero nodes
         tile: true,
-        tilingPaddingVertical: 15,
-        tilingPaddingHorizontal: 15,
-        // Consistent layout
+        tilingPaddingVertical: 10,
+        tilingPaddingHorizontal: 10,
+        // Randomize for consistent results
         randomize: true,
       }).run();
     } else {

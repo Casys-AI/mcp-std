@@ -7,7 +7,7 @@
  */
 
 // Database client
-export { createDefaultClient } from "./client.ts";
+export { createClient, createDefaultClient } from "./client.ts";
 
 // Migrations
 export { getAllMigrations, MigrationRunner } from "./migrations.ts";

@@ -42,7 +42,7 @@ This uses **micro-file architecture** with **routing-based discovery**:
 
 ### Configuration Loading
 
-Load config from `{project-root}/.bmad/bmm/config.yaml` and resolve:
+Load config from `{project-root}/.bmad/core/config.yaml` and resolve:
 
 - `project_name`, `output_folder`, `user_name`
 - `communication_language`, `document_output_language`, `user_skill_level`

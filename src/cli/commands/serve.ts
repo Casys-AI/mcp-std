@@ -29,6 +29,7 @@ import { CapabilityStore } from "../../capabilities/capability-store.ts";
 import { SchemaInferrer } from "../../capabilities/schema-inferrer.ts";
 import { AdaptiveThresholdManager } from "../../mcp/adaptive-threshold.ts";
 import { AlgorithmTracer } from "../../telemetry/algorithm-tracer.ts";
+import { ensurePrimitivesBundle } from "../../lib/primitives-loader.ts";
 
 /**
  * Find and validate config file
@@ -209,8 +210,11 @@ export function createServeCommand() {
       try {
         log.info("🚀 Starting Casys PML MCP Gateway...\n");
 
+        // 0. Ensure primitives bundle is up-to-date (for sandbox)
+        await ensurePrimitivesBundle();
+
         // 1. Find and load config
-        log.info("Step 1/6: Loading configuration...");
+        log.info("Step 1/7: Loading configuration...");
         const configPath = await findConfigFile(options.config);
         const discovery = new MCPServerDiscovery(configPath);
         await discovery.loadConfig();

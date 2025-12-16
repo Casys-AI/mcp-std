@@ -3,7 +3,7 @@ description: "Generate and manage the sprint status tracking file for Phase 4 im
 author: "BMad"
 
 # Critical variables from config
-config_source: "{project-root}/.bmad/bmm/config.yaml"
+config_source: "{project-root}/.bmad/core/config.yaml"
 output_folder: "{config_source}:output_folder"
 user_name: "{config_source}:user_name"
 communication_language: "{config_source}:communication_language"

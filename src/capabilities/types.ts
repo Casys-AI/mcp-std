@@ -34,6 +34,91 @@ export interface CacheConfig {
 }
 
 /**
+ * Permission scope profiles defining resource access levels
+ * (Refactored from PermissionSet - now represents only the scope axis)
+ *
+ * Note: 'trusted' is deprecated - use explicit PermissionConfig with approvalMode: 'auto'
+ */
+export type PermissionScope =
+  | "minimal"
+  | "readonly"
+  | "filesystem"
+  | "network-api"
+  | "mcp-standard";
+
+/**
+ * Approval mode for permission escalation
+ * - hil: Human-in-the-loop approval required (default)
+ * - auto: Automatically approve (trusted tools)
+ */
+export type ApprovalMode = "hil" | "auto";
+
+/**
+ * 3-axis permission configuration matrix
+ *
+ * Separates concerns:
+ * - scope: What resources can be accessed (files, network, etc.)
+ * - ffi: Independent flag for FFI (native calls via Deno.dlopen)
+ * - run: Independent flag for subprocess execution (Deno.Command)
+ * - approvalMode: How to handle permission escalation requests
+ *
+ * @example
+ * ```yaml
+ * # Fermat MCP - needs FFI for NumPy but no other elevated permissions
+ * fermat:
+ *   scope: minimal
+ *   ffi: true
+ *   run: false
+ *   approvalMode: auto
+ * ```
+ */
+export interface PermissionConfig {
+  /** Resource scope level */
+  scope: PermissionScope;
+  /** Allow FFI (native calls via Deno.dlopen) - independent of scope */
+  ffi: boolean;
+  /** Allow subprocess execution (Deno.Command) - independent of scope */
+  run: boolean;
+  /** Approval mode for escalation requests */
+  approvalMode: ApprovalMode;
+}
+
+/**
+ * Permission set profiles as defined in ADR-035 (Story 7.7a)
+ * @deprecated Use PermissionConfig for new code. This type is kept for backward compatibility.
+ */
+export type PermissionSet =
+  | "minimal"
+  | "readonly"
+  | "filesystem"
+  | "network-api"
+  | "mcp-standard"
+  | "trusted";
+
+/**
+ * Convert legacy PermissionSet to PermissionConfig
+ * @param set - Legacy permission set string
+ * @returns Full PermissionConfig with defaults (ffi=false, run=false, approvalMode=hil)
+ */
+export function permissionSetToConfig(set: PermissionSet): PermissionConfig {
+  // 'trusted' maps to mcp-standard with auto approval
+  if (set === "trusted") {
+    return {
+      scope: "mcp-standard",
+      ffi: false,
+      run: false,
+      approvalMode: "auto",
+    };
+  }
+  return {
+    scope: set,
+    ffi: false,
+    run: false,
+    approvalMode: "hil",
+  };
+}
+
+/**
  * A learned capability - executable code pattern with metadata
  *
  * Capabilities are stored on first successful execution (eager learning).
@@ -74,6 +159,10 @@ export interface Capability {
   toolsUsed?: string[];
   /** Detailed tool invocations with timestamps for sequence visualization */
   toolInvocations?: CapabilityToolInvocation[];
+  /** Permission set for sandbox execution (Story 7.7a, ADR-035) */
+  permissionSet?: PermissionSet;
+  /** Confidence score of the permission inference (0-1) */
+  permissionConfidence?: number;
 }
 
 /**
@@ -144,6 +233,61 @@ export interface CapabilityMatch {
 
 // Note: Database row types are inferred from PGlite query results.
 // See rowToCapability() in capability-store.ts for the mapping logic.
+
+/**
+ * Permission escalation request (Story 7.7c - HIL Permission Escalation)
+ *
+ * When a capability fails with PermissionDenied, the system creates this request
+ * to ask for human approval before upgrading the capability's permission set.
+ *
+ * Flow:
+ * 1. Execution fails with PermissionDenied
+ * 2. suggestEscalation() parses error and creates PermissionEscalationRequest
+ * 3. ControlledExecutor emits decision_required event
+ * 4. Human approves/rejects via CommandQueue
+ * 5. If approved: update capability's permission_set in DB, retry execution
+ */
+export interface PermissionEscalationRequest {
+  /** UUID of the capability requesting escalation */
+  capabilityId: string;
+  /** Current permission set (e.g., "minimal") */
+  currentSet: PermissionSet;
+  /** Requested permission set after escalation (e.g., "network-api") */
+  requestedSet: PermissionSet;
+  /** Reason for escalation (e.g., "PermissionDenied: net access to api.example.com") */
+  reason: string;
+  /** Detected operation that requires elevated permissions (e.g., "fetch", "read", "write") */
+  detectedOperation: string;
+  /** Confidence score (0-1) for the escalation suggestion */
+  confidence: number;
+}
+
+/**
+ * Audit log entry for permission escalation decisions (Story 7.7c)
+ *
+ * Every escalation request (approved or rejected) is logged for audit purposes.
+ * Stored in permission_audit_log table (migration 018).
+ */
+export interface PermissionAuditLogEntry {
+  /** Unique ID for the audit entry */
+  id: string;
+  /** Timestamp when the escalation was requested */
+  timestamp: Date;
+  /** UUID of the capability requesting escalation */
+  capabilityId: string;
+  /** Permission set before escalation */
+  fromSet: PermissionSet;
+  /** Permission set requested/granted */
+  toSet: PermissionSet;
+  /** Whether the escalation was approved */
+  approved: boolean;
+  /** Who approved (user_id or "system") */
+  approvedBy?: string;
+  /** Original error message that triggered escalation */
+  reason?: string;
+  /** Detected operation (e.g., "fetch", "read", "write") */
+  detectedOperation?: string;
+}
 
 /**
  * Edge types for capability dependencies

@@ -43,10 +43,9 @@ interface JsonRpcResponse {
 
 class MCPServer {
   private client: MiniToolsClient;
-  private initialized = false;
 
   constructor(categories?: string[]) {
-    this.client = new MiniToolsClient(categories);
+    this.client = new MiniToolsClient(categories ? { categories } : undefined);
   }
 
   async handleRequest(request: JsonRpcRequest): Promise<JsonRpcResponse> {
@@ -91,7 +90,6 @@ class MCPServer {
   }
 
   private handleInitialize() {
-    this.initialized = true;
     return {
       protocolVersion: "2024-11-05",
       serverInfo: {
@@ -104,8 +102,9 @@ class MCPServer {
     };
   }
 
-  private async handleToolsList() {
-    const tools = await this.client.listTools();
+  private handleToolsList() {
+    // Convert to MCP tools format
+    const tools = this.client.toMCPFormat();
     return { tools };
   }
 
@@ -113,7 +112,7 @@ class MCPServer {
     const name = params.name as string;
     const args = (params.arguments || {}) as Record<string, unknown>;
 
-    const result = await this.client.callTool(name, args);
+    const result = await this.client.execute(name, args);
 
     return {
       content: [

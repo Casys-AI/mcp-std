@@ -29,7 +29,7 @@ lib/
 | datetime | 5 | now, format, diff, add, parse |
 | crypto | 5 | hash, uuid, base64, hex |
 | collections | 7 | map, filter, sort, unique, group |
-| fs | 5 | read, write, list (virtual filesystem) |
+| vfs | 5 | read, write, list (virtual filesystem, in-memory) |
 | data | 5 | fake_name, fake_email, lorem |
 | http | 4 | build_url, parse_url, headers |
 | validation | 4 | email, url, json_schema, pattern |

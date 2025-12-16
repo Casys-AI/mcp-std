@@ -19,11 +19,13 @@ import type {
   CapabilityEdgeSource,
   CapabilityEdgeType,
   CreateCapabilityDependencyInput,
+  PermissionSet,
   SaveCapabilityInput,
 } from "./types.ts";
 import { hashCode } from "./hash.ts";
 import { getLogger } from "../telemetry/logger.ts";
 import type { SchemaInferrer } from "./schema-inferrer.ts";
+import type { PermissionInferrer } from "./permission-inferrer.ts";
 // Story 6.5: EventBus integration (ADR-036)
 import { eventBus } from "../events/mod.ts";
 
@@ -63,9 +65,11 @@ export class CapabilityStore {
     private db: PGliteClient,
     private embeddingModel: EmbeddingModel,
     private schemaInferrer?: SchemaInferrer,
+    private permissionInferrer?: PermissionInferrer,
   ) {
     logger.debug("CapabilityStore initialized", {
       schemaInferrerEnabled: !!schemaInferrer,
+      permissionInferrerEnabled: !!permissionInferrer,
     });
   }
 
@@ -115,6 +119,27 @@ export class CapabilityStore {
       }
     }
 
+    // Infer permissions from code (Story 7.7a, ADR-035)
+    let permissionSet: PermissionSet = "minimal";
+    let permissionConfidence = 0.0;
+    if (this.permissionInferrer) {
+      try {
+        const permissions = await this.permissionInferrer.inferPermissions(code);
+        permissionSet = permissions.permissionSet;
+        permissionConfidence = permissions.confidence;
+        logger.debug("Permissions inferred for capability", {
+          codeHash,
+          permissionSet,
+          permissionConfidence,
+          detectedPatterns: permissions.detectedPatterns,
+        });
+      } catch (error) {
+        logger.warn("Permission inference failed, using minimal", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     // Build dag_structure with tools used and invocations (for graph analysis)
     const dagStructure = {
       type: "code_execution",
@@ -151,10 +176,12 @@ export class CapabilityStore {
         success_rate,
         avg_duration_ms,
         parameters_schema,
+        permission_set,
+        permission_confidence,
         created_at,
         source
       ) VALUES (
-        $1, $2, $3, 1, $4, NOW(), $5, $6, $7, $8, $9, $10, $11, $12, NOW(), 'emergent'
+        $1, $2, $3, 1, $4, NOW(), $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), 'emergent'
       )
       ON CONFLICT (code_hash) WHERE code_hash IS NOT NULL DO UPDATE SET
         usage_count = workflow_pattern.usage_count + 1,
@@ -166,6 +193,8 @@ export class CapabilityStore {
           (workflow_pattern.avg_duration_ms * workflow_pattern.usage_count) + $11
         ) / (workflow_pattern.usage_count + 1),
         parameters_schema = $12,
+        permission_set = $13,
+        permission_confidence = $14,
         dag_structure = $2
       RETURNING *`,
       [
@@ -181,6 +210,8 @@ export class CapabilityStore {
         success ? 1.0 : 0.0,
         durationMs,
         parametersSchema ? JSON.stringify(parametersSchema) : null,
+        permissionSet,
+        permissionConfidence,
       ],
     );
 
@@ -587,6 +618,9 @@ export class CapabilityStore {
       source: ((row.source as string) as "emergent" | "manual") || "emergent",
       toolsUsed,
       toolInvocations,
+      // Story 7.7a: Permission inference fields
+      permissionSet: (row.permission_set as PermissionSet) || "minimal",
+      permissionConfidence: (row.permission_confidence as number) ?? 0.0,
     };
   }
 
@@ -919,5 +953,100 @@ export class CapabilityStore {
       createdAt: new Date(row.created_at as string),
       lastObserved: new Date(row.last_observed as string),
     };
+  }
+
+  // ============================================
+  // Permission Escalation Methods (Story 7.7c)
+  // ============================================
+
+  /**
+   * Valid permission set transitions for escalation
+   *
+   * Used to validate that escalation requests follow allowed paths.
+   * "trusted" is not allowed via escalation (manual override only).
+   */
+  private static readonly VALID_ESCALATIONS: Record<PermissionSet, PermissionSet[]> = {
+    minimal: ["readonly", "filesystem", "network-api", "mcp-standard"],
+    readonly: ["filesystem", "mcp-standard"],
+    filesystem: ["mcp-standard"],
+    "network-api": ["mcp-standard"],
+    "mcp-standard": [],
+    trusted: [],
+  };
+
+  /**
+   * Update a capability's permission set after HIL approval (Story 7.7c - AC4)
+   *
+   * This method is called when a permission escalation request is approved.
+   * It validates the transition and updates the capability's permission_set in the database.
+   *
+   * @param capabilityId - UUID of the capability to update
+   * @param newPermissionSet - New permission set to apply
+   * @throws Error if capability not found or transition is invalid
+   *
+   * @example
+   * ```typescript
+   * // After HIL approval for escalation from "minimal" to "network-api"
+   * await capabilityStore.updatePermissionSet("cap-uuid", "network-api");
+   * ```
+   */
+  async updatePermissionSet(
+    capabilityId: string,
+    newPermissionSet: PermissionSet,
+  ): Promise<void> {
+    // First, get current capability to validate transition
+    const capability = await this.findById(capabilityId);
+    if (!capability) {
+      throw new Error(`Capability ${capabilityId} not found`);
+    }
+
+    const currentSet = capability.permissionSet ?? "minimal";
+
+    // Validate that the transition is allowed
+    const allowedTargets = CapabilityStore.VALID_ESCALATIONS[currentSet];
+    if (!allowedTargets.includes(newPermissionSet)) {
+      throw new Error(
+        `Invalid permission escalation: ${currentSet} -> ${newPermissionSet}. ` +
+          `Allowed targets: ${allowedTargets.join(", ") || "none"}`,
+      );
+    }
+
+    // Update the permission set in the database
+    await this.db.query(
+      `UPDATE workflow_pattern
+       SET permission_set = $1,
+           permission_confidence = 1.0
+       WHERE pattern_id = $2`,
+      [newPermissionSet, capabilityId],
+    );
+
+    logger.info("Capability permission set updated", {
+      capabilityId,
+      fromSet: currentSet,
+      toSet: newPermissionSet,
+    });
+
+    // Emit event for observability
+    eventBus.emit({
+      type: "capability.permission.updated",
+      source: "capability-store",
+      payload: {
+        capability_id: capabilityId,
+        from_set: currentSet,
+        to_set: newPermissionSet,
+        via: "hil_escalation",
+      },
+    });
+  }
+
+  /**
+   * Check if a permission escalation is valid
+   *
+   * @param fromSet - Current permission set
+   * @param toSet - Target permission set
+   * @returns true if escalation is allowed
+   */
+  isValidEscalation(fromSet: PermissionSet, toSet: PermissionSet): boolean {
+    return CapabilityStore.VALID_ESCALATIONS[fromSet]?.includes(toSet) ?? false;
   }
 }

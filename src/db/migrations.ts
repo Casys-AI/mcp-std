@@ -23,6 +23,8 @@ import { createUserIdWorkflowExecutionMigration } from "./migrations/013_user_id
 import { createAlgorithmTracesMigration } from "./migrations/014_algorithm_traces_migration.ts";
 import { createCapabilityCommunityIdMigration } from "./migrations/015_capability_community_id.ts";
 import { createCapabilityDependencyMigration } from "./migrations/016_capability_dependency.ts";
+import { createPermissionInferenceMigration } from "./migrations/017_permission_inference.ts";
+import { createPermissionAuditLogMigration } from "./migrations/018_permission_audit_log.ts";
 
 /**
  * Migration definition
@@ -399,5 +401,7 @@ export function getAllMigrations(): Migration[] {
     createAlgorithmTracesMigration(), // Story 7.6 - ADR-039: Algorithm observability
     createCapabilityCommunityIdMigration(), // Story 8.1: Capability community clustering
     createCapabilityDependencyMigration(), // Tech-spec: Capability-to-capability dependencies
+    createPermissionInferenceMigration(), // Story 7.7a: Permission inference (ADR-035)
+    createPermissionAuditLogMigration(), // Story 7.7c: HIL permission escalation audit log
   ];
 }

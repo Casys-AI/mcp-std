@@ -163,7 +163,7 @@ export class MCPClient implements MCPClientBase {
         protocolVersion: "2024-11-05",
         capabilities: {},
         clientInfo: {
-          name: "cai",
+          name: "pml",
           version: "0.1.0",
         },
       },

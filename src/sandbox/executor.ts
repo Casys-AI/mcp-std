@@ -30,6 +30,7 @@ import type {
   TraceEvent,
 } from "./types.ts";
 import type { MCPClientBase } from "../mcp/types.ts";
+import type { PermissionSet } from "../capabilities/types.ts";
 import { getLogger } from "../telemetry/logger.ts";
 import { type CacheStats, CodeExecutionCache, generateCacheKey } from "./cache.ts";
 import { SecurityValidationError, SecurityValidator } from "./security-validator.ts";
@@ -104,6 +105,8 @@ export class DenoSandboxExecutor {
   private capabilityStore?: import("../capabilities/capability-store.ts").CapabilityStore;
   /** Optional GraphRAGEngine for trace learning (Task 2) */
   private graphRAG?: import("../graphrag/graph-engine.ts").GraphRAGEngine;
+  /** Cached result for Deno version permission set support (Story 7.7b) */
+  private permissionSetSupportCached?: boolean;
 
   /**
    * Create a new sandbox executor
@@ -179,11 +182,16 @@ export class DenoSandboxExecutor {
    *
    * @param code - TypeScript code to execute
    * @param context - Optional context object to inject as variables into sandbox scope
+   * @param permissionSet - Permission set for sandbox execution (default: "minimal")
    * @returns Execution result with output or structured error
    *
    * @throws Never throws - all errors are captured in ExecutionResult
    */
-  async execute(code: string, context?: Record<string, unknown>): Promise<ExecutionResult> {
+  async execute(
+    code: string,
+    context?: Record<string, unknown>,
+    permissionSet: PermissionSet = "minimal",
+  ): Promise<ExecutionResult> {
     const startTime = performance.now();
     let tempFile: string | null = null;
     let resourceToken: ExecutionToken | null = null;
@@ -268,8 +276,8 @@ export class DenoSandboxExecutor {
       // 1. Wrap user code in execution wrapper with optional context injection
       const wrappedCode = this.wrapCode(code, context);
 
-      // 2. Build Deno command with strict permissions
-      const { command, tempFilePath } = this.buildCommand(wrappedCode);
+      // 2. Build Deno command with permission set (Story 7.7b)
+      const { command, tempFilePath } = this.buildCommand(wrappedCode, permissionSet);
       tempFile = tempFilePath;
 
       // 3. Execute with timeout enforcement
@@ -459,55 +467,164 @@ export class DenoSandboxExecutor {
 `;
   }
 
+  // ==========================================================================
+  // Story 7.7b: Permission Set Support (ADR-035)
+  // ==========================================================================
+
   /**
-   * Build Deno command with strict permission controls
+   * Check if current Deno version supports permission sets (>= 2.5)
+   * Story 7.7b (AC#3): Version detection for permission set support
+   *
+   * @returns true if Deno version >= 2.5, false otherwise
+   */
+  supportsPermissionSets(): boolean {
+    // Use cached result if available (performance optimization)
+    if (this.permissionSetSupportCached !== undefined) {
+      return this.permissionSetSupportCached;
+    }
+
+    try {
+      // Parse version like "2.5.1" → [2, 5]
+      const [major, minor] = Deno.version.deno.split(".").map(Number);
+      this.permissionSetSupportCached = major > 2 || (major === 2 && minor >= 5);
+
+      logger.debug("Deno version permission set support detected", {
+        version: Deno.version.deno,
+        supportsPermissionSets: this.permissionSetSupportCached,
+      });
+
+      return this.permissionSetSupportCached;
+    } catch {
+      // If parsing fails, assume not supported (safe fallback)
+      this.permissionSetSupportCached = false;
+      return false;
+    }
+  }
+
+  /**
+   * Map permission set to explicit Deno flags (fallback for Deno < 2.5)
+   * Story 7.7b (AC#4): Permission set to flags mapping
+   *
+   * @param set - Permission set to map
+   * @returns Array of Deno permission flags
+   */
+  permissionSetToFlags(set: PermissionSet): string[] {
+    const profiles: Record<PermissionSet, string[]> = {
+      "minimal": [], // Deny all (most restrictive)
+      "readonly": ["--allow-read=./data,/tmp"],
+      "filesystem": ["--allow-read", "--allow-write=/tmp"],
+      "network-api": ["--allow-net"],
+      "mcp-standard": [
+        "--allow-read",
+        "--allow-write=/tmp,./output",
+        "--allow-net",
+        "--allow-env=HOME,PATH",
+      ],
+      "trusted": ["--allow-all"],
+    };
+
+    const flags = profiles[set];
+    if (flags === undefined) {
+      // Unknown permission set - fallback to minimal with warning
+      logger.warn("Unknown permission set, using minimal", { requestedSet: set });
+      return [];
+    }
+
+    return flags;
+  }
+
+  /**
+   * Build Deno command with permission set support
+   *
+   * Story 7.7b: Updated to use permission sets instead of hardcoded deny flags.
    *
    * Security model:
    * - Creates temp file for code execution (required for full permission control)
-   * - Whitelist-only read access: temp file + optional user paths
-   * - Explicit deny flags: write, net, run, ffi, env
+   * - Uses permission set to determine allowed operations
+   * - Always allows reading the temp file (required for execution)
    * - Memory limit via V8 flags
    * - No prompt mode to prevent hangs
    *
    * @param code - Wrapped code to execute
+   * @param permissionSet - Permission set to apply (default: "minimal")
    * @returns Command object and temp file path
    */
-  private buildCommand(code: string): { command: Deno.Command; tempFilePath: string } {
+  private buildCommand(
+    code: string,
+    permissionSet: PermissionSet = "minimal",
+  ): { command: Deno.Command; tempFilePath: string } {
     // Create secure temp file
     const tempFile = Deno.makeTempFileSync({ prefix: "sandbox-", suffix: ".ts" });
     Deno.writeTextFileSync(tempFile, code);
 
     logger.debug("Created temp file for sandbox execution", {
       path: this.sanitizePath(tempFile),
+      permissionSet,
     });
 
     // Build permission arguments
     const args: string[] = ["run"];
 
-    // Memory limit (V8 heap size)
+    // Memory limit (V8 heap size) - always applied regardless of permission set
     args.push(`--v8-flags=--max-old-space-size=${this.config.memoryLimit}`);
 
-    // Read permissions (whitelist only)
-    if (this.config.allowedReadPaths.length > 0) {
-      // Allow temp file + user-specified paths
-      const readPaths = [tempFile, ...this.config.allowedReadPaths].join(",");
-      args.push(`--allow-read=${readPaths}`);
-    } else {
-      // Only allow reading the temp file itself
-      args.push(`--allow-read=${tempFile}`);
-    }
-
-    // Explicit deny flags (defense in depth)
-    args.push("--deny-write"); // No write access anywhere
-    args.push("--deny-net"); // No network access
-    args.push("--deny-run"); // No subprocess spawning
-    args.push("--deny-ffi"); // No FFI/native code
-    args.push("--deny-env"); // No environment variable access
-
-    // Prevent interactive prompts (would hang subprocess)
+    // Story 7.7b (AC#5): Always add --no-prompt to prevent subprocess hangs
     args.push("--no-prompt");
 
-    // Add temp file path
+    // Always deny dangerous operations regardless of permission set
+    args.push("--deny-run"); // No subprocess spawning (security critical)
+    args.push("--deny-ffi"); // No FFI/native code (security critical)
+
+    // Story 7.7b: Apply permission set
+    // Note: Deno 2.5+ permission sets (--permission-set) are not yet available
+    // Using explicit flags fallback for all versions
+    const permissionFlags = this.permissionSetToFlags(permissionSet);
+
+    // Always need to read the temp file
+    // If permission set doesn't include read access, add explicit temp file read
+    const hasReadPermission = permissionFlags.some((f) =>
+      f.startsWith("--allow-read") || f === "--allow-all"
+    );
+
+    if (!hasReadPermission) {
+      args.push(`--allow-read=${tempFile}`);
+    } else if (permissionFlags.some((f) => f.startsWith("--allow-read="))) {
+      // Add temp file to existing read paths
+      const readFlagIndex = permissionFlags.findIndex((f) => f.startsWith("--allow-read="));
+      if (readFlagIndex !== -1) {
+        permissionFlags[readFlagIndex] = `${permissionFlags[readFlagIndex]},${tempFile}`;
+      }
+    } else if (permissionFlags.includes("--allow-read")) {
+      // --allow-read (all) already covers temp file
+    }
+
+    // Also include user-configured allowed paths if any (from config)
+    if (this.config.allowedReadPaths.length > 0) {
+      const existingReadFlag = permissionFlags.find((f) => f.startsWith("--allow-read="));
+      if (existingReadFlag) {
+        const idx = permissionFlags.indexOf(existingReadFlag);
+        permissionFlags[idx] = `${existingReadFlag},${this.config.allowedReadPaths.join(",")}`;
+      } else if (!permissionFlags.includes("--allow-read") && !permissionFlags.includes("--allow-all")) {
+        // No existing read flag, add one with config paths
+        const readArg = args.find((a) => a.startsWith("--allow-read="));
+        if (readArg) {
+          const idx = args.indexOf(readArg);
+          args[idx] = `${readArg},${this.config.allowedReadPaths.join(",")}`;
+        }
+      }
+    }
+
+    // Add permission set flags
+    args.push(...permissionFlags);
+
+    // For minimal permission set, add explicit deny flags for defense in depth
+    if (permissionSet === "minimal") {
+      args.push("--deny-write");
+      args.push("--deny-net");
+      args.push("--deny-env");
+    }
+
+    // Add temp file path (must be last)
     args.push(tempFile);
 
     // Create command
@@ -517,7 +634,8 @@ export class DenoSandboxExecutor {
       stderr: "piped",
     });
 
-    logger.debug("Built sandbox command", {
+    logger.debug("Built sandbox command with permission set", {
+      permissionSet,
       args: args.slice(0, -1), // Log args without temp file path
     });
 
@@ -873,9 +991,15 @@ export class DenoSandboxExecutor {
    * - Native tracing (no stdout parsing)
    * - Full isolation via Worker with permissions: "none"
    *
+   * Note: Worker mode always uses permissions: "none" (fully sandboxed).
+   * The permissionSet parameter is informational for logging/auditing purposes.
+   * A warning is logged if permissionSet != "minimal" since Worker ignores it.
+   *
    * @param code TypeScript code to execute
    * @param workerConfig Tool definitions and MCP clients for RPC bridge
    * @param context Optional context variables to inject
+   * @param capabilityContext Optional capability context for injection
+   * @param permissionSet Permission set (informational in Worker mode, default: "minimal")
    * @returns Execution result with traces and tools called
    */
   async executeWithTools(
@@ -883,9 +1007,18 @@ export class DenoSandboxExecutor {
     workerConfig: WorkerExecutionConfig,
     context?: Record<string, unknown>,
     capabilityContext?: string,
+    permissionSet: PermissionSet = "minimal",
   ): Promise<ExecutionResultWithTraces> {
     const startTime = performance.now();
     let resourceToken: ExecutionToken | null = null;
+
+    // Story 7.7b (AC#7): Log warning if permission set != "minimal" in Worker mode
+    // Worker mode uses permissions: "none" (fully sandboxed), permission set is ignored
+    if (permissionSet && permissionSet !== "minimal") {
+      logger.warn("Permission set ignored in Worker mode (Worker is always sandboxed)", {
+        requestedPermissionSet: permissionSet,
+      });
+    }
 
     try {
       // SECURITY: Validate code and context BEFORE any execution
@@ -1013,4 +1146,53 @@ export class DenoSandboxExecutor {
   getLastToolsCalled(): string[] {
     return this.lastBridge?.getToolsCalled() ?? [];
   }
+}
+
+// ==========================================================================
+// Story 7.7b (AC#8): Exported helper function for permission set determination
+// ==========================================================================
+
+/**
+ * Confidence threshold for permission inference (Story 7.7b AC#8)
+ * Below this threshold, emergent capabilities fallback to "minimal" permissions
+ */
+export const PERMISSION_CONFIDENCE_THRESHOLD = 0.7;
+
+/**
+ * Determine the effective permission set for a capability
+ *
+ * Story 7.7b (AC#8): Implements confidence threshold check:
+ * - Manual capabilities: always use stored permission set
+ * - Emergent capabilities with low confidence: fallback to "minimal"
+ * - Emergent capabilities with high confidence: use inferred permission set
+ *
+ * @param capability - Capability with permission metadata
+ * @returns Effective permission set to use for execution
+ */
+export function determinePermissionSet(capability: {
+  source: "emergent" | "manual";
+  permissionSet?: PermissionSet;
+  permissionConfidence?: number;
+  id?: string;
+}): PermissionSet {
+  // Manual capabilities: always use stored permission set (user override)
+  if (capability.source === "manual") {
+    return capability.permissionSet ?? "mcp-standard";
+  }
+
+  // Emergent capabilities: check confidence threshold
+  const confidence = capability.permissionConfidence ?? 0;
+
+  if (confidence < PERMISSION_CONFIDENCE_THRESHOLD) {
+    logger.info("Low confidence permission inference, using minimal", {
+      capabilityId: capability.id,
+      confidence,
+      threshold: PERMISSION_CONFIDENCE_THRESHOLD,
+      requestedPermissionSet: capability.permissionSet,
+    });
+    return "minimal";
+  }
+
+  // High confidence emergent: use inferred permission set
+  return capability.permissionSet ?? "minimal";
 }

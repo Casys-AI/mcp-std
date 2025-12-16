@@ -193,6 +193,10 @@ export type ExecutionEvent =
     workflowId: string;
     decisionType: "AIL" | "HIL";
     description: string;
+    /** Checkpoint ID for approval_response (Story 2.5-3 HIL fix) */
+    checkpointId?: string;
+    /** Additional context for the decision (e.g., permission escalation details) */
+    context?: Record<string, unknown>;
   }
   | {
     type: "workflow_complete";
@@ -295,5 +299,11 @@ export type Command =
     type: "approval_response";
     checkpointId: string; // References the checkpoint being approved/rejected
     approved: boolean; // true = continue, false = abort
+    feedback?: string; // Optional human feedback
+  }
+  | {
+    type: "permission_escalation_response";
+    capabilityId: string; // UUID of capability requesting escalation
+    approved: boolean; // true = approve escalation, false = reject
     feedback?: string; // Optional human feedback
   };

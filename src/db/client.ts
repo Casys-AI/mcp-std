@@ -180,13 +180,36 @@ export class PGliteClient {
 }
 
 /**
- * Create a default database client pointing to ~/.cai/.cai.db
+ * Create a database client with explicit path
  *
- * Respects AGENTCARDS_DB_PATH environment variable for custom paths (ADR-021).
+ * @param path - Database path. Use ":memory:" for in-memory database.
+ * @returns PGliteClient instance (call .connect() before use)
+ *
+ * @example
+ * // In-memory database (for tests/playground)
+ * const db = createClient(":memory:");
+ *
+ * @example
+ * // Custom path
+ * const db = createClient("/data/my-app.db");
+ */
+export function createClient(path: string): PGliteClient {
+  return new PGliteClient(path);
+}
+
+/**
+ * Create a database client with default path
+ *
+ * Uses AGENTCARDS_DB_PATH env variable or falls back to ~/.pml/.pml.db
+ *
+ * @returns PGliteClient instance (call .connect() before use)
+ *
+ * @example
+ * const db = createDefaultClient();
+ * await db.connect();
  */
 export function createDefaultClient(): PGliteClient {
-  const dbPath = getAgentCardsDatabasePath();
-  return new PGliteClient(dbPath);
+  return createClient(getAgentCardsDatabasePath());
 }
 
 /**

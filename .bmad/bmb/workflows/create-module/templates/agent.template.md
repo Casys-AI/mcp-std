@@ -170,7 +170,7 @@ Expert agents support three types of menu actions:
    - Sidecar folders go in: `{custom_module_location}/{module_name}/agents/[agent-name]/[agent-name]-sidecar/`
 
 2. **Variable Usage**:
-   - `{project-root}/.bmad-user-memory` resolves to the agents sidecar folder destination after installation
+   - `{agent_sidecar_folder}` resolves to the agents sidecar folder destination after installation
    - `.bmad` resolves to .bmad
    - `{custom_module}` resolves to custom/src/modules
    - `{module}` is your module code/name

@@ -71,6 +71,7 @@ Deno.test("AlgorithmTracer - logTrace() buffers traces and returns traceId", asy
   assertEquals(traceId.length, 36); // UUID format
   assertEquals(tracer.getBufferSize(), 1);
 
+  await tracer.stop();
   await db.close();
 });
 
@@ -94,6 +95,7 @@ Deno.test("AlgorithmTracer - flush() writes buffered traces to database", async 
   const result = await db.query("SELECT COUNT(*) as count FROM algorithm_traces");
   assertEquals(Number(result[0]?.count), 3);
 
+  await tracer.stop();
   await db.close();
 });
 
@@ -124,6 +126,7 @@ Deno.test("AlgorithmTracer - updateOutcome() updates trace in buffer", async () 
   assertEquals(outcome.executionSuccess, true);
   assertEquals(outcome.durationMs, 150);
 
+  await tracer.stop();
   await db.close();
 });
 
@@ -147,6 +150,7 @@ Deno.test("AlgorithmTracer - updateOutcome() updates trace in database", async (
   const outcome = result[0].outcome as { userAction: string };
   assertEquals(outcome.userAction, "ignored");
 
+  await tracer.stop();
   await db.close();
 });
 
@@ -176,6 +180,7 @@ Deno.test("AlgorithmTracer - cleanup() removes old traces", async () => {
   result = await db.query("SELECT COUNT(*) as count FROM algorithm_traces");
   assertEquals(Number(result[0]?.count), 0);
 
+  await tracer.stop();
   await db.close();
 });
 
@@ -219,6 +224,7 @@ Deno.test("AlgorithmTracer - getMetrics() returns aggregated metrics", async () 
   assertAlmostEquals(metrics.avgFinalScore.tool, 0.80, 0.001);
   assertEquals(metrics.avgFinalScore.capability > 0.6 && metrics.avgFinalScore.capability < 0.7, true);
 
+  await tracer.stop();
   await db.close();
 });
 
@@ -251,6 +257,7 @@ Deno.test("AlgorithmTracer - getMetrics() filters by mode", async () => {
   assertEquals(passiveMetrics.decisionDistribution.accepted, 1);
   assertEquals(passiveMetrics.decisionDistribution.rejectedByThreshold, 1);
 
+  await tracer.stop();
   await db.close();
 });
 
@@ -281,6 +288,7 @@ Deno.test("AlgorithmTracer - spectralRelevance metric tracks cluster matches", a
   // Spectral relevance should be average of cluster-matched traces: (0.90 + 0.80) / 2 = 0.85
   assertAlmostEquals(metrics.spectralRelevance, 0.85, 0.001);
 
+  await tracer.stop();
   await db.close();
 });
 
@@ -300,5 +308,6 @@ Deno.test("AlgorithmTracer - handles SQL injection in intent field", async () =>
   assertExists(result[0]);
   assertEquals(result[0].intent, "Test'; DROP TABLE algorithm_traces; --");
 
+  await tracer.stop();
   await db.close();
 });

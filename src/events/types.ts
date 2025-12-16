@@ -57,6 +57,7 @@ export type EventType =
   | "capability.dependency.removed"
   | "capability.zone.created"
   | "capability.zone.updated"
+  | "capability.permission.updated" // Story 7.7c: HIL permission escalation
   | "learning.pattern.detected"
   | "learning.edge.strengthened"
   | "cache.hit"

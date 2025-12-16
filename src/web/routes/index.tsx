@@ -142,7 +142,7 @@ export default function LandingPage({ data }: { data: LandingPageData }) {
               <a href="#tech" class="nav-link">Tech</a>
               <a href="/docs" class="nav-link">Docs</a>
               <a href="/blog" class="nav-link">Blog</a>
-              {SHOW_AUTH && isCloudMode && <a href="/dashboard" class="nav-link">Dashboard</a>}
+              {SHOW_AUTH && !isCloudMode && <a href="/dashboard" class="nav-link">Dashboard</a>}
               <a
                 href="https://github.com/Casys-AI/casys-pml"
                 class="nav-link nav-link-github"
@@ -661,7 +661,7 @@ export default function LandingPage({ data }: { data: LandingPageData }) {
                 GitHub
               </a>
               <a href="/docs">Docs</a>
-              {SHOW_AUTH && isCloudMode && <a href="/dashboard">Dashboard</a>}
+              {SHOW_AUTH && !isCloudMode && <a href="/dashboard">Dashboard</a>}
             </div>
           </div>
         </footer>

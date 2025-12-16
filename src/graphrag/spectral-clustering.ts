@@ -16,19 +16,14 @@
 
 import { EigenvalueDecomposition, Matrix } from "ml-matrix";
 import { getLogger } from "../telemetry/logger.ts";
-import type { CapabilityDependency, CapabilityEdgeType } from "../capabilities/types.ts";
+import type { CapabilityDependency } from "../capabilities/types.ts";
+import {
+  type SpectralClusteringConfig,
+  DEFAULT_SPECTRAL_CLUSTERING_CONFIG,
+  loadSpectralClusteringConfig,
+} from "./spectral-clustering-config.ts";
 
 const logger = getLogger("default");
-
-/**
- * Edge type weights for capability-to-capability edges (ADR-042)
- */
-const EDGE_TYPE_WEIGHTS: Record<CapabilityEdgeType, number> = {
-  dependency: 1.0,
-  contains: 0.8,
-  alternative: 0.6,
-  sequence: 0.5,
-};
 
 /**
  * Capability data for clustering (minimal interface)
@@ -78,9 +73,35 @@ export class SpectralClusteringManager {
   private pageRankScores: Map<string, number> = new Map();
   private spectralEmbedding: number[][] | null = null; // ADR-048: For local alpha calculation
 
+  // Configuration (externalized magic numbers)
+  private config: SpectralClusteringConfig = DEFAULT_SPECTRAL_CLUSTERING_CONFIG;
+
   // Issue #7: Cache for cluster assignments
   private static cache: ClusterCache | null = null;
-  private static readonly CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  private static cacheTtlMs: number = DEFAULT_SPECTRAL_CLUSTERING_CONFIG.cache.ttlMinutes * 60 * 1000;
+
+  /**
+   * Initialize configuration from YAML file
+   */
+  async initConfig(configPath?: string): Promise<void> {
+    this.config = await loadSpectralClusteringConfig(configPath);
+    SpectralClusteringManager.cacheTtlMs = this.config.cache.ttlMinutes * 60 * 1000;
+  }
+
+  /**
+   * Set configuration directly (for testing)
+   */
+  setConfig(config: SpectralClusteringConfig): void {
+    this.config = config;
+    SpectralClusteringManager.cacheTtlMs = config.cache.ttlMinutes * 60 * 1000;
+  }
+
+  /**
+   * Get current configuration
+   */
+  getConfig(): SpectralClusteringConfig {
+    return this.config;
+  }
 
   /**
    * Generate cache key from tools and capabilities (Issue #7)
@@ -99,7 +120,7 @@ export class SpectralClusteringManager {
     if (!SpectralClusteringManager.cache) return false;
     if (SpectralClusteringManager.cache.key !== key) return false;
     const age = Date.now() - SpectralClusteringManager.cache.createdAt;
-    return age < SpectralClusteringManager.CACHE_TTL_MS;
+    return age < SpectralClusteringManager.cacheTtlMs;
   }
 
   /**
@@ -188,17 +209,19 @@ export class SpectralClusteringManager {
     // These are symmetric for clustering (undirected graph)
     if (capabilityDependencies && capabilityDependencies.length > 0) {
       let capCapEdgesAdded = 0;
+      const { minConfidence } = this.config.edges;
+      const edgeWeights = this.config.edgeWeights;
 
       for (const dep of capabilityDependencies) {
-        // Only include edges with confidence > 0.3 (as per ADR-042)
-        if (dep.confidenceScore <= 0.3) continue;
+        // Only include edges with confidence above threshold (as per ADR-042)
+        if (dep.confidenceScore <= minConfidence) continue;
 
         const fromIdx = this.capabilityIndex.get(dep.fromCapabilityId);
         const toIdx = this.capabilityIndex.get(dep.toCapabilityId);
 
         if (fromIdx !== undefined && toIdx !== undefined) {
           // Weight based on edge_type and confidence (ADR-042)
-          const typeWeight = EDGE_TYPE_WEIGHTS[dep.edgeType];
+          const typeWeight = edgeWeights[dep.edgeType];
           const weight = typeWeight * dep.confidenceScore;
 
           // Symmetric for clustering (undirected graph)
@@ -403,11 +426,12 @@ export class SpectralClusteringManager {
    */
   private detectOptimalK(eigenvalues: number[]): number {
     const sorted = [...eigenvalues].sort((a, b) => a - b);
+    const { maxEigenvalues, minClusters, maxClusters } = this.config.clusterDetection;
     let maxGap = 0;
-    let optimalK = 2;
+    let optimalK = minClusters;
 
     // Look for largest gap (skip first eigenvalue which is ~0)
-    for (let i = 1; i < Math.min(sorted.length - 1, 10); i++) {
+    for (let i = 1; i < Math.min(sorted.length - 1, maxEigenvalues); i++) {
       const gap = sorted[i + 1] - sorted[i];
       if (gap > maxGap) {
         maxGap = gap;
@@ -415,7 +439,7 @@ export class SpectralClusteringManager {
       }
     }
 
-    return Math.max(2, Math.min(optimalK, 5)); // Clamp between 2 and 5
+    return Math.max(minClusters, Math.min(optimalK, maxClusters));
   }
 
   /**
@@ -423,10 +447,11 @@ export class SpectralClusteringManager {
    *
    * @param data - Points to cluster (rows = points, cols = dimensions)
    * @param k - Number of clusters
-   * @param maxIter - Maximum iterations (default: 100)
+   * @param maxIter - Maximum iterations (uses config default if not specified)
    * @returns Cluster labels for each point
    */
-  private kMeans(data: number[][], k: number, maxIter = 100): number[] {
+  private kMeans(data: number[][], k: number, maxIter?: number): number[] {
+    const effectiveMaxIter = maxIter ?? this.config.kmeans.maxIterations;
     const n = data.length;
     const dims = data[0]?.length || 0;
 
@@ -468,7 +493,7 @@ export class SpectralClusteringManager {
     // Iterative refinement
     let labels = new Array(n).fill(0);
 
-    for (let iter = 0; iter < maxIter; iter++) {
+    for (let iter = 0; iter < effectiveMaxIter; iter++) {
       // Assign points to nearest centroid
       const newLabels: number[] = [];
       for (let i = 0; i < n; i++) {
@@ -581,10 +606,11 @@ export class SpectralClusteringManager {
     }
 
     const capCluster = this.clusterAssignments.capabilityClusters.get(capability.id);
+    const { sameCluster, partialMultiplier } = this.config.clusterBoost;
 
     if (capCluster === activeCluster) {
       // Full boost for same cluster
-      return 0.5;
+      return sameCluster;
     }
 
     // Partial boost if capability's tools overlap with active cluster tools
@@ -594,9 +620,9 @@ export class SpectralClusteringManager {
     }).length;
 
     if (capToolsInActiveCluster > 0) {
-      // Partial boost: 0.25 * (tools in cluster / total tools)
+      // Partial boost: multiplier * (tools in cluster / total tools)
       const ratio = capToolsInActiveCluster / capability.toolsUsed.length;
-      return 0.25 * ratio;
+      return partialMultiplier * ratio;
     }
 
     return 0;
@@ -614,17 +640,20 @@ export class SpectralClusteringManager {
    * A capability that 'contains' others = "meta-capability" = more important.
    *
    * @param capabilities - Capabilities to rank
-   * @param dampingFactor - PageRank damping factor (default: 0.85)
-   * @param maxIter - Maximum iterations (default: 100)
+   * @param dampingFactor - PageRank damping factor (uses config default if not specified)
+   * @param maxIter - Maximum iterations (uses config default if not specified)
    * @param capabilityDependencies - Optional: Cap→Cap edges for directed PageRank (ADR-042)
    * @returns Map of capability_id to PageRank score (0-1)
    */
   computeHypergraphPageRank(
     capabilities: ClusterableCapability[],
-    dampingFactor = 0.85,
-    maxIter = 100,
+    dampingFactor?: number,
+    maxIter?: number,
     capabilityDependencies?: CapabilityDependency[],
   ): Map<string, number> {
+    const effectiveDamping = dampingFactor ?? this.config.pagerank.dampingFactor;
+    const effectiveMaxIter = maxIter ?? this.config.pagerank.maxIterations;
+    const convergenceThreshold = this.config.pagerank.convergenceThreshold;
     const startTime = performance.now();
 
     if (!this.adjacencyMatrix) {
@@ -669,8 +698,8 @@ export class SpectralClusteringManager {
     let scores = new Array(n).fill(1 / n);
 
     // Power iteration
-    for (let iter = 0; iter < maxIter; iter++) {
-      const newScores = new Array(n).fill((1 - dampingFactor) / n);
+    for (let iter = 0; iter < effectiveMaxIter; iter++) {
+      const newScores = new Array(n).fill((1 - effectiveDamping) / n);
 
       for (let i = 0; i < n; i++) {
         // Get outgoing edges (degree) from modified matrix
@@ -679,13 +708,13 @@ export class SpectralClusteringManager {
         if (outDegree > 0) {
           for (let j = 0; j < n; j++) {
             if (pageRankMatrix[i][j] > 0) {
-              newScores[j] += dampingFactor * scores[i] * pageRankMatrix[i][j] / outDegree;
+              newScores[j] += effectiveDamping * scores[i] * pageRankMatrix[i][j] / outDegree;
             }
           }
         } else {
           // Dangling node: distribute equally
           for (let j = 0; j < n; j++) {
-            newScores[j] += dampingFactor * scores[i] / n;
+            newScores[j] += effectiveDamping * scores[i] / n;
           }
         }
       }
@@ -694,7 +723,7 @@ export class SpectralClusteringManager {
       const diff = scores.reduce((sum, s, i) => sum + Math.abs(s - newScores[i]), 0);
       scores = newScores;
 
-      if (diff < 1e-6) {
+      if (diff < convergenceThreshold) {
         logger.debug(`PageRank converged at iteration ${iter}`);
         break;
       }

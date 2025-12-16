@@ -257,9 +257,10 @@ Deno.test("CapabilityDataService - buildHypergraphData creates hierarchical edge
 
   const edge = hierEdges[0];
   assertEquals(edge.data.source.startsWith("cap-"), true);
-  assertEquals(edge.data.edgeSource, "observed");
 
+  // Type guard: verify edge properties within narrowed type context
   if (edge.data.edgeType === "hierarchy") {
+    assertEquals(edge.data.edgeSource, "observed");
     assertExists(edge.data.observedCount);
   }
 });

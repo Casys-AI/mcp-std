@@ -11,7 +11,11 @@
  */
 
 // Core executor
-export { DenoSandboxExecutor } from "./executor.ts";
+export {
+  DenoSandboxExecutor,
+  determinePermissionSet,
+  PERMISSION_CONFIDENCE_THRESHOLD,
+} from "./executor.ts";
 export type { ErrorType, ExecutionResult, SandboxConfig, StructuredError } from "./types.ts";
 
 // PII Detection & Tokenization

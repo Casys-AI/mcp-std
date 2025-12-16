@@ -6,7 +6,7 @@
  * ADR-048: adaptiveAlpha is deprecated, use localAlpha instead for new code.
  */
 
-import { assert, assertEquals, assertExists } from "@std/assert";
+import { assert, assertAlmostEquals, assertEquals, assertExists } from "@std/assert";
 import { PGliteClient } from "../../src/db/client.ts";
 import { getAllMigrations, MigrationRunner } from "../../src/db/migrations.ts";
 import { GraphRAGEngine } from "../../src/graphrag/graph-engine.ts";
@@ -277,10 +277,10 @@ Deno.test("GET /api/metrics - localAlpha structure with traces", async () => {
 
   // Insert test algorithm traces with local alpha data
   await db.query(`
-    INSERT INTO algorithm_traces (algorithm_mode, target_type, params, signals, final_score, decision)
+    INSERT INTO algorithm_traces (algorithm_mode, target_type, params, signals, final_score, threshold_used, decision)
     VALUES
-      ('active_search', 'tool', '{"alpha": 0.65}', '{"graphDensity": 0.1, "alphaAlgorithm": "embeddings_hybrides", "coldStart": false}', 0.85, 'accepted'),
-      ('passive_suggestion', 'tool', '{"alpha": 0.80}', '{"graphDensity": 0.1, "alphaAlgorithm": "heat_diffusion", "coldStart": false}', 0.75, 'accepted')
+      ('active_search', 'tool', '{"alpha": 0.65}', '{"graphDensity": 0.1, "alphaAlgorithm": "embeddings_hybrides", "coldStart": false}', 0.85, 0.70, 'accepted'),
+      ('passive_suggestion', 'tool', '{"alpha": 0.80}', '{"graphDensity": 0.1, "alphaAlgorithm": "heat_diffusion", "coldStart": false}', 0.75, 0.70, 'accepted')
   `);
 
   const metrics = await graphEngine.getMetrics("24h");
@@ -309,12 +309,12 @@ Deno.test("GET /api/metrics - localAlpha byMode values", async () => {
 
   // Insert traces with different modes
   await db.query(`
-    INSERT INTO algorithm_traces (algorithm_mode, target_type, params, signals, final_score, decision)
+    INSERT INTO algorithm_traces (algorithm_mode, target_type, params, signals, final_score, threshold_used, decision)
     VALUES
-      ('active_search', 'tool', '{"alpha": 0.60}', '{"graphDensity": 0.1, "alphaAlgorithm": "embeddings_hybrides"}', 0.85, 'accepted'),
-      ('active_search', 'tool', '{"alpha": 0.70}', '{"graphDensity": 0.1, "alphaAlgorithm": "embeddings_hybrides"}', 0.80, 'accepted'),
-      ('passive_suggestion', 'tool', '{"alpha": 0.85}', '{"graphDensity": 0.1, "alphaAlgorithm": "heat_diffusion"}', 0.75, 'accepted'),
-      ('passive_suggestion', 'capability', '{"alpha": 0.95}', '{"graphDensity": 0.1, "alphaAlgorithm": "heat_hierarchical"}', 0.70, 'accepted')
+      ('active_search', 'tool', '{"alpha": 0.60}', '{"graphDensity": 0.1, "alphaAlgorithm": "embeddings_hybrides"}', 0.85, 0.70, 'accepted'),
+      ('active_search', 'tool', '{"alpha": 0.70}', '{"graphDensity": 0.1, "alphaAlgorithm": "embeddings_hybrides"}', 0.80, 0.70, 'accepted'),
+      ('passive_suggestion', 'tool', '{"alpha": 0.85}', '{"graphDensity": 0.1, "alphaAlgorithm": "heat_diffusion"}', 0.75, 0.70, 'accepted'),
+      ('passive_suggestion', 'capability', '{"alpha": 0.95}', '{"graphDensity": 0.1, "alphaAlgorithm": "heat_hierarchical"}', 0.70, 0.70, 'accepted')
   `);
 
   const metrics = await graphEngine.getMetrics("24h");
@@ -323,10 +323,10 @@ Deno.test("GET /api/metrics - localAlpha byMode values", async () => {
   const la = metrics.current.localAlpha!;
 
   // activeSearch average: (0.60 + 0.70) / 2 = 0.65
-  assertEquals(la.byMode.activeSearch, 0.65, "activeSearch alpha should be average of 0.60 and 0.70");
+  assertAlmostEquals(la.byMode.activeSearch, 0.65, 0.001, "activeSearch alpha should be average of 0.60 and 0.70");
 
   // passiveSuggestion average: (0.85 + 0.95) / 2 = 0.90
-  assertEquals(la.byMode.passiveSuggestion, 0.90, "passiveSuggestion alpha should be average of 0.85 and 0.95");
+  assertAlmostEquals(la.byMode.passiveSuggestion, 0.90, 0.001, "passiveSuggestion alpha should be average of 0.85 and 0.95");
 
   await db.close();
 });
@@ -337,13 +337,13 @@ Deno.test("GET /api/metrics - localAlpha algorithmDistribution", async () => {
 
   // Insert traces with different algorithms
   await db.query(`
-    INSERT INTO algorithm_traces (algorithm_mode, target_type, params, signals, final_score, decision)
+    INSERT INTO algorithm_traces (algorithm_mode, target_type, params, signals, final_score, threshold_used, decision)
     VALUES
-      ('active_search', 'tool', '{"alpha": 0.65}', '{"graphDensity": 0.1, "alphaAlgorithm": "embeddings_hybrides"}', 0.85, 'accepted'),
-      ('active_search', 'tool', '{"alpha": 0.65}', '{"graphDensity": 0.1, "alphaAlgorithm": "embeddings_hybrides"}', 0.85, 'accepted'),
-      ('passive_suggestion', 'tool', '{"alpha": 0.80}', '{"graphDensity": 0.1, "alphaAlgorithm": "heat_diffusion"}', 0.75, 'accepted'),
-      ('passive_suggestion', 'capability', '{"alpha": 0.90}', '{"graphDensity": 0.1, "alphaAlgorithm": "heat_hierarchical"}', 0.70, 'accepted'),
-      ('active_search', 'tool', '{"alpha": 1.0}', '{"graphDensity": 0.0, "alphaAlgorithm": "bayesian", "coldStart": true}', 0.60, 'accepted')
+      ('active_search', 'tool', '{"alpha": 0.65}', '{"graphDensity": 0.1, "alphaAlgorithm": "embeddings_hybrides"}', 0.85, 0.70, 'accepted'),
+      ('active_search', 'tool', '{"alpha": 0.65}', '{"graphDensity": 0.1, "alphaAlgorithm": "embeddings_hybrides"}', 0.85, 0.70, 'accepted'),
+      ('passive_suggestion', 'tool', '{"alpha": 0.80}', '{"graphDensity": 0.1, "alphaAlgorithm": "heat_diffusion"}', 0.75, 0.70, 'accepted'),
+      ('passive_suggestion', 'capability', '{"alpha": 0.90}', '{"graphDensity": 0.1, "alphaAlgorithm": "heat_hierarchical"}', 0.70, 0.70, 'accepted'),
+      ('active_search', 'tool', '{"alpha": 1.0}', '{"graphDensity": 0.0, "alphaAlgorithm": "bayesian", "coldStart": true}', 0.60, 0.70, 'accepted')
   `);
 
   const metrics = await graphEngine.getMetrics("24h");
