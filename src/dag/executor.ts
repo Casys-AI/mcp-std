@@ -55,6 +55,7 @@ export class ParallelExecutor {
       ail: config.ail ?? { enabled: false, decision_points: "manual" },
       hil: config.hil ?? { enabled: false, approval_required: "never" },
       userId: config.userId ?? "local", // Story 9.5: Multi-tenant isolation
+      timeouts: config.timeouts ?? { hil: 300000, ail: 60000, pollInterval: 100 },
     };
     // Initialize rate limiter: 10 requests per second per server
     this.rateLimiter = new RateLimiter(10, 1000);

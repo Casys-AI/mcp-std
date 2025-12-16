@@ -72,6 +72,7 @@ export interface DagScoringHopConfidence {
 
 export interface DagScoringCommunity {
   baseConfidence: number;
+  pagerankMultiplier: number;
   pagerankBoostCap: number;
   edgeWeightBoostCap: number;
   adamicAdarBoostCap: number;
@@ -180,6 +181,7 @@ interface DagScoringFileConfig {
   };
   community?: {
     base_confidence?: number;
+    pagerank_multiplier?: number;
     pagerank_boost_cap?: number;
     edge_weight_boost_cap?: number;
     adamic_adar_boost_cap?: number;
@@ -270,6 +272,7 @@ export const DEFAULT_DAG_SCORING_CONFIG: DagScoringConfig = {
   },
   community: {
     baseConfidence: 0.40,
+    pagerankMultiplier: 2.0,
     pagerankBoostCap: 0.20,
     edgeWeightBoostCap: 0.25,
     adamicAdarBoostCap: 0.10,
@@ -451,6 +454,7 @@ function toDagScoringConfig(file: DagScoringFileConfig): DagScoringConfig {
     },
     community: {
       baseConfidence: file.community?.base_confidence ?? d.community.baseConfidence,
+      pagerankMultiplier: file.community?.pagerank_multiplier ?? d.community.pagerankMultiplier,
       pagerankBoostCap: file.community?.pagerank_boost_cap ?? d.community.pagerankBoostCap,
       edgeWeightBoostCap: file.community?.edge_weight_boost_cap ?? d.community.edgeWeightBoostCap,
       adamicAdarBoostCap: file.community?.adamic_adar_boost_cap ?? d.community.adamicAdarBoostCap,

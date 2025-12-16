@@ -101,6 +101,20 @@ export interface ExecutorConfig {
    * Defaults to "local" for backward compatibility.
    */
   userId?: string;
+
+  /**
+   * Configurable timeouts for decision loops (Story 2.5-3)
+   *
+   * Allows deployment-specific timeout configuration instead of hardcoded values.
+   */
+  timeouts?: {
+    /** HIL (Human-in-the-Loop) approval timeout in ms (default: 300000 = 5 minutes) */
+    hil?: number;
+    /** AIL (Agent-in-the-Loop) decision timeout in ms (default: 60000 = 1 minute) */
+    ail?: number;
+    /** Poll interval for legacy polling mode in ms (default: 100) */
+    pollInterval?: number;
+  };
 }
 
 /**

@@ -322,4 +322,33 @@ export class CommandQueue {
   getStats(): CommandQueueStats {
     return { ...this.stats };
   }
+
+  /**
+   * Wait for a command with timeout (non-polling)
+   *
+   * Uses proper Promise-based waiting instead of CPU-burning polling.
+   * Returns immediately if a command is already queued.
+   *
+   * @param timeout - Timeout in milliseconds
+   * @returns Promise of command or null on timeout
+   */
+  async waitForCommand(timeout: number): Promise<Command | null> {
+    // Create a timeout promise
+    const timeoutPromise = new Promise<null>((resolve) => {
+      setTimeout(() => resolve(null), timeout);
+    });
+
+    // Race between command arrival and timeout
+    const result = await Promise.race([
+      this.queue.dequeue(),
+      timeoutPromise,
+    ]);
+
+    if (result !== null) {
+      this.stats.processedCommands++;
+      log.debug(`Command received: ${result.type}`);
+    }
+
+    return result;
+  }
 }
