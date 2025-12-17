@@ -12,7 +12,7 @@
 
 import { ParallelExecutor } from "./executor.ts";
 import type { DAGStructure, Task } from "../graphrag/types.ts";
-import type { ExecutionEvent, ExecutorConfig, TaskResult, ToolExecutor } from "./types.ts";
+import { PermissionEscalationNeeded, type ExecutionEvent, type ExecutorConfig, type TaskResult, type ToolExecutor } from "./types.ts";
 import { EventStream, type EventStreamStats } from "./event-stream.ts";
 import { CommandQueue, type CommandQueueStats } from "./command-queue.ts";
 import {
@@ -91,6 +91,8 @@ export class ControlledExecutor extends ParallelExecutor {
   private graphRAG?: GraphRAGEngine;
   private permissionEscalationHandler: PermissionEscalationHandler | null = null;
   private _permissionAuditStore: PermissionAuditStore | null = null;
+  /** Events generated during deferred escalation handling, to be yielded by generator */
+  private pendingEscalationEvents: ExecutionEvent[] = [];
 
   constructor(toolExecutor: ToolExecutor, config: ExecutorConfig = {}) {
     super(toolExecutor, config);
@@ -337,9 +339,22 @@ export class ControlledExecutor extends ParallelExecutor {
       // Execute layer
       for (const task of layer) yield* this.emitTaskStart(workflowId, task);
 
-      const layerResults = await Promise.allSettled(
+      let layerResults = await Promise.allSettled(
         layer.map((task) => this.executeTask(task, results)),
       );
+
+      // Handle deferred permission escalations (Deferred Escalation Pattern)
+      // Tasks that need permission escalation throw PermissionEscalationNeeded
+      // which is caught here at the layer boundary where we CAN yield events
+      layerResults = await this.handleDeferredEscalations(
+        workflowId,
+        layer,
+        layerResults,
+        results,
+      );
+      // Yield any escalation events that were generated
+      for (const event of this.pendingEscalationEvents) yield event;
+      this.pendingEscalationEvents = [];
 
       // Collect results
       const { layerTaskResults, layerSuccess, layerFailed } = await this.collectLayerResults(
@@ -370,15 +385,21 @@ export class ControlledExecutor extends ParallelExecutor {
       const checkpointEvent = await this.saveCheckpoint(workflowId, layerIdx);
       if (checkpointEvent) yield checkpointEvent;
 
-      // AIL Decision Point
-      const ailEvents = await this.handleAILDecisionPoint(workflowId, layerIdx, failedTasks > 0, dag, layers);
-      for (const event of ailEvents.events) yield event;
-      if (ailEvents.newLayers) layers = ailEvents.newLayers;
-      if (ailEvents.newDag) dag = ailEvents.newDag;
+      // AIL Decision Point (Deferred Pattern: yield event BEFORE waiting for response)
+      const ailPrep = await this.prepareAILDecision(workflowId, layerIdx, failedTasks > 0);
+      if (ailPrep.event) yield ailPrep.event;
+      if (ailPrep.needsResponse) {
+        const ailResult = await this.waitForAILResponse(workflowId, dag);
+        if (ailResult.newLayers) layers = ailResult.newLayers;
+        if (ailResult.newDag) dag = ailResult.newDag;
+      }
 
-      // HIL Approval
-      const hilEvents = await this.handleHILApproval(workflowId, layerIdx, layer, layers);
-      for (const event of hilEvents) yield event;
+      // HIL Approval (Deferred Pattern: yield event BEFORE waiting for response)
+      const hilPrep = await this.prepareHILApproval(workflowId, layerIdx, layer, layers);
+      if (hilPrep.event) yield hilPrep.event;
+      if (hilPrep.needsResponse) {
+        await this.waitForHILResponse(workflowId, layerIdx);
+      }
     }
 
     // Workflow complete
@@ -460,9 +481,19 @@ export class ControlledExecutor extends ParallelExecutor {
 
       for (const task of layer) yield* this.emitTaskStart(workflowId, task);
 
-      const layerResults = await Promise.allSettled(
+      let layerResults = await Promise.allSettled(
         layer.map((task) => this.executeTask(task, results)),
       );
+
+      // Handle deferred permission escalations (Deferred Escalation Pattern)
+      layerResults = await this.handleDeferredEscalations(
+        workflowId,
+        layer,
+        layerResults,
+        results,
+      );
+      for (const event of this.pendingEscalationEvents) yield event;
+      this.pendingEscalationEvents = [];
 
       const { layerTaskResults, layerSuccess, layerFailed } = await this.collectLayerResults(
         workflowId,
@@ -491,14 +522,22 @@ export class ControlledExecutor extends ParallelExecutor {
       if (checkpointEvent) yield checkpointEvent;
 
       // AIL Decision Point (SECURITY: Must include on resume to prevent bypass)
-      const ailEvents = await this.handleAILDecisionPoint(workflowId, actualLayerIdx, layerFailed > 0, dag, layers);
-      for (const event of ailEvents.events) yield event;
-      if (ailEvents.newLayers) layers = ailEvents.newLayers;
-      if (ailEvents.newDag) dag = ailEvents.newDag;
+      // Deferred Pattern: yield event BEFORE waiting for response
+      const ailPrep = await this.prepareAILDecision(workflowId, actualLayerIdx, layerFailed > 0);
+      if (ailPrep.event) yield ailPrep.event;
+      if (ailPrep.needsResponse) {
+        const ailResult = await this.waitForAILResponse(workflowId, dag);
+        if (ailResult.newLayers) layers = ailResult.newLayers;
+        if (ailResult.newDag) dag = ailResult.newDag;
+      }
 
       // HIL Approval (SECURITY: Must include on resume to prevent bypass)
-      const hilEvents = await this.handleHILApproval(workflowId, actualLayerIdx, layer, layers);
-      for (const event of hilEvents) yield event;
+      // Deferred Pattern: yield event BEFORE waiting for response
+      const hilPrep = await this.prepareHILApproval(workflowId, actualLayerIdx, layer, layers);
+      if (hilPrep.event) yield hilPrep.event;
+      if (hilPrep.needsResponse) {
+        await this.waitForHILResponse(workflowId, actualLayerIdx);
+      }
     }
 
     const totalTime = performance.now() - startTime;
@@ -552,8 +591,9 @@ export class ControlledExecutor extends ParallelExecutor {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (isPermissionError(errorMessage)) {
-        const result = await this.handleCodeTaskPermissionEscalation(task, previousResults, deps, errorMessage);
-        if (result) return result;
+        // This throws PermissionEscalationNeeded if escalation is possible,
+        // which will be caught at layer boundary (Deferred Escalation Pattern)
+        this.handleCodeTaskPermissionEscalation(task, errorMessage);
       }
       throw error;
     }
@@ -594,42 +634,153 @@ export class ControlledExecutor extends ParallelExecutor {
     }
   }
 
-  private async handleCodeTaskPermissionEscalation(
+  /**
+   * Handle permission escalation for code tasks using Deferred Escalation Pattern.
+   *
+   * Instead of blocking with waitForDecisionCommand (which causes deadlock inside
+   * Promise.allSettled), we throw PermissionEscalationNeeded which is caught at
+   * the layer boundary where the generator can properly yield.
+   *
+   * @throws PermissionEscalationNeeded if escalation is possible
+   * @returns null if no escalation suggestion (error should be re-thrown by caller)
+   */
+  private handleCodeTaskPermissionEscalation(
     task: Task,
-    previousResults: Map<string, TaskResult>,
-    deps: CodeExecutorDeps,
     errorMessage: string,
-  ): Promise<{ output: unknown; executionTimeMs: number } | null> {
+  ): null {
     const currentPermissionSet: PermissionSet =
       (task.sandboxConfig?.permissionSet as PermissionSet) ?? "minimal";
     const suggestion = suggestEscalation(errorMessage, task.id, currentPermissionSet);
 
     if (!suggestion) return null;
 
-    const description = formatEscalationRequest(suggestion);
-    const escalationEvent: ExecutionEvent = {
-      type: "decision_required",
-      timestamp: Date.now(),
-      workflowId: this.state?.workflowId ?? "unknown",
-      decisionType: "HIL",
-      description: `[Code Task: ${task.id}] ${description}`,
-      checkpointId: `perm-esc-${task.id}`,
-    };
-    await this.eventStream.emit(escalationEvent);
+    // Throw instead of blocking - will be caught at layer boundary
+    throw new PermissionEscalationNeeded(
+      task.id,
+      -1, // Index will be determined at layer boundary
+      suggestion.currentSet,
+      suggestion.requestedSet,
+      suggestion.detectedOperation,
+      errorMessage,
+      "code",
+    );
+  }
 
-    const command = await waitForDecisionCommand(this.commandQueue, "HIL", this.getTimeout("hil"));
-    if (!command) {
-      throw new Error(`Permission escalation timeout for code task ${task.id}`);
+  /**
+   * Handle deferred permission escalations at the layer boundary.
+   *
+   * This is the key to the Deferred Escalation Pattern:
+   * - Tasks threw PermissionEscalationNeeded instead of blocking
+   * - Promise.allSettled caught them as rejections
+   * - NOW we can properly yield decision_required events (generator has control)
+   * - If approved, re-execute the task with escalated permissions
+   * - Return updated layerResults
+   */
+  private async handleDeferredEscalations(
+    workflowId: string,
+    layer: Task[],
+    layerResults: PromiseSettledResult<{ output: unknown; executionTimeMs: number }>[],
+    previousResults: Map<string, TaskResult>,
+  ): Promise<PromiseSettledResult<{ output: unknown; executionTimeMs: number }>[]> {
+    // Find all escalation rejections
+    const escalations: { index: number; error: PermissionEscalationNeeded }[] = [];
+
+    for (let i = 0; i < layerResults.length; i++) {
+      const result = layerResults[i];
+      if (result.status === "rejected" && result.reason instanceof PermissionEscalationNeeded) {
+        escalations.push({ index: i, error: result.reason });
+      }
     }
 
-    if (
-      (command.type === "permission_escalation_response" || command.type === "approval_response") &&
-      command.approved
-    ) {
-      return await executeCodeTask(task, previousResults, deps, suggestion.requestedSet);
+    if (escalations.length === 0) {
+      return layerResults;
     }
 
-    throw new Error(`Permission escalation rejected for code task ${task.id}: ${command.feedback ?? "User rejected"}`);
+    log.info(`Found ${escalations.length} permission escalation(s) to handle at layer boundary`);
+
+    // Create mutable copy of results
+    const updatedResults = [...layerResults];
+
+    // Handle each escalation
+    for (const { index, error } of escalations) {
+      const task = layer[index];
+
+      // Create and emit decision_required event
+      const escalationEvent: ExecutionEvent = {
+        type: "decision_required",
+        timestamp: Date.now(),
+        workflowId,
+        decisionType: "HIL",
+        description: `[Task: ${task.id}] Permission escalation: ${error.currentSet} → ${error.requestedSet} (${error.detectedOperation})`,
+        checkpointId: `perm-esc-${task.id}`,
+        context: {
+          taskId: task.id,
+          currentSet: error.currentSet,
+          requestedSet: error.requestedSet,
+          detectedOperation: error.detectedOperation,
+          originalError: error.originalError,
+        },
+      };
+      await this.eventStream.emit(escalationEvent);
+      this.pendingEscalationEvents.push(escalationEvent);
+
+      log.info(`Waiting for HIL approval for task ${task.id} permission escalation`);
+
+      // Wait for approval (NOW this works because generator can yield!)
+      const command = await waitForDecisionCommand(this.commandQueue, "HIL", this.getTimeout("hil"));
+
+      if (!command) {
+        log.warn(`Permission escalation timeout for task ${task.id}`);
+        // Leave as rejected with a clearer error
+        updatedResults[index] = {
+          status: "rejected",
+          reason: new Error(`Permission escalation timeout for task ${task.id}`),
+        };
+        continue;
+      }
+
+      if (
+        (command.type === "permission_escalation_response" || command.type === "approval_response") &&
+        command.approved
+      ) {
+        log.info(`Permission escalation approved for task ${task.id}, re-executing with ${error.requestedSet}`);
+
+        try {
+          // Re-execute with escalated permissions
+          const deps: CodeExecutorDeps = {
+            capabilityStore: this.capabilityStore,
+            graphRAG: this.graphRAG,
+          };
+
+          // Update task's permission set for re-execution
+          const updatedTask = {
+            ...task,
+            sandboxConfig: {
+              ...task.sandboxConfig,
+              permissionSet: error.requestedSet as PermissionSet,
+            },
+          };
+
+          const result = await executeCodeTask(updatedTask, previousResults, deps, error.requestedSet as PermissionSet);
+          updatedResults[index] = { status: "fulfilled", value: result };
+          log.info(`Task ${task.id} re-execution successful after escalation`);
+        } catch (retryError) {
+          log.error(`Task ${task.id} re-execution failed after escalation: ${retryError}`);
+          updatedResults[index] = {
+            status: "rejected",
+            reason: retryError,
+          };
+        }
+      } else {
+        log.info(`Permission escalation rejected for task ${task.id}`);
+        updatedResults[index] = {
+          status: "rejected",
+          reason: new Error(`Permission escalation rejected for task ${task.id}: ${command.feedback ?? "User rejected"}`),
+        };
+      }
+    }
+
+    return updatedResults;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -761,18 +912,20 @@ export class ControlledExecutor extends ParallelExecutor {
     return checkpointEvent;
   }
 
-  private async handleAILDecisionPoint(
+  /**
+   * Prepare AIL decision event (non-blocking).
+   * Returns the event to yield; caller must then call waitForAILResponse.
+   *
+   * Deferred AIL Pattern: Separate event creation from blocking wait
+   * so the generator can yield the event before waiting for response.
+   */
+  private async prepareAILDecision(
     workflowId: string,
     layerIdx: number,
     hasErrors: boolean,
-    dag: DAGStructure,
-    _layers: Task[][],
-  ): Promise<{ events: ExecutionEvent[]; newLayers?: Task[][]; newDag?: DAGStructure }> {
-    const events: ExecutionEvent[] = [];
-    const ctx = this.getCaptureContext();
-
+  ): Promise<{ event: ExecutionEvent | null; needsResponse: boolean }> {
     if (!shouldTriggerAIL(this.config, layerIdx, hasErrors)) {
-      return { events };
+      return { event: null, needsResponse: false };
     }
 
     const ailEvent: ExecutionEvent = {
@@ -783,13 +936,24 @@ export class ControlledExecutor extends ParallelExecutor {
       description: `Layer ${layerIdx} completed. Agent decision required.`,
     };
     await this.eventStream.emit(ailEvent);
-    events.push(ailEvent);
 
+    return { event: ailEvent, needsResponse: true };
+  }
+
+  /**
+   * Wait for AIL response after event has been yielded.
+   * Returns new layers/dag if replan occurred, throws if aborted.
+   */
+  private async waitForAILResponse(
+    workflowId: string,
+    dag: DAGStructure,
+  ): Promise<{ newLayers?: Task[][]; newDag?: DAGStructure }> {
+    const ctx = this.getCaptureContext();
     const command = await waitForDecisionCommand(this.commandQueue, "AIL", this.getTimeout("ail"));
 
     if (!command || command.type === "continue") {
       captureAILDecision(ctx, workflowId, "continue", "Agent decision: continue", { reason: command?.reason || "default" });
-      return { events };
+      return {};
     }
 
     if (command.type === "abort") {
@@ -800,7 +964,7 @@ export class ControlledExecutor extends ParallelExecutor {
     if (command.type === "replan_dag" && this.dagSuggester) {
       if (this.replanCount >= MAX_REPLANS) {
         captureAILDecision(ctx, workflowId, "replan_rejected", "Rate limit reached", { max_replans: MAX_REPLANS });
-        return { events };
+        return {};
       }
 
       try {
@@ -814,27 +978,31 @@ export class ControlledExecutor extends ParallelExecutor {
           const newLayers = this.topologicalSort(augmentedDAG);
           this.replanCount++;
           captureAILDecision(ctx, workflowId, "replan_success", "DAG replanned", { replan_count: this.replanCount });
-          return { events, newLayers, newDag: augmentedDAG };
+          return { newLayers, newDag: augmentedDAG };
         }
       } catch (error) {
         captureAILDecision(ctx, workflowId, "replan_failed", "Replan failed", { error: String(error) });
       }
     }
 
-    return { events };
+    return {};
   }
 
-  private async handleHILApproval(
+  /**
+   * Prepare HIL approval event (non-blocking).
+   * Returns the event to yield; caller must then call waitForHILResponse.
+   *
+   * Deferred HIL Pattern: Separate event creation from blocking wait
+   * so the generator can yield the event before waiting for response.
+   */
+  private async prepareHILApproval(
     workflowId: string,
     layerIdx: number,
     layer: Task[],
     layers: Array<Array<{ id: string; tool: string; depends_on?: string[] }>>,
-  ): Promise<ExecutionEvent[]> {
-    const events: ExecutionEvent[] = [];
-    const ctx = this.getCaptureContext();
-
+  ): Promise<{ event: ExecutionEvent | null; needsResponse: boolean }> {
     if (!shouldRequireApproval(this.config, layerIdx, layer)) {
-      return events;
+      return { event: null, needsResponse: false };
     }
 
     const summary = generateHILSummary(this.state, layerIdx, layers);
@@ -846,8 +1014,16 @@ export class ControlledExecutor extends ParallelExecutor {
       description: summary,
     };
     await this.eventStream.emit(hilEvent);
-    events.push(hilEvent);
 
+    return { event: hilEvent, needsResponse: true };
+  }
+
+  /**
+   * Wait for HIL response after event has been yielded.
+   * Throws if timeout or rejected.
+   */
+  private async waitForHILResponse(workflowId: string, layerIdx: number): Promise<void> {
+    const ctx = this.getCaptureContext();
     const command = await waitForDecisionCommand(this.commandQueue, "HIL", this.getTimeout("hil"));
 
     if (!command) {
@@ -863,8 +1039,6 @@ export class ControlledExecutor extends ParallelExecutor {
         throw new Error(`Workflow aborted by human: ${command.feedback || "no reason provided"}`);
       }
     }
-
-    return events;
   }
 
   private updateGraphRAG(workflowId: string, dag: DAGStructure, totalTime: number, failedTasks: number): void {

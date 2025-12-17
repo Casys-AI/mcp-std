@@ -30,6 +30,31 @@ export interface TaskError {
 }
 
 /**
+ * Error thrown when a task needs permission escalation (Deferred Escalation Pattern)
+ *
+ * Instead of blocking inside Promise.allSettled waiting for HIL approval,
+ * tasks throw this error which is caught at the layer boundary where the
+ * generator can properly yield decision_required events.
+ *
+ * @see tech-spec-hil-permission-escalation-fix.md
+ */
+export class PermissionEscalationNeeded extends Error {
+  constructor(
+    public readonly taskId: string,
+    public readonly taskIndex: number,
+    public readonly currentSet: string,
+    public readonly requestedSet: string,
+    public readonly detectedOperation: string,
+    public readonly originalError: string,
+    public readonly taskType: "code" | "capability",
+    public readonly capabilityId?: string,
+  ) {
+    super(`Permission escalation needed for task ${taskId}: ${currentSet} -> ${requestedSet}`);
+    this.name = "PermissionEscalationNeeded";
+  }
+}
+
+/**
  * Complete execution result with aggregated metrics
  */
 export interface DAGExecutionResult {

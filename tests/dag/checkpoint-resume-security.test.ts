@@ -6,23 +6,14 @@
  *
  * @security CRITICAL - These tests validate a security fix
  *
- * ## KNOWN BUGS EXPOSED BY THESE TESTS
+ * ## FIXED BUGS (2025-12-17)
  *
- * ### BUG-HIL-DEADLOCK: HIL tests timeout due to architectural deadlock
- * - `handleHILApproval` emits event then blocks on `waitForDecisionCommand`
- * - Generator cannot yield `decision_required` event before blocking
- * - Result: Test never receives event, cannot enqueue response, timeout
- * - See: docs/tech-specs/tech-spec-hil-permission-escalation-fix.md
- * - Fix: Implement Deferred Escalation Pattern (Option A)
+ * The Deferred Pattern has been implemented in controlled-executor.ts:
+ * - prepareHILApproval/waitForHILResponse: yield event BEFORE blocking
+ * - prepareAILDecision/waitForAILResponse: yield event BEFORE blocking
  *
- * ### BUG-AIL-ABORT: AIL abort command not processed correctly
- * - "SECURITY: Resume with AIL, abort command → workflow stopped" fails
- * - Workflow completes instead of throwing on abort command
- * - Same architectural deadlock: event yielded AFTER command wait
- * - The abort command arrives but is processed too late or ignored
- *
- * Once the Deferred Escalation Pattern is implemented, these tests will pass
- * and serve as regression tests to prevent these bugs from returning.
+ * These tests now serve as regression tests to prevent these bugs from returning.
+ * See: docs/tech-specs/tech-spec-hil-permission-escalation-fix.md
  */
 
 import { assertEquals, assertExists, assertRejects } from "jsr:@std/assert@1";
