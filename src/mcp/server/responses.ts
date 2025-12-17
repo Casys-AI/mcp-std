@@ -6,11 +6,12 @@
  * @module mcp/server/responses
  */
 
+import * as log from "@std/log";
 import type { MCPToolResponse, MCPErrorResponse } from "./types.ts";
 import type { MCPErrorCode } from "./constants.ts";
 
 /**
- * Format MCP-compliant error response
+ * Format JSON-RPC level error response (transport errors)
  *
  * @param code - JSON-RPC error code
  * @param message - Error message
@@ -30,6 +31,37 @@ export function formatMCPError(
     error.data = data;
   }
   return { error };
+}
+
+/**
+ * Format MCP tool error response (tool execution failed)
+ *
+ * Use this for errors that should be visible to the LLM client.
+ * Uses { isError: true, content: [...] } format per MCP spec.
+ * Also logs the error for observability (Promtail/Loki).
+ *
+ * @param message - Error message
+ * @param data - Optional error data (will be JSON stringified)
+ * @returns Tool error response object
+ */
+export function formatMCPToolError(
+  message: string,
+  data?: unknown,
+): { isError: true; content: Array<{ type: string; text: string }> } {
+  const errorData = data ? { error: message, ...data as Record<string, unknown> } : { error: message };
+
+  // Log for observability (Promtail/Loki)
+  log.error(`[MCP_TOOL_ERROR] ${message}`, data ? { data } : undefined);
+
+  return {
+    isError: true,
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(errorData, null, 2),
+      },
+    ],
+  };
 }
 
 /**

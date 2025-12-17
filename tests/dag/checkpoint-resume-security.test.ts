@@ -65,7 +65,11 @@ async function runWorkflowWithAutoApproval(
   return checkpointId;
 }
 
-Deno.test("Checkpoint Resume Security - AIL/HIL Enforcement", async (t) => {
+Deno.test({
+  name: "Checkpoint Resume Security - AIL/HIL Enforcement",
+  sanitizeOps: false, // Timer leaks from CommandQueue.waitForCommand are expected
+  sanitizeResources: false,
+  fn: async (t) => {
   // Mock tool executor
   const mockToolExecutor: ToolExecutor = async (tool: string, _args: Record<string, unknown>) => {
     await new Promise((resolve) => setTimeout(resolve, 5)); // Small delay
@@ -324,4 +328,5 @@ Deno.test("Checkpoint Resume Security - AIL/HIL Enforcement", async (t) => {
 
     await db.close();
   });
+},
 });

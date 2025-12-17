@@ -15,6 +15,7 @@ import type { GraphRAGEngine } from "../../graphrag/graph-engine.ts";
 import { DenoSandboxExecutor } from "../../sandbox/executor.ts";
 import { getLogger } from "../../telemetry/logger.ts";
 import { resolveDependencies } from "./dependency-resolver.ts";
+import { isPermissionError } from "../permissions/escalation-integration.ts";
 
 const log = getLogger("default");
 
@@ -139,6 +140,12 @@ export async function executeWithRetry(
       return await executeCodeTask(task, previousResults, deps);
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
+
+      // Don't retry permission errors - they need escalation, not retry
+      if (isPermissionError(lastError.message)) {
+        log.info(`Permission error detected for task ${task.id}, skipping retry for escalation`);
+        throw lastError;
+      }
 
       if (attempt < maxAttempts) {
         // Exponential backoff: 100ms, 200ms, 400ms

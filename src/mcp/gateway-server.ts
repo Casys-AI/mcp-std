@@ -46,6 +46,7 @@ import {
   type ResolvedGatewayConfig,
   type ActiveWorkflow,
   formatMCPError,
+  formatMCPToolError,
   // Lifecycle functions
   createMCPServer,
   startStdioServer,
@@ -232,10 +233,7 @@ export class PMLGatewayServer {
 
       if (!params?.name) {
         transaction.finish();
-        return formatMCPError(
-          MCPErrorCodes.INVALID_PARAMS,
-          "Missing required parameter: 'name'",
-        );
+        return formatMCPToolError("Missing required parameter: 'name'");
       }
 
       const { name, arguments: args } = params;
@@ -255,8 +253,7 @@ export class PMLGatewayServer {
         handler: "handleCallTool",
       });
       transaction.finish();
-      return formatMCPError(
-        MCPErrorCodes.INTERNAL_ERROR,
+      return formatMCPToolError(
         `Tool execution failed: ${(error as Error).message}`,
       );
     }
@@ -330,8 +327,7 @@ export class PMLGatewayServer {
 
     const client = this.mcpClients.get(serverId);
     if (!client) {
-      return formatMCPError(
-        MCPErrorCodes.INVALID_PARAMS,
+      return formatMCPToolError(
         `Unknown MCP server: ${serverId}`,
         { available_servers: Array.from(this.mcpClients.keys()) },
       );

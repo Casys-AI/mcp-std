@@ -17,9 +17,9 @@ import type {
   ReplanArgs,
   ApprovalResponseArgs,
 } from "../server/types.ts";
-import { MCPErrorCodes, ServerDefaults } from "../server/constants.ts";
+import { ServerDefaults } from "../server/constants.ts";
 import {
-  formatMCPError,
+  formatMCPToolError,
   formatAbortConfirmation,
   formatRejectionConfirmation,
   formatReplanConfirmation,
@@ -59,10 +59,7 @@ export async function handleContinue(
   const params = args as ContinueArgs;
 
   if (!params.workflow_id) {
-    return formatMCPError(
-      MCPErrorCodes.INVALID_PARAMS,
-      "Missing required parameter: 'workflow_id'",
-    );
+    return formatMCPToolError("Missing required parameter: 'workflow_id'");
   }
 
   log.info(
@@ -79,8 +76,7 @@ export async function handleContinue(
   // Fallback: Load from database
   const dag = await getWorkflowDAG(deps.db, params.workflow_id);
   if (!dag) {
-    return formatMCPError(
-      MCPErrorCodes.INVALID_PARAMS,
+    return formatMCPToolError(
       `Workflow ${params.workflow_id} not found or expired`,
       { workflow_id: params.workflow_id },
     );
@@ -88,18 +84,12 @@ export async function handleContinue(
 
   // Load latest checkpoint
   if (!deps.checkpointManager) {
-    return formatMCPError(
-      MCPErrorCodes.INTERNAL_ERROR,
-      "CheckpointManager not initialized",
-    );
+    return formatMCPToolError("CheckpointManager not initialized");
   }
 
   const latestCheckpoint = await deps.checkpointManager.getLatestCheckpoint(params.workflow_id);
   if (!latestCheckpoint) {
-    return formatMCPError(
-      MCPErrorCodes.INVALID_PARAMS,
-      `No checkpoints found for workflow ${params.workflow_id}`,
-    );
+    return formatMCPToolError(`No checkpoints found for workflow ${params.workflow_id}`);
   }
 
   // Create new executor and resume from checkpoint
@@ -107,7 +97,6 @@ export async function handleContinue(
     createToolExecutor(deps.mcpClients),
     {
       taskTimeout: ServerDefaults.taskTimeout,
-      hil: { enabled: true, approval_required: "critical_only" },
     },
   );
 
@@ -169,17 +158,11 @@ export async function handleAbort(
   const params = args as AbortArgs;
 
   if (!params.workflow_id) {
-    return formatMCPError(
-      MCPErrorCodes.INVALID_PARAMS,
-      "Missing required parameter: 'workflow_id'",
-    );
+    return formatMCPToolError("Missing required parameter: 'workflow_id'");
   }
 
   if (!params.reason) {
-    return formatMCPError(
-      MCPErrorCodes.INVALID_PARAMS,
-      "Missing required parameter: 'reason'",
-    );
+    return formatMCPToolError("Missing required parameter: 'reason'");
   }
 
   log.info(`handleAbort: workflow_id=${params.workflow_id}, reason=${params.reason}`);
@@ -189,8 +172,7 @@ export async function handleAbort(
   const dag = await getWorkflowDAG(deps.db, params.workflow_id);
 
   if (!activeWorkflow && !dag) {
-    return formatMCPError(
-      MCPErrorCodes.INVALID_PARAMS,
+    return formatMCPToolError(
       `Workflow ${params.workflow_id} not found or expired`,
       { workflow_id: params.workflow_id },
     );
@@ -233,17 +215,11 @@ export async function handleReplan(
   const params = args as ReplanArgs;
 
   if (!params.workflow_id) {
-    return formatMCPError(
-      MCPErrorCodes.INVALID_PARAMS,
-      "Missing required parameter: 'workflow_id'",
-    );
+    return formatMCPToolError("Missing required parameter: 'workflow_id'");
   }
 
   if (!params.new_requirement) {
-    return formatMCPError(
-      MCPErrorCodes.INVALID_PARAMS,
-      "Missing required parameter: 'new_requirement'",
-    );
+    return formatMCPToolError("Missing required parameter: 'new_requirement'");
   }
 
   log.info(
@@ -253,8 +229,7 @@ export async function handleReplan(
   // Get current DAG
   const currentDag = await getWorkflowDAG(deps.db, params.workflow_id);
   if (!currentDag) {
-    return formatMCPError(
-      MCPErrorCodes.INVALID_PARAMS,
+    return formatMCPToolError(
       `Workflow ${params.workflow_id} not found or expired`,
       { workflow_id: params.workflow_id },
     );
@@ -309,8 +284,7 @@ export async function handleReplan(
     );
   } catch (error) {
     log.error(`Replan failed: ${error}`);
-    return formatMCPError(
-      MCPErrorCodes.INTERNAL_ERROR,
+    return formatMCPToolError(
       `Replanning failed: ${error instanceof Error ? error.message : String(error)}`,
       { workflow_id: params.workflow_id },
     );
@@ -327,24 +301,15 @@ export async function handleApprovalResponse(
   const params = args as ApprovalResponseArgs;
 
   if (!params.workflow_id) {
-    return formatMCPError(
-      MCPErrorCodes.INVALID_PARAMS,
-      "Missing required parameter: 'workflow_id'",
-    );
+    return formatMCPToolError("Missing required parameter: 'workflow_id'");
   }
 
   if (!params.checkpoint_id) {
-    return formatMCPError(
-      MCPErrorCodes.INVALID_PARAMS,
-      "Missing required parameter: 'checkpoint_id'",
-    );
+    return formatMCPToolError("Missing required parameter: 'checkpoint_id'");
   }
 
   if (params.approved === undefined) {
-    return formatMCPError(
-      MCPErrorCodes.INVALID_PARAMS,
-      "Missing required parameter: 'approved'",
-    );
+    return formatMCPToolError("Missing required parameter: 'approved'");
   }
 
   log.info(
@@ -357,15 +322,13 @@ export async function handleApprovalResponse(
   if (!activeWorkflow) {
     const dag = await getWorkflowDAG(deps.db, params.workflow_id);
     if (!dag) {
-      return formatMCPError(
-        MCPErrorCodes.INVALID_PARAMS,
+      return formatMCPToolError(
         `Workflow ${params.workflow_id} not found or expired`,
         { workflow_id: params.workflow_id },
       );
     }
 
-    return formatMCPError(
-      MCPErrorCodes.INVALID_PARAMS,
+    return formatMCPToolError(
       `Workflow ${params.workflow_id} is not active. Use 'continue' to resume.`,
       { workflow_id: params.workflow_id },
     );

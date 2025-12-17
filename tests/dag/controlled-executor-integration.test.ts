@@ -425,7 +425,11 @@ Deno.test("Integration: Checkpoint save and restore", async (t) => {
 // Test Suite 3: AIL/HIL Decision Loops Integration
 // ============================================================================
 
-Deno.test("Integration: AIL/HIL decision loops", async (t) => {
+Deno.test({
+  name: "Integration: AIL/HIL decision loops",
+  sanitizeOps: false, // Timer leaks from CommandQueue.waitForCommand are expected in HIL/AIL tests
+  sanitizeResources: false,
+  fn: async (t) => {
   await t.step("AIL per_layer triggers after each layer", async () => {
     const config: ExecutorConfig = {
       ail: { enabled: true, decision_points: "per_layer" },
@@ -480,7 +484,6 @@ Deno.test("Integration: AIL/HIL decision loops", async (t) => {
 
   await t.step({
     name: "HIL always requires approval after each layer",
-    ignore: true, // BUG-HIL-DEADLOCK: See checkpoint-resume-security.test.ts
     fn: async () => {
     const config: ExecutorConfig = {
       ail: { enabled: false, decision_points: "manual" },
@@ -518,7 +521,6 @@ Deno.test("Integration: AIL/HIL decision loops", async (t) => {
 
   await t.step({
     name: "HIL critical_only triggers for tasks with side effects",
-    ignore: true, // BUG-HIL-DEADLOCK: See checkpoint-resume-security.test.ts
     fn: async () => {
     const config: ExecutorConfig = {
       ail: { enabled: false, decision_points: "manual" },
@@ -555,7 +557,6 @@ Deno.test("Integration: AIL/HIL decision loops", async (t) => {
 
   await t.step({
     name: "HIL rejection aborts workflow",
-    ignore: true, // BUG-HIL-DEADLOCK: See checkpoint-resume-security.test.ts
     fn: async () => {
     const config: ExecutorConfig = {
       ail: { enabled: false, decision_points: "manual" },
@@ -599,7 +600,6 @@ Deno.test("Integration: AIL/HIL decision loops", async (t) => {
 
   await t.step({
     name: "AIL abort command stops execution",
-    ignore: true, // BUG-AIL-ABORT: See checkpoint-resume-security.test.ts
     fn: async () => {
     const config: ExecutorConfig = {
       ail: { enabled: true, decision_points: "per_layer" },
@@ -635,6 +635,7 @@ Deno.test("Integration: AIL/HIL decision loops", async (t) => {
       console.log("  ✓ AIL abort command stops execution");
     },
   });
+  },
 });
 
 // ============================================================================

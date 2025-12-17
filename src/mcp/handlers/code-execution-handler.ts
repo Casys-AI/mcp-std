@@ -14,8 +14,8 @@ import type { CapabilityStore } from "../../capabilities/capability-store.ts";
 import type { AdaptiveThresholdManager } from "../adaptive-threshold.ts";
 import type { MCPClientBase, CodeExecutionRequest, CodeExecutionResponse } from "../types.ts";
 import type { MCPToolResponse, MCPErrorResponse, ResolvedGatewayConfig } from "../server/types.ts";
-import { MCPErrorCodes, ServerDefaults } from "../server/constants.ts";
-import { formatMCPError } from "../server/responses.ts";
+import { ServerDefaults } from "../server/constants.ts";
+import { formatMCPToolError } from "../server/responses.ts";
 import { DenoSandboxExecutor, type WorkerExecutionConfig } from "../../sandbox/executor.ts";
 import { ContextBuilder } from "../../sandbox/context-builder.ts";
 import { CapabilityCodeGenerator } from "../../capabilities/code-generator.ts";
@@ -55,8 +55,7 @@ export async function handleExecuteCode(
 
     // Validate required parameters
     if (!request.code || typeof request.code !== "string") {
-      return formatMCPError(
-        MCPErrorCodes.INVALID_PARAMS,
+      return formatMCPToolError(
         "Missing or invalid required parameter: 'code' must be a non-empty string",
       );
     }
@@ -64,8 +63,7 @@ export async function handleExecuteCode(
     // Validate code size (max 100KB)
     const codeSizeBytes = new TextEncoder().encode(request.code).length;
     if (codeSizeBytes > ServerDefaults.maxCodeSizeBytes) {
-      return formatMCPError(
-        MCPErrorCodes.INVALID_PARAMS,
+      return formatMCPToolError(
         `Code size exceeds maximum: ${codeSizeBytes} bytes (max: ${ServerDefaults.maxCodeSizeBytes})`,
       );
     }
@@ -201,8 +199,7 @@ export async function handleExecuteCode(
     // Handle execution failure
     if (!result.success) {
       const error = result.error!;
-      return formatMCPError(
-        MCPErrorCodes.INTERNAL_ERROR,
+      return formatMCPToolError(
         `Code execution failed: ${error.type} - ${error.message}`,
         {
           error_type: error.type,
@@ -313,8 +310,7 @@ export async function handleExecuteCode(
     };
   } catch (error) {
     log.error(`execute_code error: ${error}`);
-    return formatMCPError(
-      MCPErrorCodes.INTERNAL_ERROR,
+    return formatMCPToolError(
       `Code execution failed: ${(error as Error).message}`,
     );
   }

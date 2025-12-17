@@ -17,9 +17,9 @@ import type {
   ActiveWorkflow,
   WorkflowExecutionArgs,
 } from "../server/types.ts";
-import { MCPErrorCodes, ServerDefaults } from "../server/constants.ts";
+import { ServerDefaults } from "../server/constants.ts";
 import {
-  formatMCPError,
+  formatMCPToolError,
   formatMCPSuccess,
   formatLayerComplete,
   formatWorkflowComplete,
@@ -28,6 +28,83 @@ import {
 import { ControlledExecutor } from "../../dag/controlled-executor.ts";
 import { deleteWorkflowDAG, saveWorkflowDAG } from "../workflow-dag-store.ts";
 import type { WorkflowHandlerDependencies } from "./workflow-handler-types.ts";
+import { getTaskType } from "../../dag/execution/task-router.ts";
+import type { CapabilityStore } from "../../capabilities/capability-store.ts";
+import { getToolPermissionConfig } from "../../capabilities/permission-inferrer.ts";
+
+/**
+ * Determine if a DAG requires per-layer validation based on permissions.
+ *
+ * Server-side decision - client cannot bypass.
+ *
+ * Validation required when:
+ * - code_execution with permissionSet !== "minimal" (elevated permissions)
+ * - capability task with non-minimal permissions
+ * - mcp_tool with scope !== "minimal", approvalMode === "hil", ffi, or run
+ *
+ * No validation needed for:
+ * - code_execution with minimal permissions (errors are clear, suggest primitives)
+ * - mcp_tool with minimal scope and auto approval (safe by default)
+ */
+async function requiresValidation(
+  dag: DAGStructure,
+  capabilityStore?: CapabilityStore,
+): Promise<boolean> {
+  for (const task of dag.tasks) {
+    const taskType = getTaskType(task);
+
+    // Code execution with elevated permissions → needs validation
+    if (taskType === "code_execution") {
+      const permSet = task.sandboxConfig?.permissionSet ?? "minimal";
+      if (permSet !== "minimal") {
+        log.info(`Validation required: task ${task.id} has elevated permissions (${permSet})`);
+        return true;
+      }
+    }
+
+    // Capability with non-minimal permissions → needs validation
+    if (taskType === "capability" && task.capabilityId && capabilityStore) {
+      try {
+        const cap = await capabilityStore.findById(task.capabilityId);
+        if (cap?.permissionSet && cap.permissionSet !== "minimal") {
+          log.info(`Validation required: capability ${task.capabilityId} has permissions (${cap.permissionSet})`);
+          return true;
+        }
+      } catch {
+        // Capability not found - skip validation check
+      }
+    }
+
+    // MCP tool with elevated permissions or human approval required → needs validation
+    if (taskType === "mcp_tool" && task.tool) {
+      const toolPrefix = task.tool.split(":")[0]; // "github:create_issue" → "github"
+      const permConfig = getToolPermissionConfig(toolPrefix);
+
+      if (permConfig) {
+        // Scope !== minimal → needs validation
+        if (permConfig.scope !== "minimal") {
+          log.info(`Validation required: MCP tool ${task.tool} has scope (${permConfig.scope})`);
+          return true;
+        }
+
+        // approvalMode: "hil" → needs human validation
+        if (permConfig.approvalMode === "hil") {
+          log.info(`Validation required: MCP tool ${task.tool} requires human approval`);
+          return true;
+        }
+
+        // FFI or subprocess permissions → needs validation
+        if (permConfig.ffi || permConfig.run) {
+          log.info(`Validation required: MCP tool ${task.tool} has special permissions (ffi: ${permConfig.ffi}, run: ${permConfig.run})`);
+          return true;
+        }
+      }
+    }
+  }
+
+  // Minimal permissions or unknown tools → no validation needed
+  return false;
+}
 
 /**
  * Create tool executor function for ControlledExecutor
@@ -67,8 +144,6 @@ export async function handleWorkflowExecution(
 
   // Case 1: Explicit workflow provided
   if (workflowArgs.workflow) {
-    log.info(`Executing explicit workflow (per_layer_validation: ${perLayerValidation})`);
-
     // Normalize tasks: ensure dependsOn is always an array
     const normalizedWorkflow: DAGStructure = {
       ...workflowArgs.workflow,
@@ -78,8 +153,18 @@ export async function handleWorkflowExecution(
       })),
     };
 
-    // Story 2.5-4: Per-layer validation mode
-    if (perLayerValidation) {
+    // Server-side validation detection (Story 2.5-4 security fix)
+    // Server decides based on DAG content - client cannot bypass
+    const serverRequiresValidation = await requiresValidation(normalizedWorkflow, deps.capabilityStore);
+    const useValidation = serverRequiresValidation || perLayerValidation;
+
+    log.info(`Executing explicit workflow`, {
+      clientRequested: perLayerValidation,
+      serverRequired: serverRequiresValidation,
+      usingValidation: useValidation,
+    });
+
+    if (useValidation) {
       return await executeWithPerLayerValidation(
         normalizedWorkflow,
         workflowArgs.intent ?? "explicit_workflow",
@@ -88,15 +173,13 @@ export async function handleWorkflowExecution(
       );
     }
 
-    // Standard execution (no validation pauses)
+    // Standard execution (no validation pauses - safe DAG)
     return await executeStandardWorkflow(normalizedWorkflow, workflowArgs.intent, deps, userId);
   }
 
   // Case 2: Intent-based (GraphRAG suggestion)
   if (workflowArgs.intent) {
-    log.info(
-      `Processing workflow intent: "${workflowArgs.intent}" (per_layer_validation: ${perLayerValidation})`,
-    );
+    log.info(`Processing workflow intent: "${workflowArgs.intent}"`);
 
     const executionMode = await deps.gatewayHandler.processIntent({
       text: workflowArgs.intent,
@@ -110,8 +193,21 @@ export async function handleWorkflowExecution(
       });
     }
 
-    if (executionMode.mode === "suggestion") {
-      if (perLayerValidation && executionMode.dagStructure) {
+    if (executionMode.mode === "suggestion" && executionMode.dagStructure) {
+      // Server-side validation detection for suggested DAG
+      const serverRequiresValidation = await requiresValidation(
+        executionMode.dagStructure,
+        deps.capabilityStore,
+      );
+      const useValidation = serverRequiresValidation || perLayerValidation;
+
+      log.info(`Intent suggestion`, {
+        clientRequested: perLayerValidation,
+        serverRequired: serverRequiresValidation,
+        usingValidation: useValidation,
+      });
+
+      if (useValidation) {
         return await executeWithPerLayerValidation(
           executionMode.dagStructure,
           workflowArgs.intent,
@@ -120,6 +216,17 @@ export async function handleWorkflowExecution(
         );
       }
 
+      // Return suggestion for client to review (no auto-execute without validation)
+      return formatMCPSuccess({
+        mode: "suggestion",
+        suggested_dag: executionMode.dagStructure,
+        confidence: executionMode.confidence,
+        explanation: executionMode.explanation,
+      });
+    }
+
+    if (executionMode.mode === "suggestion") {
+      // No DAG structure generated
       return formatMCPSuccess({
         mode: "suggestion",
         suggested_dag: executionMode.dagStructure,
@@ -139,8 +246,7 @@ export async function handleWorkflowExecution(
   }
 
   // Neither intent nor workflow provided
-  return formatMCPError(
-    MCPErrorCodes.INVALID_PARAMS,
+  return formatMCPToolError(
     "Either 'intent' or 'workflow' must be provided",
     { received: Object.keys(workflowArgs) },
   );
@@ -160,7 +266,6 @@ async function executeStandardWorkflow(
     {
       taskTimeout: ServerDefaults.taskTimeout,
       userId: userId ?? "local",
-      hil: { enabled: true, approval_required: "critical_only" },
     },
   );
 
@@ -209,7 +314,6 @@ async function executeWithPerLayerValidation(
     {
       taskTimeout: ServerDefaults.taskTimeout,
       userId: userId ?? "local",
-      hil: { enabled: true, approval_required: "critical_only" },
     },
   );
 
@@ -258,7 +362,11 @@ export async function processGeneratorUntilPause(
         taskId: event.taskId ?? "",
         status: event.type === "task_complete" ? "success" : "error",
         output: event.type === "task_complete"
-          ? { executionTimeMs: event.executionTimeMs }
+          ? {
+              executionTimeMs: event.executionTimeMs,
+              resultPreview: event.resultPreview,
+              resultSize: event.resultSize,
+            }
           : undefined,
         error: event.type === "task_error" ? event.error : undefined,
       });

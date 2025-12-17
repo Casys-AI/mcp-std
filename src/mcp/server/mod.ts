@@ -30,6 +30,7 @@ export {
 // Response formatters
 export {
   formatMCPError,
+  formatMCPToolError,
   formatMCPSuccess,
   formatLayerComplete,
   formatWorkflowComplete,

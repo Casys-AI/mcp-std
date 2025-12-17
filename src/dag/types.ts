@@ -192,6 +192,12 @@ export type ExecutionEvent =
     workflowId: string;
     taskId: string;
     executionTimeMs: number;
+    /** Full result (stored for retrieval via pml_get_task_result) */
+    result?: unknown;
+    /** Preview of result (first 500 chars of JSON stringified) */
+    resultPreview?: string;
+    /** Size of full result in bytes */
+    resultSize?: number;
   }
   | {
     type: "task_error";

@@ -11,8 +11,7 @@ import type { GraphRAGEngine } from "../../graphrag/graph-engine.ts";
 import type { VectorSearch } from "../../vector/search.ts";
 import type { DAGSuggester } from "../../graphrag/dag-suggester.ts";
 import type { MCPToolResponse, MCPErrorResponse, SearchToolsArgs, SearchCapabilitiesArgs } from "../server/types.ts";
-import { MCPErrorCodes } from "../server/constants.ts";
-import { formatMCPError, formatMCPSuccess } from "../server/responses.ts";
+import { formatMCPToolError, formatMCPSuccess } from "../server/responses.ts";
 import { addBreadcrumb, captureError, startTransaction } from "../../telemetry/sentry.ts";
 
 /**
@@ -186,8 +185,7 @@ export async function handleSearchCapabilities(
       handler: "handleSearchCapabilities",
     });
     transaction.finish();
-    return formatMCPError(
-      MCPErrorCodes.INTERNAL_ERROR,
+    return formatMCPToolError(
       `Capability search failed: ${(error as Error).message}`,
     );
   }
