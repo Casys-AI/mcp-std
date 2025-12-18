@@ -460,7 +460,7 @@ export default function LandingPage({ data }: { data: LandingPageData }) {
                   </svg>
                 </div>
                 <h4>Capture</h4>
-                <p>The pattern is extracted and stored in the hypergraph</p>
+                <p>The pattern is extracted and stored in the SuperHyperGraph</p>
               </div>
               <div class="flow-arrow">
                 <svg viewBox="0 0 40 20" fill="none">
@@ -505,10 +505,9 @@ export default function LandingPage({ data }: { data: LandingPageData }) {
                 <div class="tech-icon">
                   <HypergraphIllustration />
                 </div>
-                <h4>Hypergraph Structure</h4>
+                <h4>SuperHyperGraph Structure</h4>
                 <p>
-                  N-ary relationships capture how tools combine into capabilities. Not just pairs —
-                  full patterns.
+                  Recursive n-ary relationships capture how tools combine into capabilities, and capabilities into meta-capabilities. Not just pairs — full patterns with unlimited nesting.
                 </p>
               </div>
 
