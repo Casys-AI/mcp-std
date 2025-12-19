@@ -3,7 +3,7 @@
  *
  * Uses diff for text and jsondiffpatch for JSON comparisons.
  *
- * @module lib/primitives/compare
+ * @module lib/std/compare
  */
 
 import * as Diff from "diff";

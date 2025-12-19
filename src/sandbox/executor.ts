@@ -21,6 +21,7 @@
  * @module sandbox/executor
  */
 
+import type { JsonValue } from "../capabilities/types.ts";
 import type {
   ExecutionMode,
   ExecutionResult,
@@ -288,7 +289,7 @@ export class DenoSandboxExecutor {
       // 4. Parse and return result
       const result: ExecutionResult = {
         success: true,
-        result: output.result,
+        result: output.result as JsonValue,
         executionTimeMs,
         memoryUsedMb: output.memoryUsedMb,
       };

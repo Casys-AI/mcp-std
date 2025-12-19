@@ -5,6 +5,8 @@
  * in an isolated Deno subprocess environment.
  */
 
+import type { JsonValue } from "../capabilities/types.ts";
+
 /**
  * Configuration options for the sandbox executor
  */
@@ -114,7 +116,7 @@ export interface ExecutionResult {
    * The return value of the executed code (if successful)
    * Must be JSON-serializable
    */
-  result?: unknown;
+  result?: JsonValue;
 
   /**
    * Error information (if execution failed)
@@ -192,7 +194,7 @@ export interface RPCResultMessage {
   /** Whether tool call succeeded */
   success: boolean;
   /** Tool result (if success) */
-  result?: unknown;
+  result?: JsonValue;
   /** Error message (if failure) */
   error?: string;
 }
@@ -225,7 +227,7 @@ export interface ExecutionCompleteMessage {
   /** Whether execution succeeded */
   success: boolean;
   /** Execution result (if success) */
-  result?: unknown;
+  result?: JsonValue;
   /** Error message (if failure) */
   error?: string;
 }

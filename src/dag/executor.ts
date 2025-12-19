@@ -308,8 +308,12 @@ export class ParallelExecutor {
     const startTime = performance.now();
 
     try {
-      // 1. Resolve $OUTPUT[task_id] references in arguments
-      const resolvedArgs = this.resolveArguments(task.arguments, previousResults);
+      // 1. Resolve arguments (structured format + legacy $OUTPUT references)
+      const resolvedArgs = this.resolveArguments(
+        task.arguments,
+        previousResults,
+        task.staticArguments,
+      );
 
       // 2. Check if dependencies failed
       for (const depId of task.dependsOn) {
@@ -399,31 +403,65 @@ export class ParallelExecutor {
   }
 
   /**
-   * Resolve $OUTPUT[task_id] references in task arguments
+   * Resolve task arguments from multiple sources (Story 10.5)
    *
-   * Supports:
-   * - $OUTPUT[task1] - entire output from task1
-   * - $OUTPUT[task1].property - nested property access
+   * Resolution priority:
+   * 1. staticArguments (structured format from static analysis)
+   * 2. args with $OUTPUT[task_id] references (deprecated, for backward compat)
+   * 3. Literal values in args
    *
-   * @param args - Raw arguments with potential $OUTPUT references
+   * Structured format (preferred):
+   * - { type: "literal", value: "config.json" }
+   * - { type: "reference", expression: "n1.content" }
+   * - { type: "parameter", parameterName: "inputFile" }
+   *
+   * @param args - Raw arguments (may contain $OUTPUT references)
    * @param previousResults - Results from previously executed tasks
+   * @param staticArgs - Structured arguments from static analysis (optional)
    * @returns Resolved arguments
    */
   private resolveArguments(
     args: Record<string, unknown>,
     previousResults: Map<string, TaskResult>,
+    staticArgs?: import("../capabilities/types.ts").ArgumentsStructure,
   ): Record<string, unknown> {
     const resolved: Record<string, unknown> = {};
 
+    // 1. Resolve from staticArguments (Story 10.5 structured format)
+    if (staticArgs) {
+      for (const [key, argValue] of Object.entries(staticArgs)) {
+        if (argValue.type === "literal") {
+          // Literal: value known at static analysis time
+          resolved[key] = argValue.value;
+        } else if (argValue.type === "reference" && argValue.expression) {
+          // Reference: resolve from previous task result
+          const resolvedValue = this.resolveStructuredReference(
+            argValue.expression,
+            previousResults,
+          );
+          if (resolvedValue !== undefined) {
+            resolved[key] = resolvedValue;
+          }
+        } else if (argValue.type === "parameter") {
+          // Parameter: should have been resolved statically, skip if not in args
+          // (parameters are resolved before execution in resolveDAGArguments)
+        }
+      }
+    }
+
+    // 2. Resolve from args (legacy $OUTPUT format + literals)
     for (const [key, value] of Object.entries(args)) {
+      // Skip if already resolved from staticArgs
+      if (key in resolved) continue;
+
       if (typeof value === "string" && value.startsWith("$OUTPUT[")) {
-        // Extract task ID and optional property path
-        // Pattern: $OUTPUT[task1] or $OUTPUT[task1].property.nested
+        // DEPRECATED: $OUTPUT[task_id] format (kept for backward compatibility)
+        // Prefer staticArguments with { type: "reference", expression: "..." }
         const match = value.match(/^\$OUTPUT\[([^\]]+)\](\.(.+))?$/);
 
         if (match) {
           const taskId = match[1];
-          const propertyPath = match[3]; // undefined if no property access
+          const propertyPath = match[3];
 
           const result = previousResults.get(taskId);
 
@@ -439,14 +477,12 @@ export class ParallelExecutor {
             );
           }
 
-          // Get output or nested property
           if (propertyPath) {
             resolved[key] = this.getNestedProperty(result.output, propertyPath);
           } else {
             resolved[key] = result.output;
           }
         } else {
-          // Invalid $OUTPUT format, treat as literal string
           resolved[key] = value;
         }
       } else if (typeof value === "object" && value !== null && !Array.isArray(value)) {
@@ -456,12 +492,103 @@ export class ParallelExecutor {
           previousResults,
         );
       } else {
-        // Keep as-is
         resolved[key] = value;
       }
     }
 
     return resolved;
+  }
+
+  /**
+   * Resolve a structured reference expression (Story 10.5)
+   *
+   * Expression format: "nodeId.property.path" or "nodeId[0].property"
+   * Task ID mapping: nodeId → "task_nodeId" (prefix added by staticStructureToDag)
+   *
+   * @param expression - Reference expression (e.g., "n1.content", "n1.items[0].name")
+   * @param previousResults - Results from previously executed tasks
+   * @returns Resolved value or undefined if not found
+   */
+  private resolveStructuredReference(
+    expression: string,
+    previousResults: Map<string, TaskResult>,
+  ): unknown {
+    // Parse expression: "n1.content.nested" or "n1[0].value"
+    // First part is the node ID, rest is the property path
+    const firstDot = expression.indexOf(".");
+    const firstBracket = expression.indexOf("[");
+
+    let nodeId: string;
+    let propertyPath: string | undefined;
+
+    if (firstDot === -1 && firstBracket === -1) {
+      // Just node ID, no property path: "n1"
+      nodeId = expression;
+    } else if (firstBracket !== -1 && (firstDot === -1 || firstBracket < firstDot)) {
+      // Array access first: "n1[0].value"
+      nodeId = expression.substring(0, firstBracket);
+      propertyPath = expression.substring(firstBracket);
+    } else {
+      // Property access first: "n1.content"
+      nodeId = expression.substring(0, firstDot);
+      propertyPath = expression.substring(firstDot + 1);
+    }
+
+    // Map node ID to task ID (staticStructureToDag uses "task_" prefix)
+    const taskId = `task_${nodeId}`;
+    const result = previousResults.get(taskId);
+
+    if (!result) {
+      log.warn(`Reference to unknown task: ${taskId} (from expression: ${expression})`);
+      return undefined;
+    }
+
+    if (result.status === "error") {
+      log.warn(`Reference to failed task: ${taskId}`);
+      return undefined;
+    }
+
+    if (!propertyPath) {
+      return result.output;
+    }
+
+    // Navigate the property path (supports both dot notation and array access)
+    return this.getNestedPropertyWithArrays(result.output, propertyPath);
+  }
+
+  /**
+   * Get nested property supporting both dot notation and array access
+   *
+   * @param obj - Object to traverse
+   * @param path - Property path (e.g., "content", "items[0].name", "[0].value")
+   * @returns Property value or undefined
+   */
+  private getNestedPropertyWithArrays(obj: unknown, path: string): unknown {
+    // Split path into segments, handling both dots and brackets
+    // "items[0].name" → ["items", "0", "name"]
+    const segments = path.split(/\.|\[|\]/).filter((s) => s !== "");
+
+    let current: unknown = obj;
+
+    for (const segment of segments) {
+      if (current === null || current === undefined) {
+        return undefined;
+      }
+
+      if (Array.isArray(current)) {
+        const index = parseInt(segment, 10);
+        if (isNaN(index)) {
+          return undefined;
+        }
+        current = current[index];
+      } else if (typeof current === "object") {
+        current = (current as Record<string, unknown>)[segment];
+      } else {
+        return undefined;
+      }
+    }
+
+    return current;
   }
 
   /**

@@ -14,7 +14,7 @@ build/
 _fresh/
 *.exe
 cai
-lib/primitives/bundle.js
+lib/std/bundle.js
 
 # Logs
 *.log
@@ -65,7 +65,7 @@ memory:
 :memory:*
 
 # MCP server config (contains API keys)
-.mcp-servers.json
+config/.mcp-servers.json
 
 # Monitoring data (Docker volumes)
 monitoring/data/

@@ -1,7 +1,7 @@
 /**
  * Shared types for MCP Mini-Tools Library
  *
- * @module lib/primitives/types
+ * @module lib/std/types
  */
 
 /** MCP Tool definition */
@@ -37,7 +37,10 @@ export type ToolCategory =
   | "transform"
   | "state"
   | "compare"
-  | "algo";
+  | "algo"
+  | "color"
+  | "network"
+  | "util";
 
 /** Mini tool handler function type */
 export type MiniToolHandler = (args: Record<string, unknown>) => Promise<unknown> | unknown;

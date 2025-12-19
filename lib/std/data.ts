@@ -3,7 +3,7 @@
  *
  * Uses @faker-js/faker for realistic test data.
  *
- * @module lib/primitives/data
+ * @module lib/std/data
  */
 
 import { faker } from "@faker-js/faker";

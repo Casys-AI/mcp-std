@@ -1,13 +1,13 @@
 /**
- * MCP Server Bootstrap for Mini-Tools Library
+ * MCP Server Bootstrap for Std (Standard Library) Tools
  *
- * This file bootstraps the mcp-tools.ts primitives as a proper MCP server
+ * This file bootstraps the std tools as a proper MCP server
  * that can be loaded via mcp-servers.json.
  *
  * Usage in mcp-servers.json:
  * {
  *   "mcpServers": {
- *     "primitives": {
+ *     "std": {
  *       "command": "deno",
  *       "args": ["run", "--allow-all", "lib/mcp-tools-server.ts"]
  *     }
@@ -93,7 +93,7 @@ class MCPServer {
     return {
       protocolVersion: "2024-11-05",
       serverInfo: {
-        name: "mcp-primitives",
+        name: "mcp-std",
         version: "1.0.0",
       },
       capabilities: {
@@ -180,7 +180,7 @@ async function main() {
   const reader = Deno.stdin.readable.getReader();
 
   // Log to stderr (stdout is for MCP protocol)
-  console.error(`[mcp-primitives] Server started${categories ? ` with categories: ${categories.join(", ")}` : " with all categories"}`);
+  console.error(`[mcp-std] Server started${categories ? ` with categories: ${categories.join(", ")}` : " with all categories"}`);
 
   while (true) {
     const request = await readMessage(reader);
@@ -190,13 +190,13 @@ async function main() {
     await writeMessage(response);
   }
 
-  console.error("[mcp-primitives] Server stopped");
+  console.error("[mcp-std] Server stopped");
 }
 
 // Run if main module
 if (import.meta.main) {
   main().catch((error) => {
-    console.error("[mcp-primitives] Fatal error:", error);
+    console.error("[mcp-std] Fatal error:", error);
     Deno.exit(1);
   });
 }

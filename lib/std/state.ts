@@ -3,7 +3,7 @@
  *
  * In-memory key-value store for agent state management.
  *
- * @module lib/primitives/state
+ * @module lib/std/state
  */
 
 import type { MiniTool } from "./types.ts";

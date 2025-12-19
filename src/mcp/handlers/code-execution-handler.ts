@@ -4,6 +4,9 @@
  * Handles pml:execute_code MCP tool requests with sandbox execution,
  * tool discovery, and capability learning.
  *
+ * Story 10.5: Execute code via inferred DAG for per-layer validation,
+ * parallel execution, checkpoints, and SSE streaming.
+ *
  * @module mcp/handlers/code-execution-handler
  */
 
@@ -21,6 +24,19 @@ import { ContextBuilder } from "../../sandbox/context-builder.ts";
 import { CapabilityCodeGenerator } from "../../capabilities/code-generator.ts";
 import { hashCode } from "../../capabilities/hash.ts";
 
+// Story 10.5: DAG Execution imports
+import { StaticStructureBuilder } from "../../capabilities/static-structure-builder.ts";
+import {
+  staticStructureToDag,
+  isValidForDagConversion,
+  resolveArguments,
+  type ConditionalDAGStructure,
+} from "../../dag/mod.ts";
+import { ControlledExecutor } from "../../dag/controlled-executor.ts";
+import type { Task } from "../../graphrag/types.ts";
+import type { TaskResult, ToolExecutor } from "../../dag/types.ts";
+import type { PGliteClient } from "../../db/client.ts";
+
 /**
  * Dependencies required for code execution handler
  */
@@ -33,14 +49,44 @@ export interface CodeExecutionDependencies {
   config: ResolvedGatewayConfig;
   contextBuilder: ContextBuilder;
   toolSchemaCache: Map<string, string>;
+  /** PGlite client for DAG checkpoints (Story 10.5) */
+  db?: PGliteClient;
 }
 
 /**
- * Handle code execution request (Story 3.4)
+ * DAG execution mode (Story 10.5)
  *
- * Supports two modes:
- * 1. Intent-based: Natural language → vector search → tool injection → execute
- * 2. Explicit: Direct code execution with provided context
+ * - dag: Code analyzed, converted to DAG, executed via ControlledExecutor
+ * - sandbox: Direct sandbox execution (fallback for non-DAG-compatible code)
+ */
+export type ExecutionMode = "dag" | "sandbox";
+
+/**
+ * DAG execution metadata (Story 10.5 AC8)
+ *
+ * Included in response when code is executed via DAG.
+ */
+export interface DAGExecutionMetadata {
+  /** Whether DAG execution was used */
+  mode: ExecutionMode;
+  /** Number of tasks in the inferred DAG */
+  tasksCount?: number;
+  /** Number of parallel layers in the DAG */
+  layersCount?: number;
+  /** Speedup from parallel execution (1.0 = no speedup) */
+  speedup?: number;
+  /** Tools discovered in the code */
+  toolsDiscovered?: string[];
+}
+
+/**
+ * Handle code execution request (Story 3.4, Story 10.5)
+ *
+ * Supports three modes:
+ * 1. DAG mode (Story 10.5): Static analysis → DAG → ControlledExecutor
+ *    - Enables per-layer validation, parallel execution, checkpoints
+ * 2. Intent-based: Natural language → vector search → tool injection → execute
+ * 3. Explicit: Direct code execution with provided context
  *
  * @param args - Code execution arguments
  * @param deps - Handler dependencies
@@ -68,12 +114,250 @@ export async function handleExecuteCode(
       );
     }
 
-    log.info("Executing code in sandbox", {
+    log.info("Executing code", {
       intent: request.intent ? `"${request.intent.substring(0, 50)}..."` : "none",
       contextKeys: request.context ? Object.keys(request.context) : [],
       codeSize: codeSizeBytes,
     });
 
+    // Story 10.5 AC2: Try DAG execution first
+    const dagResult = await tryDagExecution(request, deps, codeSizeBytes);
+    if (dagResult) {
+      return dagResult;
+    }
+
+    // Fallback to sandbox execution (AC6: empty static_structure or analysis failure)
+    log.info("[Story 10.5] Falling back to sandbox execution (no DAG-compatible structure)");
+    return await executeSandboxMode(request, deps, codeSizeBytes);
+  } catch (error) {
+    log.error(`execute_code error: ${error}`);
+    return formatMCPToolError(
+      `Code execution failed: ${(error as Error).message}`,
+    );
+  }
+}
+
+/**
+ * Try to execute code via DAG (Story 10.5)
+ *
+ * Steps:
+ * 1. Static analysis to build StaticStructure
+ * 2. Convert to DAGStructure
+ * 3. Execute via ControlledExecutor
+ *
+ * @returns MCPToolResponse if DAG execution succeeded, null to fallback to sandbox
+ */
+async function tryDagExecution(
+  request: CodeExecutionRequest,
+  deps: CodeExecutionDependencies,
+  codeSizeBytes: number,
+): Promise<MCPToolResponse | MCPErrorResponse | null> {
+  try {
+    // Step 1: Static analysis (Story 10.1)
+    // Requires DB for provides edge calculation
+    if (!deps.db) {
+      log.debug("[Story 10.5] No DB available for static analysis, skipping DAG mode");
+      return null;
+    }
+
+    const structureBuilder = new StaticStructureBuilder(deps.db);
+    const staticStructure = await structureBuilder.buildStaticStructure(request.code);
+
+    // AC6: Check if structure is valid for DAG conversion
+    if (!isValidForDagConversion(staticStructure)) {
+      log.info("[Story 10.5] Static structure not valid for DAG, falling back", {
+        nodeCount: staticStructure.nodes.length,
+        edgeCount: staticStructure.edges.length,
+      });
+      return null;
+    }
+
+    // Step 2: Convert to DAG (AC1)
+    const dag = staticStructureToDag(staticStructure, {
+      taskIdPrefix: "task_",
+      includeDecisionTasks: false,
+    });
+
+    if (dag.tasks.length === 0) {
+      log.info("[Story 10.5] DAG has no tasks, falling back to sandbox");
+      return null;
+    }
+
+    log.info("[Story 10.5] DAG inferred from static analysis", {
+      tasksCount: dag.tasks.length,
+      tools: dag.tasks.map((t) => t.tool),
+    });
+
+    // Step 3: Create tool executor for DAG
+    const toolExecutor = createMcpToolExecutor(deps.mcpClients);
+
+    // Step 4: Execute via ControlledExecutor (AC2)
+    const executor = new ControlledExecutor(toolExecutor, {
+      maxConcurrency: 5,
+      taskTimeout: request.sandbox_config?.timeout ?? 30000,
+    });
+
+    // Set up checkpoints if DB available
+    if (deps.db) {
+      executor.setCheckpointManager(deps.db, true);
+    }
+
+    // Set up learning dependencies
+    if (deps.capabilityStore || deps.graphEngine) {
+      executor.setLearningDependencies(deps.capabilityStore, deps.graphEngine);
+    }
+
+    const startTime = performance.now();
+
+    // Resolve arguments before execution (AC3)
+    const executionContext = {
+      parameters: request.context || {},
+    };
+    const dagWithResolvedArgs = resolveDAGArguments(dag, executionContext);
+
+    // Execute the DAG
+    const executionResult = await executor.execute(dagWithResolvedArgs);
+    const executionTimeMs = performance.now() - startTime;
+
+    // Calculate output size
+    const resultData = executionResult.results
+      .filter((r) => r.status === "success")
+      .map((r) => r.output);
+    const outputSizeBytes = new TextEncoder().encode(
+      JSON.stringify(resultData),
+    ).length;
+
+    // Build DAG metadata (AC8)
+    const dagMetadata: DAGExecutionMetadata = {
+      mode: "dag",
+      tasksCount: dag.tasks.length,
+      layersCount: executionResult.parallelizationLayers,
+      speedup: executor.calculateSpeedup(executionResult),
+      toolsDiscovered: dag.tasks.map((t) => t.tool),
+    };
+
+    // Build response
+    const response: CodeExecutionResponse & { dag?: DAGExecutionMetadata } = {
+      result: resultData.length === 1 ? (resultData[0] as import("../../capabilities/types.ts").JsonValue) : (resultData as import("../../capabilities/types.ts").JsonValue),
+      logs: [],
+      metrics: {
+        executionTimeMs,
+        inputSizeBytes: codeSizeBytes,
+        outputSizeBytes,
+      },
+      state: request.context,
+      dag: dagMetadata,
+    };
+
+    // Add any errors as tool_failures
+    const failures = executionResult.errors.map((e) => ({
+      tool: e.taskId,
+      error: e.error,
+    }));
+    if (failures.length > 0) {
+      response.tool_failures = failures;
+    }
+
+    log.info("[Story 10.5] DAG execution completed", {
+      successfulTasks: executionResult.successfulTasks,
+      failedTasks: executionResult.failedTasks,
+      executionTimeMs: executionTimeMs.toFixed(2),
+      speedup: dagMetadata.speedup?.toFixed(2),
+    });
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(response, null, 2),
+        },
+      ],
+    };
+  } catch (error) {
+    // Log but don't fail - fall back to sandbox
+    log.warn(`[Story 10.5] DAG execution failed, falling back to sandbox: ${error}`);
+    return null;
+  }
+}
+
+/**
+ * Resolve arguments in DAG tasks before execution (Story 10.5 AC3)
+ *
+ * For each task with staticArguments, resolve them to actual values.
+ */
+function resolveDAGArguments(
+  dag: ConditionalDAGStructure,
+  context: { parameters?: Record<string, unknown> },
+): import("../../graphrag/types.ts").DAGStructure {
+  const previousResults = new Map<string, TaskResult>();
+
+  // Convert ConditionalTask[] to Task[] with resolved arguments
+  const tasks: Task[] = dag.tasks.map((task) => {
+    const resolved = resolveArguments(
+      task.staticArguments,
+      context,
+      previousResults,
+    );
+
+    return {
+      ...task,
+      arguments: {
+        ...resolved,
+        ...task.arguments, // Explicit arguments take precedence
+      },
+    };
+  });
+
+  return { tasks };
+}
+
+/**
+ * Create a tool executor that calls MCP servers
+ */
+function createMcpToolExecutor(
+  mcpClients: Map<string, MCPClientBase>,
+): ToolExecutor {
+  return async (tool: string, args: Record<string, unknown>): Promise<unknown> => {
+    // Parse tool ID: "server:toolName" or just "toolName"
+    const [serverId, toolName] = tool.includes(":")
+      ? tool.split(":", 2)
+      : [null, tool];
+
+    if (serverId) {
+      // Direct server call
+      const client = mcpClients.get(serverId);
+      if (!client) {
+        throw new Error(`MCP server not found: ${serverId}`);
+      }
+      return await client.callTool(toolName, args);
+    }
+
+    // Search for tool in all servers
+    for (const [_id, client] of mcpClients) {
+      try {
+        const tools = await client.listTools();
+        if (tools.some((t) => t.name === tool)) {
+          return await client.callTool(tool, args);
+        }
+      } catch {
+        // Server doesn't have this tool, continue
+      }
+    }
+
+    throw new Error(`Tool not found in any MCP server: ${tool}`);
+  };
+}
+
+/**
+ * Execute code in sandbox mode (fallback)
+ *
+ * Original execution path when DAG cannot be inferred.
+ */
+async function executeSandboxMode(
+  request: CodeExecutionRequest,
+  deps: CodeExecutionDependencies,
+  codeSizeBytes: number,
+): Promise<MCPToolResponse | MCPErrorResponse> {
     // Build execution context (for non-tool variables)
     // Story 8.3: Include intent in context for capability learning
     const executionContext = {
@@ -272,7 +556,7 @@ export async function handleExecuteCode(
 
     // Build response
     const response: CodeExecutionResponse = {
-      result: result.result,
+      result: result.result ?? null,
       logs: [],
       metrics: {
         executionTimeMs: result.executionTimeMs,
@@ -300,20 +584,22 @@ export async function handleExecuteCode(
       matchedCapabilities: matchedCapabilities.length,
     });
 
+    // Story 10.5: Add DAG metadata for sandbox fallback mode
+    const responseWithDag: CodeExecutionResponse & { dag?: DAGExecutionMetadata } = {
+      ...response,
+      dag: {
+        mode: "sandbox" as ExecutionMode,
+      },
+    };
+
     return {
       content: [
         {
           type: "text",
-          text: JSON.stringify(response, null, 2),
+          text: JSON.stringify(responseWithDag, null, 2),
         },
       ],
     };
-  } catch (error) {
-    log.error(`execute_code error: ${error}`);
-    return formatMCPToolError(
-      `Code execution failed: ${(error as Error).message}`,
-    );
-  }
 }
 
 /**

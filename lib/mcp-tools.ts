@@ -4,8 +4,8 @@
  * A collection of lightweight utility tools implementing MCPClientBase.
  * Designed for playground demos and educational use.
  *
- * This module re-exports from lib/primitives/ which contains the actual implementations.
- * For direct access to specific categories, import from lib/primitives/mod.ts or
+ * This module re-exports from lib/std/ which contains the actual implementations.
+ * For direct access to specific categories, import from lib/std/mod.ts or
  * individual category modules.
  *
  * Categories:
@@ -56,14 +56,14 @@ export {
   // Client class
   MiniToolsClient,
   defaultClient,
-} from "./primitives/mod.ts";
+} from "./std/mod.ts";
 
 // Re-export types
-export type { MiniTool, MiniToolHandler, MiniToolResult } from "./primitives/types.ts";
+export type { MiniTool, MiniToolHandler, MiniToolResult } from "./std/types.ts";
 
 // Import for local use
-import { allTools, MiniToolsClient } from "./primitives/mod.ts";
-import type { MiniTool } from "./primitives/types.ts";
+import { allTools, MiniToolsClient } from "./std/mod.ts";
+import type { MiniTool } from "./std/types.ts";
 
 // ============================================================================
 // Legacy Types (for backward compatibility)
@@ -109,7 +109,7 @@ export type ToolCategory =
 
 /**
  * All available mini tools
- * @deprecated Use allTools from lib/primitives/mod.ts instead
+ * @deprecated Use allTools from lib/std/mod.ts instead
  */
 export const MINI_TOOLS: MiniTool[] = allTools;
 

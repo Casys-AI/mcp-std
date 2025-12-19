@@ -3,7 +3,7 @@
  *
  * Uses lodash-es for robust implementations.
  *
- * @module lib/primitives/collections
+ * @module lib/std/collections
  */
 
 import {

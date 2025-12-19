@@ -28,7 +28,7 @@ import { getLogger } from "../telemetry/logger.ts";
 import type { DAGSuggester } from "../graphrag/dag-suggester.ts";
 import type { EpisodicMemoryStore } from "../learning/episodic-memory-store.ts";
 import type { CompletedTask, SpeculationCache, SpeculationConfig, SpeculationMetrics } from "../graphrag/types.ts";
-import type { PermissionEscalationRequest, PermissionSet } from "../capabilities/types.ts";
+import type { JsonValue, PermissionEscalationRequest, PermissionSet } from "../capabilities/types.ts";
 import type { PermissionAuditStore } from "../capabilities/permission-audit-store.ts";
 import { PermissionEscalationHandler, formatEscalationRequest } from "../capabilities/permission-escalation-handler.ts";
 import { suggestEscalation } from "../capabilities/permission-escalation.ts";
@@ -976,7 +976,7 @@ export class ControlledExecutor extends ParallelExecutor {
           workflowId,
           taskId: task.id,
           executionTimeMs: result.value.executionTimeMs,
-          result: result.value.output,
+          result: result.value.output as JsonValue,
           resultPreview,
           resultSize,
         };

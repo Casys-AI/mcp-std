@@ -4,6 +4,8 @@
  * @module mcp/types
  */
 
+import type { JsonValue } from "../capabilities/types.ts";
+
 /**
  * MCP Server configuration
  *
@@ -139,7 +141,7 @@ export interface CodeExecutionResponse {
   /**
    * Execution result (JSON-serializable)
    */
-  result: unknown;
+  result: JsonValue;
 
   /**
    * Console logs from code execution

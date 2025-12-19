@@ -195,7 +195,7 @@ export class SpeculativeExecutor {
         this.speculationCache.set(prediction.toolId, {
           predictionId: predictionId,
           toolId: prediction.toolId,
-          result: result.result,
+          result: result.result ?? null,
           confidence: prediction.confidence,
           timestamp: Date.now(),
           executionTimeMs,

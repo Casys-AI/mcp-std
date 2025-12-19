@@ -1,13 +1,13 @@
 #!/usr/bin/env -S deno run --allow-read --allow-write --allow-env --allow-run
 /**
- * Bundle primitives library for sandbox use
+ * Bundle std (standard library) for sandbox use
  *
  * Creates a single ESM bundle with all dependencies inlined.
  * The bundle can be loaded in a Deno worker without external imports.
  *
- * Usage: deno task build:primitives
+ * Usage: deno task build:std
  *
- * @module lib/primitives/build
+ * @module lib/std/build
  */
 
 import * as esbuild from "npm:esbuild@0.24.0";
@@ -17,7 +17,7 @@ import * as log from "@std/log";
 const entryPoint = new URL("./mod.ts", import.meta.url).pathname;
 const outFile = new URL("./bundle.js", import.meta.url).pathname;
 
-log.info("📦 Building primitives bundle...");
+log.info("📦 Building std bundle...");
 log.info(`   Entry: ${entryPoint}`);
 log.info(`   Output: ${outFile}`);
 
@@ -36,11 +36,11 @@ const result = await esbuild.build({
   mainFields: ["module", "main"], // Resolve ESM first, then CommonJS
   banner: {
     js: `/**
- * MiniTools Primitives Bundle
+ * Std (Standard Library) Bundle
  * Auto-generated - do not edit manually
  * Generated: ${new Date().toISOString()}
  *
- * This bundle contains all primitives with dependencies inlined
+ * This bundle contains all std tools with dependencies inlined
  * for use in sandboxed Deno workers.
  */
 `,

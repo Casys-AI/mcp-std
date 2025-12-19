@@ -1,10 +1,10 @@
 /**
- * Mini Tools Primitives Library
+ * Std (Standard Library) Tools
  *
  * A collection of lightweight, sandboxed tools for AI agents.
  * Organized by category for modular use.
  *
- * @module lib/primitives
+ * @module lib/std
  */
 
 // Re-export all tool modules
@@ -23,6 +23,9 @@ export { transformTools } from "./transform.ts";
 export { stateTools } from "./state.ts";
 export { compareTools } from "./compare.ts";
 export { algoTools } from "./algo.ts";
+export { colorTools } from "./color.ts";
+export { networkTools } from "./network.ts";
+export { utilTools } from "./util.ts";
 
 // Re-export types
 export type { MiniTool, MiniToolHandler, MiniToolResult } from "./types.ts";
@@ -43,6 +46,9 @@ import { transformTools } from "./transform.ts";
 import { stateTools } from "./state.ts";
 import { compareTools } from "./compare.ts";
 import { algoTools } from "./algo.ts";
+import { colorTools } from "./color.ts";
+import { networkTools } from "./network.ts";
+import { utilTools } from "./util.ts";
 import type { MiniTool, MiniToolResult } from "./types.ts";
 
 /**
@@ -64,6 +70,9 @@ export const allTools: MiniTool[] = [
   ...stateTools,
   ...compareTools,
   ...algoTools,
+  ...colorTools,
+  ...networkTools,
+  ...utilTools,
 ];
 
 /**
@@ -85,6 +94,9 @@ export const toolsByCategory: Record<string, MiniTool[]> = {
   state: stateTools,
   compare: compareTools,
   algo: algoTools,
+  color: colorTools,
+  network: networkTools,
+  util: utilTools,
 };
 
 /**

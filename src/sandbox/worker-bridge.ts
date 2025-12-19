@@ -20,6 +20,7 @@
  */
 
 import type { MCPClientBase } from "../mcp/types.ts";
+import type { JsonValue } from "../capabilities/types.ts";
 import type {
   CapabilityTraceEvent,
   ExecutionCompleteMessage,
@@ -452,7 +453,7 @@ export class WorkerBridge {
         type: "rpc_result",
         id,
         success: true, // RPC succeeded, but tool may have returned isError
-        result,
+        result: result as JsonValue,
       };
       this.worker?.postMessage(response);
 

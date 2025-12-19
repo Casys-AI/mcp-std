@@ -3,7 +3,10 @@
  *
  * Uses date-fns for robust date handling.
  *
- * @module lib/primitives/datetime
+ * Inspired by:
+ * - IT-Tools MCP: https://github.com/wrenchpilot/it-tools-mcp
+ *
+ * @module lib/std/datetime
  */
 
 import {
@@ -230,6 +233,117 @@ export const datetimeTools: MiniTool[] = [
         dayName: dayNames[getDay(d)],
         iso: formatISO(d),
         unix: getUnixTime(d),
+      };
+    },
+  },
+  // Inspired by IT-Tools MCP: https://github.com/wrenchpilot/it-tools-mcp
+  {
+    name: "datetime_cron_parse",
+    description: "Parse a cron expression and explain what it means",
+    category: "datetime",
+    inputSchema: {
+      type: "object",
+      properties: {
+        expression: {
+          type: "string",
+          description: "Cron expression (5 or 6 fields: min hour day month weekday [year])",
+        },
+      },
+      required: ["expression"],
+    },
+    handler: ({ expression }) => {
+      const parts = (expression as string).trim().split(/\s+/);
+      if (parts.length < 5 || parts.length > 6) {
+        throw new Error("Cron expression must have 5 or 6 fields");
+      }
+
+      const fieldNames = ["minute", "hour", "dayOfMonth", "month", "dayOfWeek", "year"];
+      const fieldRanges = [
+        { min: 0, max: 59, names: null },
+        { min: 0, max: 23, names: null },
+        { min: 1, max: 31, names: null },
+        { min: 1, max: 12, names: ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] },
+        { min: 0, max: 6, names: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] },
+        { min: 1970, max: 2099, names: null },
+      ];
+
+      const describeField = (value: string, idx: number): string => {
+        const range = fieldRanges[idx];
+        const name = fieldNames[idx];
+
+        if (value === "*") return `every ${name}`;
+        if (value.includes("/")) {
+          const [, step] = value.split("/");
+          return `every ${step} ${name}s`;
+        }
+        if (value.includes("-")) {
+          const [start, end] = value.split("-");
+          return `${name} ${start} through ${end}`;
+        }
+        if (value.includes(",")) {
+          return `${name} ${value}`;
+        }
+        if (range.names && !isNaN(Number(value))) {
+          return `${name} ${range.names[Number(value)] || value}`;
+        }
+        return `${name} ${value}`;
+      };
+
+      const descriptions = parts.map((p, i) => describeField(p, i));
+
+      return {
+        expression,
+        fields: {
+          minute: parts[0],
+          hour: parts[1],
+          dayOfMonth: parts[2],
+          month: parts[3],
+          dayOfWeek: parts[4],
+          year: parts[5] || "*",
+        },
+        description: descriptions.join(", "),
+        isValid: true,
+      };
+    },
+  },
+  {
+    name: "datetime_unix",
+    description: "Convert between Unix timestamp and ISO date",
+    category: "datetime",
+    inputSchema: {
+      type: "object",
+      properties: {
+        value: {
+          type: ["string", "number"],
+          description: "Unix timestamp (number) or ISO date string",
+        },
+        action: {
+          type: "string",
+          enum: ["to_unix", "from_unix"],
+          description: "Conversion direction",
+        },
+      },
+      required: ["value", "action"],
+    },
+    handler: ({ value, action }) => {
+      if (action === "to_unix") {
+        const d = typeof value === "string" ? parseISO(value as string) : new Date(value as number);
+        return {
+          unix: getUnixTime(d),
+          unixMs: d.getTime(),
+          iso: formatISO(d),
+        };
+      }
+      // from_unix
+      const timestamp = typeof value === "string" ? parseInt(value as string, 10) : (value as number);
+      // Detect if it's seconds or milliseconds
+      const ms = timestamp > 1e12 ? timestamp : timestamp * 1000;
+      const d = new Date(ms);
+      return {
+        iso: formatISO(d),
+        formatted: format(d, "PPpp"),
+        unix: Math.floor(ms / 1000),
+        unixMs: ms,
       };
     },
   },

@@ -3,7 +3,7 @@
  *
  * In-memory file operations for sandboxed environments.
  *
- * @module lib/primitives/vfs
+ * @module lib/std/vfs
  */
 
 import type { MiniTool } from "./types.ts";

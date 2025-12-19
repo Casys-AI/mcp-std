@@ -113,7 +113,7 @@ fetch:
   isReadOnly: true
 
 # =============================================================================
-# PRIMITIVES (lib/mcp-tools.ts) - 94 tools across 15 categories
+# STD (lib/std/) - Standard library tools, 94 tools across 15 categories
 # =============================================================================
 
 # Text manipulation - pure computation

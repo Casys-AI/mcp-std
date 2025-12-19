@@ -1,7 +1,7 @@
 /**
  * JSON manipulation tools
  *
- * @module lib/primitives/json
+ * @module lib/std/json
  */
 
 import jmespath from "jmespath";
@@ -127,6 +127,109 @@ export const jsonTools: MiniTool[] = [
       };
       walk(data as Record<string, unknown>);
       return keys;
+    },
+  },
+  {
+    name: "json_flatten",
+    description: "Flatten nested object to dot notation keys (e.g., { a: { b: 1 } } → { 'a.b': 1 })",
+    category: "json",
+    inputSchema: {
+      type: "object",
+      properties: {
+        data: { type: "object", description: "Nested object to flatten" },
+        delimiter: { type: "string", description: "Key delimiter (default: '.')" },
+      },
+      required: ["data"],
+    },
+    handler: ({ data, delimiter = "." }) => {
+      const result: Record<string, unknown> = {};
+      const flatten = (obj: Record<string, unknown>, prefix = "") => {
+        for (const key of Object.keys(obj)) {
+          const path = prefix ? `${prefix}${delimiter}${key}` : key;
+          const value = obj[key];
+          if (value && typeof value === "object" && !Array.isArray(value)) {
+            flatten(value as Record<string, unknown>, path);
+          } else {
+            result[path] = value;
+          }
+        }
+      };
+      flatten(data as Record<string, unknown>);
+      return result;
+    },
+  },
+  {
+    name: "json_unflatten",
+    description: "Unflatten dot notation keys to nested object (e.g., { 'a.b': 1 } → { a: { b: 1 } })",
+    category: "json",
+    inputSchema: {
+      type: "object",
+      properties: {
+        data: { type: "object", description: "Flat object to unflatten" },
+        delimiter: { type: "string", description: "Key delimiter (default: '.')" },
+      },
+      required: ["data"],
+    },
+    handler: ({ data, delimiter = "." }) => {
+      const result: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
+        const parts = key.split(delimiter as string);
+        let current = result;
+        for (let i = 0; i < parts.length - 1; i++) {
+          const part = parts[i];
+          if (!(part in current)) {
+            current[part] = {};
+          }
+          current = current[part] as Record<string, unknown>;
+        }
+        current[parts[parts.length - 1]] = value;
+      }
+      return result;
+    },
+  },
+  {
+    name: "json_pick",
+    description: "Pick only specified keys from object",
+    category: "json",
+    inputSchema: {
+      type: "object",
+      properties: {
+        data: { type: "object", description: "Source object" },
+        keys: { type: "array", items: { type: "string" }, description: "Keys to pick" },
+      },
+      required: ["data", "keys"],
+    },
+    handler: ({ data, keys }) => {
+      const result: Record<string, unknown> = {};
+      for (const key of keys as string[]) {
+        if (key in (data as Record<string, unknown>)) {
+          result[key] = (data as Record<string, unknown>)[key];
+        }
+      }
+      return result;
+    },
+  },
+  {
+    name: "json_omit",
+    description: "Omit specified keys from object",
+    category: "json",
+    inputSchema: {
+      type: "object",
+      properties: {
+        data: { type: "object", description: "Source object" },
+        keys: { type: "array", items: { type: "string" }, description: "Keys to omit" },
+      },
+      required: ["data", "keys"],
+    },
+    handler: ({ data, keys }) => {
+      const keysSet = new Set(keys as string[]);
+      const result: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
+        if (!keysSet.has(key)) {
+          result[key] = value;
+        }
+      }
+      return result;
     },
   },
 ];

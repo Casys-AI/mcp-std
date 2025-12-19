@@ -1,20 +1,20 @@
 /**
- * Primitives Bundle Loader
+ * Std Bundle Loader
  *
- * Ensures the primitives bundle is up-to-date for sandbox use.
+ * Ensures the std (standard library) bundle is up-to-date for sandbox use.
  * Automatically rebuilds if source files have changed.
  *
- * @module src/lib/primitives-loader
+ * @module src/lib/std-loader
  */
 
 import * as log from "@std/log";
 
 // Paths relative to project root
-// src/lib/primitives-loader.ts → ../.. → project root
+// src/lib/std-loader.ts → ../.. → project root
 const PROJECT_ROOT = new URL("../..", import.meta.url).pathname;
-const PRIMITIVES_DIR = `${PROJECT_ROOT}lib/primitives/`;
-const BUNDLE_PATH = `${PRIMITIVES_DIR}bundle.js`;
-const BUILD_SCRIPT = `${PRIMITIVES_DIR}build.ts`;
+const STD_DIR = `${PROJECT_ROOT}lib/std/`;
+const BUNDLE_PATH = `${STD_DIR}bundle.js`;
+const BUILD_SCRIPT = `${STD_DIR}build.ts`;
 
 // Source files to watch
 const SOURCE_FILES = [
@@ -45,7 +45,7 @@ async function needsRebuild(): Promise<boolean> {
   try {
     await Deno.stat(BUNDLE_PATH);
   } catch {
-    log.info("Primitives bundle not found, will build...");
+    log.info("Std bundle not found, will build...");
     return true;
   }
 
@@ -56,10 +56,10 @@ async function needsRebuild(): Promise<boolean> {
   // Check if any source file is newer
   for (const file of SOURCE_FILES) {
     try {
-      const stat = await Deno.stat(`${PRIMITIVES_DIR}${file}`);
+      const stat = await Deno.stat(`${STD_DIR}${file}`);
       const mtime = stat.mtime?.getTime() ?? 0;
       if (mtime > bundleMtime) {
-        log.info(`Primitives source changed: ${file}`);
+        log.info(`Std source changed: ${file}`);
         return true;
       }
     } catch {
@@ -74,7 +74,7 @@ async function needsRebuild(): Promise<boolean> {
  * Run the build script
  */
 async function runBuild(): Promise<boolean> {
-  log.info("🔨 Building primitives bundle...");
+  log.info("🔨 Building std bundle...");
 
   const command = new Deno.Command("deno", {
     args: [
@@ -103,25 +103,29 @@ async function runBuild(): Promise<boolean> {
 }
 
 /**
- * Ensure primitives bundle is ready
+ * Ensure std bundle is ready
  *
  * Called at server startup. Checks if source files have changed
  * and rebuilds the bundle if needed.
  */
-export async function ensurePrimitivesBundle(): Promise<void> {
+export async function ensureStdBundle(): Promise<void> {
   if (await needsRebuild()) {
     const success = await runBuild();
     if (!success) {
-      log.warn("⚠️  Primitives bundle build failed, sandbox may have limited tools");
+      log.warn("⚠️  Std bundle build failed, sandbox may have limited tools");
     }
   } else {
-    log.debug("Primitives bundle up-to-date");
+    log.debug("Std bundle up-to-date");
   }
 }
 
 /**
- * Get path to the primitives bundle
+ * Get path to the std bundle
  */
-export function getPrimitivesBundlePath(): string {
+export function getStdBundlePath(): string {
   return BUNDLE_PATH;
 }
+
+// Keep old names as aliases for backward compatibility
+export const ensurePrimitivesBundle = ensureStdBundle;
+export const getPrimitivesBundlePath = getStdBundlePath;

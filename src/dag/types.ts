@@ -4,6 +4,8 @@
  * @module dag/types
  */
 
+import type { JsonValue } from "../capabilities/types.ts";
+
 /**
  * Result of a single task execution
  *
@@ -193,7 +195,7 @@ export type ExecutionEvent =
     taskId: string;
     executionTimeMs: number;
     /** Full result (stored for retrieval via pml_get_task_result) */
-    result?: unknown;
+    result?: JsonValue;
     /** Preview of result (first 500 chars of JSON stringified) */
     resultPreview?: string;
     /** Size of full result in bytes */

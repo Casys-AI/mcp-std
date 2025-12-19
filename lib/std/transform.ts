@@ -3,7 +3,7 @@
  *
  * Uses papaparse for CSV operations.
  *
- * @module lib/primitives/transform
+ * @module lib/std/transform
  */
 
 import Papa from "papaparse";

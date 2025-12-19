@@ -19,6 +19,7 @@ import type {
   Task,
   WorkflowIntent,
 } from "../graphrag/types.ts";
+import type { JsonValue } from "../capabilities/types.ts";
 import { AdaptiveThresholdManager } from "./adaptive-threshold.ts";
 import type { MCPClientBase } from "./types.ts";
 
@@ -268,7 +269,7 @@ export class GatewayHandler {
           taskId: task.id,
           tool: task.tool,
           success: true,
-          result,
+          result: result as JsonValue,
           executionTime,
         });
 

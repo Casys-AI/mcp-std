@@ -3,7 +3,7 @@
  *
  * Uses native fetch API for HTTP operations.
  *
- * @module lib/primitives/http
+ * @module lib/std/http
  */
 
 import type { MiniTool } from "./types.ts";

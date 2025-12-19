@@ -1119,4 +1119,47 @@ export class CapabilityStore {
   isValidEscalation(fromSet: PermissionSet, toSet: PermissionSet): boolean {
     return CapabilityStore.VALID_ESCALATIONS[fromSet]?.includes(toSet) ?? false;
   }
+
+  // ============================================
+  // Static Structure Methods (Story 10.2)
+  // ============================================
+
+  /**
+   * Get static_structure for a capability (Story 10.2)
+   *
+   * Used by DAGSuggester to extract arguments for speculative execution.
+   * Returns the static structure containing nodes with their arguments.
+   *
+   * @param capabilityId - Capability pattern_id
+   * @returns StaticStructure if available, null otherwise
+   */
+  async getStaticStructure(capabilityId: string): Promise<StaticStructure | null> {
+    try {
+      const result = await this.db.query(
+        `SELECT dag_structure->'static_structure' as static_structure
+         FROM workflow_pattern
+         WHERE pattern_id = $1`,
+        [capabilityId],
+      );
+
+      if (result.length === 0 || !result[0].static_structure) {
+        return null;
+      }
+
+      const staticStructure = result[0].static_structure as StaticStructure;
+
+      // Validate structure has expected shape
+      if (!staticStructure.nodes || !staticStructure.edges) {
+        return null;
+      }
+
+      return staticStructure;
+    } catch (error) {
+      logger.debug("Failed to get static structure", {
+        capabilityId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  }
 }

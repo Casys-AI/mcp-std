@@ -8,6 +8,23 @@
  */
 
 /**
+ * JSON primitive types for JSON-serializable values
+ */
+export type JsonPrimitive = string | number | boolean | null;
+
+/**
+ * JSON-serializable value type
+ *
+ * Used for data that needs to be stored in JSONB columns (PostgreSQL)
+ * or serialized for caching/transmission.
+ *
+ * @example
+ * const literal: JsonValue = "hello";
+ * const object: JsonValue = { key: [1, 2, 3] };
+ */
+export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
+
+/**
  * JSON Schema type (simplified for capability parameters)
  *
  * Note: 'type' is optional to support unconstrained schemas ({})
@@ -20,7 +37,7 @@ export interface JSONSchema {
   required?: string[];
   items?: JSONSchema;
   description?: string;
-  default?: unknown;
+  default?: JsonValue;
 }
 
 /**
@@ -337,8 +354,75 @@ export interface CreateCapabilityDependencyInput {
 }
 
 // ============================================
-// Static Structure Types (Story 10.1)
+// Static Structure Types (Story 10.1, 10.2)
 // ============================================
+
+// ============================================
+// Argument Types (Story 10.2)
+// ============================================
+
+/**
+ * Describes how to resolve a single argument value in a tool call
+ *
+ * Story 10.2: Static Argument Extraction for Speculative Execution
+ *
+ * ArgumentValue stores HOW to resolve each argument, not the resolved value:
+ * - literal: Direct value, use immediately
+ * - reference: Resolve via ProvidesEdge + previous task result
+ * - parameter: Extract from capability input parameters
+ *
+ * @example
+ * ```typescript
+ * // Literal: { path: "config.json" }
+ * { type: "literal", value: "config.json" }
+ *
+ * // Reference: { input: file.content }
+ * { type: "reference", expression: "file.content" }
+ *
+ * // Parameter: { path: args.filePath }
+ * { type: "parameter", parameterName: "filePath" }
+ * ```
+ */
+export interface ArgumentValue {
+  /**
+   * How this argument value should be resolved:
+   * - "literal": The value is known at static analysis time
+   * - "reference": The value comes from a previous task result (MemberExpression)
+   * - "parameter": The value comes from capability input parameters (args.X, params.X)
+   */
+  type: "literal" | "reference" | "parameter";
+  /**
+   * For literal type: the actual value (string, number, boolean, object, array, null)
+   * Must be JSON-serializable for storage in JSONB columns.
+   */
+  value?: JsonValue;
+  /**
+   * For reference type: the expression string representing the data source
+   * @example "file.content", "result.items[0].value"
+   */
+  expression?: string;
+  /**
+   * For parameter type: the parameter name from capability input
+   * @example "filePath", "inputData"
+   */
+  parameterName?: string;
+}
+
+/**
+ * Map of argument names to their resolution strategies
+ *
+ * Story 10.2: Static Argument Extraction
+ *
+ * @example
+ * ```typescript
+ * // For: mcp.fs.read({ path: "config.json", verbose: args.debug })
+ * {
+ *   path: { type: "literal", value: "config.json" },
+ *   verbose: { type: "parameter", parameterName: "debug" }
+ * }
+ * ```
+ */
+export type ArgumentsStructure = Record<string, ArgumentValue>;
 
 /**
  * Static structure node types for capability analysis
@@ -349,9 +433,25 @@ export interface CreateCapabilityDependencyInput {
  * - capability: Nested capability call
  * - fork: Parallel execution start (Promise.all/allSettled)
  * - join: Parallel execution end
+ *
+ * Story 10.2: Added optional `arguments` field to task nodes for
+ * speculative execution argument resolution.
  */
 export type StaticStructureNode =
-  | { id: string; type: "task"; tool: string }
+  | {
+      id: string;
+      type: "task";
+      tool: string;
+      /**
+       * Extracted arguments for this tool call (Story 10.2)
+       *
+       * Contains resolution strategies for each argument:
+       * - Literals are stored with their actual values
+       * - References point to previous task results
+       * - Parameters reference capability input
+       */
+      arguments?: ArgumentsStructure;
+    }
   | { id: string; type: "decision"; condition: string }
   | { id: string; type: "capability"; capabilityId: string }
   | { id: string; type: "fork" }

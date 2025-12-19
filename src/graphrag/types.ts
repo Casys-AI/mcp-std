@@ -4,7 +4,7 @@
  * @module graphrag/types
  */
 
-import type { PermissionSet, ProvidesCoverage } from "../capabilities/types.ts";
+import type { JsonValue, PermissionSet, ProvidesCoverage } from "../capabilities/types.ts";
 
 // Re-export ProvidesCoverage for consumers of graphrag module
 export type { ProvidesCoverage } from "../capabilities/types.ts";
@@ -70,6 +70,18 @@ export interface Task {
    * Flag for side-effects (Story 2.5-3 HIL approval)
    */
   sideEffects?: boolean;
+
+  /**
+   * Static arguments structure from code analysis (Story 10.5)
+   *
+   * Contains resolution strategies for each argument:
+   * - literal: value known at static analysis time
+   * - reference: value from previous task result (resolved at runtime)
+   * - parameter: value from execution context
+   *
+   * Used by ParallelExecutor.resolveArguments() for runtime resolution.
+   */
+  staticArguments?: import("../capabilities/types.ts").ArgumentsStructure;
 }
 
 /**
@@ -108,7 +120,7 @@ export interface ExecutionResult {
   taskId: string;
   tool: string;
   success: boolean;
-  result?: unknown;
+  result?: JsonValue;
   error?: string;
   executionTime: number;
 }
@@ -248,7 +260,7 @@ export interface SpeculationConfig {
 export interface SpeculationCache {
   predictionId: string;
   toolId: string;
-  result: unknown;
+  result: JsonValue;
   confidence: number;
   timestamp: number;
   executionTimeMs: number;

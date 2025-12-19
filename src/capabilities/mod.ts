@@ -35,6 +35,8 @@ export type { EscalationResult, HILApprovalCallback } from "./permission-escalat
 // which has higher collision probability. Use hashCode (SHA-256) for production.
 export { hashCode, normalizeCode } from "./hash.ts";
 export type {
+  ArgumentsStructure, // Story 10.2 - Argument extraction for speculative execution
+  ArgumentValue, // Story 10.2 - Single argument resolution strategy
   CacheConfig,
   Capability,
   CapabilityFilters,

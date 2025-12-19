@@ -59,3 +59,26 @@ export type {
   TaskResult,
   ToolExecutor,
 } from "./types.ts";
+
+// Story 10.5: Static Structure to DAG Conversion
+export {
+  staticStructureToDag,
+  isValidForDagConversion,
+  getToolsFromStaticStructure,
+  estimateParallelLayers,
+} from "./static-to-dag-converter.ts";
+export type {
+  ConditionalTask,
+  ConditionalDAGStructure,
+  ConversionOptions,
+  TaskCondition,
+} from "./static-to-dag-converter.ts";
+
+// Story 10.5: Argument Resolution at Runtime
+export {
+  resolveArguments,
+  mergeArguments,
+  validateRequiredArguments,
+  buildResolutionSummary,
+} from "./argument-resolver.ts";
+export type { ExecutionContext } from "./argument-resolver.ts";

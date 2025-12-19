@@ -361,10 +361,17 @@ Deno.test({
   const db = await setupTestDb();
   const builder = new StaticStructureBuilder(db);
 
-  // Create a mock embedding model
-  const mockEmbeddingModel = {
-    encode: async (_text: string) => new Array(1024).fill(0.1),
-  };
+  // Create a mock embedding model with all required interface methods
+  class MockEmbeddingModel {
+    async load(): Promise<void> {}
+    async encode(_text: string): Promise<number[]> {
+      return new Array(1024).fill(0.1);
+    }
+    isLoaded(): boolean {
+      return true;
+    }
+  }
+  const mockEmbeddingModel = new MockEmbeddingModel();
 
   // Import CapabilityStore dynamically to avoid circular deps
   const { CapabilityStore } = await import("../../../src/capabilities/capability-store.ts");
@@ -372,7 +379,7 @@ Deno.test({
   // Create CapabilityStore WITH StaticStructureBuilder (AC10)
   const store = new CapabilityStore(
     db,
-    mockEmbeddingModel,
+    mockEmbeddingModel as any, // Cast to bypass EmbeddingModel class type (interface satisfied)
     undefined, // schemaInferrer
     undefined, // permissionInferrer
     builder, // staticStructureBuilder - AC10
@@ -417,4 +424,263 @@ Deno.test({
 
   await db.close();
   },
+});
+
+// =============================================================================
+// Story 10.2: Argument Extraction Tests (AC8)
+// =============================================================================
+
+Deno.test("StaticStructureBuilder - extract literal string argument (AC8)", async () => {
+  const db = await setupTestDb();
+  const builder = new StaticStructureBuilder(db);
+
+  const code = `
+    const file = await mcp.filesystem.read_file({ path: "/config.json" });
+  `;
+
+  const structure = await builder.buildStaticStructure(code);
+
+  assertExists(structure);
+  assertEquals(structure.nodes.length, 1);
+  assertEquals(structure.nodes[0].type, "task");
+
+  if (structure.nodes[0].type === "task") {
+    assertExists(structure.nodes[0].arguments, "Should have arguments");
+    assertExists(structure.nodes[0].arguments!.path, "Should have path argument");
+    assertEquals(structure.nodes[0].arguments!.path.type, "literal");
+    assertEquals(structure.nodes[0].arguments!.path.value, "/config.json");
+  }
+
+  await db.close();
+});
+
+Deno.test("StaticStructureBuilder - extract literal number argument (AC8)", async () => {
+  const db = await setupTestDb();
+  const builder = new StaticStructureBuilder(db);
+
+  const code = `
+    const result = await mcp.api.fetch({ timeout: 5000 });
+  `;
+
+  const structure = await builder.buildStaticStructure(code);
+
+  assertExists(structure);
+  assertEquals(structure.nodes.length, 1);
+
+  if (structure.nodes[0].type === "task") {
+    assertExists(structure.nodes[0].arguments);
+    assertExists(structure.nodes[0].arguments!.timeout);
+    assertEquals(structure.nodes[0].arguments!.timeout.type, "literal");
+    assertEquals(structure.nodes[0].arguments!.timeout.value, 5000);
+  }
+
+  await db.close();
+});
+
+Deno.test("StaticStructureBuilder - extract literal boolean argument (AC8)", async () => {
+  const db = await setupTestDb();
+  const builder = new StaticStructureBuilder(db);
+
+  const code = `
+    const file = await mcp.filesystem.read_file({ path: "/test.txt", verbose: true });
+  `;
+
+  const structure = await builder.buildStaticStructure(code);
+
+  assertExists(structure);
+
+  if (structure.nodes[0].type === "task") {
+    assertExists(structure.nodes[0].arguments);
+    assertEquals(structure.nodes[0].arguments!.verbose.type, "literal");
+    assertEquals(structure.nodes[0].arguments!.verbose.value, true);
+  }
+
+  await db.close();
+});
+
+Deno.test("StaticStructureBuilder - extract literal object (nested) argument (AC8)", async () => {
+  const db = await setupTestDb();
+  const builder = new StaticStructureBuilder(db);
+
+  const code = `
+    const result = await mcp.api.request({
+      config: { method: "POST", headers: { "Content-Type": "application/json" } }
+    });
+  `;
+
+  const structure = await builder.buildStaticStructure(code);
+
+  assertExists(structure);
+
+  if (structure.nodes[0].type === "task") {
+    assertExists(structure.nodes[0].arguments);
+    assertExists(structure.nodes[0].arguments!.config);
+    assertEquals(structure.nodes[0].arguments!.config.type, "literal");
+
+    const configValue = structure.nodes[0].arguments!.config.value as Record<string, unknown>;
+    assertEquals(configValue.method, "POST");
+    assertEquals((configValue.headers as Record<string, string>)["Content-Type"], "application/json");
+  }
+
+  await db.close();
+});
+
+Deno.test("StaticStructureBuilder - extract literal array argument (AC8)", async () => {
+  const db = await setupTestDb();
+  const builder = new StaticStructureBuilder(db);
+
+  const code = `
+    const result = await mcp.db.query({ ids: [1, 2, 3] });
+  `;
+
+  const structure = await builder.buildStaticStructure(code);
+
+  assertExists(structure);
+
+  if (structure.nodes[0].type === "task") {
+    assertExists(structure.nodes[0].arguments);
+    assertExists(structure.nodes[0].arguments!.ids);
+    assertEquals(structure.nodes[0].arguments!.ids.type, "literal");
+    assertEquals(structure.nodes[0].arguments!.ids.value, [1, 2, 3]);
+  }
+
+  await db.close();
+});
+
+Deno.test("StaticStructureBuilder - detect reference argument (member expression) (AC8)", async () => {
+  const db = await setupTestDb();
+  const builder = new StaticStructureBuilder(db);
+
+  const code = `
+    const file = await mcp.filesystem.read_file({ path: "/test.json" });
+    const parsed = await mcp.json.parse({ content: file.content });
+  `;
+
+  const structure = await builder.buildStaticStructure(code);
+
+  assertExists(structure);
+  assertEquals(structure.nodes.length, 2);
+
+  // Second node should have reference argument
+  const secondNode = structure.nodes.find(n => n.type === "task" && n.tool === "json:parse");
+  assertExists(secondNode);
+
+  if (secondNode?.type === "task") {
+    assertExists(secondNode.arguments);
+    assertExists(secondNode.arguments!.content);
+    assertEquals(secondNode.arguments!.content.type, "reference");
+    // Story 10.5: Variable names are converted to node IDs
+    // "file" was assigned from node n1, so "file.content" becomes "n1.content"
+    assertEquals(secondNode.arguments!.content.expression, "n1.content");
+  }
+
+  await db.close();
+});
+
+Deno.test("StaticStructureBuilder - detect parameter argument (identifier via args.X) (AC8)", async () => {
+  const db = await setupTestDb();
+  const builder = new StaticStructureBuilder(db);
+
+  const code = `
+    const file = await mcp.filesystem.read_file({ path: args.filePath });
+  `;
+
+  const structure = await builder.buildStaticStructure(code);
+
+  assertExists(structure);
+
+  if (structure.nodes[0].type === "task") {
+    assertExists(structure.nodes[0].arguments);
+    assertExists(structure.nodes[0].arguments!.path);
+    assertEquals(structure.nodes[0].arguments!.path.type, "parameter");
+    assertEquals(structure.nodes[0].arguments!.path.parameterName, "filePath");
+  }
+
+  await db.close();
+});
+
+Deno.test("StaticStructureBuilder - handle mixed arguments (literal + reference + parameter) (AC8)", async () => {
+  const db = await setupTestDb();
+  const builder = new StaticStructureBuilder(db);
+
+  const code = `
+    const result = await mcp.api.request({
+      url: "https://api.example.com",
+      method: args.httpMethod,
+      body: previousResult.data
+    });
+  `;
+
+  const structure = await builder.buildStaticStructure(code);
+
+  assertExists(structure);
+
+  if (structure.nodes[0].type === "task") {
+    assertExists(structure.nodes[0].arguments);
+
+    // Literal
+    assertEquals(structure.nodes[0].arguments!.url.type, "literal");
+    assertEquals(structure.nodes[0].arguments!.url.value, "https://api.example.com");
+
+    // Parameter
+    assertEquals(structure.nodes[0].arguments!.method.type, "parameter");
+    assertEquals(structure.nodes[0].arguments!.method.parameterName, "httpMethod");
+
+    // Reference
+    assertEquals(structure.nodes[0].arguments!.body.type, "reference");
+    assertEquals(structure.nodes[0].arguments!.body.expression, "previousResult.data");
+  }
+
+  await db.close();
+});
+
+Deno.test("StaticStructureBuilder - handle empty arguments gracefully (AC8)", async () => {
+  const db = await setupTestDb();
+  const builder = new StaticStructureBuilder(db);
+
+  const code = `
+    const result = await mcp.api.ping({});
+  `;
+
+  const structure = await builder.buildStaticStructure(code);
+
+  assertExists(structure);
+  assertEquals(structure.nodes.length, 1);
+
+  // Empty arguments should not have arguments field (or empty object)
+  if (structure.nodes[0].type === "task") {
+    // Either no arguments field or empty object
+    const hasEmptyOrNoArgs = !structure.nodes[0].arguments ||
+      Object.keys(structure.nodes[0].arguments || {}).length === 0;
+    assertEquals(hasEmptyOrNoArgs, true);
+  }
+
+  await db.close();
+});
+
+Deno.test("StaticStructureBuilder - handle spread operator gracefully (skip or warn) (AC8)", async () => {
+  const db = await setupTestDb();
+  const builder = new StaticStructureBuilder(db);
+
+  // Spread operator should be skipped (not throw)
+  const code = `
+    const options = { verbose: true };
+    const result = await mcp.api.request({ url: "https://api.com", ...options });
+  `;
+
+  const structure = await builder.buildStaticStructure(code);
+
+  assertExists(structure);
+  assertEquals(structure.nodes.length, 1);
+
+  // Should have extracted the literal url, but skipped the spread
+  if (structure.nodes[0].type === "task") {
+    assertExists(structure.nodes[0].arguments);
+    assertEquals(structure.nodes[0].arguments!.url.type, "literal");
+    assertEquals(structure.nodes[0].arguments!.url.value, "https://api.com");
+    // Spread should not appear as a key
+    assertEquals(structure.nodes[0].arguments!["...options"], undefined);
+  }
+
+  await db.close();
 });

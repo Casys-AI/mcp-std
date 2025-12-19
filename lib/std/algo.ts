@@ -3,7 +3,7 @@
  *
  * Uses mnemonist for advanced data structures.
  *
- * @module lib/primitives/algo
+ * @module lib/std/algo
  */
 
 import {

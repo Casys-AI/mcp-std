@@ -3,7 +3,7 @@
  *
  * Uses zod for schema validation and validator for format checks.
  *
- * @module lib/primitives/validation
+ * @module lib/std/validation
  */
 
 import { z } from "zod";

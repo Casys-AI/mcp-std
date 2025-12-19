@@ -10,7 +10,7 @@
 import * as log from "@std/log";
 import type { DagScoringConfig } from "../dag-scoring-config.ts";
 import type { DAGStructure, PredictedNode } from "../types.ts";
-import type { Capability } from "../../capabilities/types.ts";
+import type { ArgumentsStructure, Capability, StaticStructure, StaticStructureNode } from "../../capabilities/types.ts";
 import type { CapabilityStore } from "../../capabilities/capability-store.ts";
 import type { AlgorithmTracer } from "../../telemetry/algorithm-tracer.ts";
 import type { GraphRAGEngine } from "../graph-engine.ts";
@@ -135,10 +135,70 @@ export function adjustConfidenceFromEpisodes(
 }
 
 /**
+ * Extract literal arguments from static_structure for speculative execution (Story 10.2)
+ *
+ * Iterates through task nodes in the static structure and extracts only
+ * literal arguments that can be used immediately for speculative execution.
+ * References and parameters are logged but not included (require runtime resolution).
+ *
+ * @param staticStructure - Static structure from capability analysis
+ * @returns Record of tool arguments, keyed by tool ID, containing only literal values
+ */
+export function extractArgumentsFromStaticStructure(
+  staticStructure: StaticStructure | null,
+): Record<string, Record<string, unknown>> {
+  if (!staticStructure || !staticStructure.nodes) {
+    return {};
+  }
+
+  const result: Record<string, Record<string, unknown>> = {};
+
+  for (const node of staticStructure.nodes) {
+    // Only task nodes have arguments
+    if (node.type !== "task") {
+      continue;
+    }
+
+    const taskNode = node as StaticStructureNode & { type: "task" };
+    if (!taskNode.arguments) {
+      continue;
+    }
+
+    const toolArgs: Record<string, unknown> = {};
+    let hasLiterals = false;
+
+    for (const [argName, argValue] of Object.entries(taskNode.arguments as ArgumentsStructure)) {
+      // Only include literal values that can be used immediately
+      if (argValue.type === "literal") {
+        toolArgs[argName] = argValue.value;
+        hasLiterals = true;
+      }
+      // Log references and parameters for debugging (future: runtime resolution)
+      else if (argValue.type === "reference") {
+        log.debug(`[extractArguments] Reference argument ${argName} for ${taskNode.tool}: ${argValue.expression} (needs runtime resolution)`);
+      }
+      else if (argValue.type === "parameter") {
+        log.debug(`[extractArguments] Parameter argument ${argName} for ${taskNode.tool}: ${argValue.parameterName} (needs intent extraction)`);
+      }
+    }
+
+    // Only add to result if we have some literal arguments
+    if (hasLiterals) {
+      result[taskNode.tool] = toolArgs;
+    }
+  }
+
+  return result;
+}
+
+/**
  * Predict capabilities based on context tools (Story 7.4 AC#6)
  *
  * Uses CapabilityStore.searchByContext() to find capabilities
  * whose tools_used overlap with the current context.
+ *
+ * Story 10.2: Now populates PredictedNode.arguments from static_structure
+ * when capability source is used.
  *
  * @param contextTools - Tools currently executed in workflow
  * @param seenTools - Tools already in predictions (for deduplication)
@@ -217,6 +277,27 @@ export async function predictCapabilities(
 
       if (!adjusted) continue; // Excluded due to high failure rate
 
+      // Story 10.2: Extract arguments from static_structure for speculative execution
+      let predictedArguments: Record<string, unknown> | undefined;
+      try {
+        const staticStructure = await deps.capabilityStore.getStaticStructure(capability.id);
+        if (staticStructure) {
+          const toolArguments = extractArgumentsFromStaticStructure(staticStructure);
+          // Flatten all tool arguments into a single object for the capability
+          // (first tool's literals are most relevant for capability invocation)
+          const allArgs: Record<string, unknown> = {};
+          for (const toolArgs of Object.values(toolArguments)) {
+            Object.assign(allArgs, toolArgs);
+          }
+          if (Object.keys(allArgs).length > 0) {
+            predictedArguments = allArgs;
+            log.debug(`[predictCapabilities] Extracted ${Object.keys(allArgs).length} literal arguments for capability ${capability.id}`);
+          }
+        }
+      } catch (error) {
+        log.debug(`[predictCapabilities] Failed to extract arguments for ${capability.id}: ${error}`);
+      }
+
       predictions.push({
         toolId: capabilityToolId,
         confidence: adjusted.confidence,
@@ -225,6 +306,8 @@ export async function predictCapabilities(
         }, α=${alphaResult.alpha.toFixed(2)})`,
         source: "capability",
         capabilityId: capability.id,
+        // Story 10.2: Include extracted arguments for speculative execution
+        ...(predictedArguments ? { arguments: predictedArguments } : {}),
       });
 
       // Log trace for capability prediction (fire-and-forget)
