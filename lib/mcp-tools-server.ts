@@ -129,21 +129,17 @@ class MCPServer {
 // Stdio Transport
 // ============================================================================
 
+// Persistent buffer for stdin parsing (fixes message loss when multiple requests arrive together)
+const decoder = new TextDecoder();
+let stdinBuffer = "";
+
 async function readMessage(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<JsonRpcRequest | null> {
-  const decoder = new TextDecoder();
-  let buffer = "";
-
   while (true) {
-    const { value, done } = await reader.read();
-    if (done) return null;
-
-    buffer += decoder.decode(value, { stream: true });
-
-    // Look for complete JSON-RPC messages (newline-delimited)
-    const newlineIndex = buffer.indexOf("\n");
+    // First check if we already have a complete message in the buffer
+    const newlineIndex = stdinBuffer.indexOf("\n");
     if (newlineIndex !== -1) {
-      const line = buffer.slice(0, newlineIndex).trim();
-      buffer = buffer.slice(newlineIndex + 1);
+      const line = stdinBuffer.slice(0, newlineIndex).trim();
+      stdinBuffer = stdinBuffer.slice(newlineIndex + 1);
 
       if (line) {
         try {
@@ -152,7 +148,14 @@ async function readMessage(reader: ReadableStreamDefaultReader<Uint8Array>): Pro
           console.error("Failed to parse JSON-RPC message:", line);
         }
       }
+      continue; // Check for more messages in buffer
     }
+
+    // No complete message in buffer, read more data
+    const { value, done } = await reader.read();
+    if (done) return null;
+
+    stdinBuffer += decoder.decode(value, { stream: true });
   }
 }
 

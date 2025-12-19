@@ -10,6 +10,7 @@
  */
 
 import * as yaml from "npm:yaml@2.3.4";
+import * as toml from "jsr:@std/toml@1.0.1";
 import type { MiniTool } from "./types.ts";
 
 export const formatTools: MiniTool[] = [
@@ -622,6 +623,394 @@ export const formatTools: MiniTool[] = [
           }
           return countryCode + " " + nationalNumber;
       }
+    },
+  },
+  // TOML conversion tools - inspired by IT-Tools MCP
+  {
+    name: "format_toml_to_json",
+    description: "Convert TOML to JSON",
+    category: "format",
+    inputSchema: {
+      type: "object",
+      properties: {
+        toml: { type: "string", description: "TOML string to convert" },
+        pretty: { type: "boolean", description: "Pretty print JSON (default: true)" },
+      },
+      required: ["toml"],
+    },
+    handler: ({ toml: tomlStr, pretty = true }) => {
+      const parsed = toml.parse(tomlStr as string);
+      return pretty ? JSON.stringify(parsed, null, 2) : JSON.stringify(parsed);
+    },
+  },
+  {
+    name: "format_json_to_toml",
+    description: "Convert JSON to TOML",
+    category: "format",
+    inputSchema: {
+      type: "object",
+      properties: {
+        json: { type: "string", description: "JSON string to convert" },
+      },
+      required: ["json"],
+    },
+    handler: ({ json }) => {
+      const parsed = JSON.parse(json as string);
+      return toml.stringify(parsed);
+    },
+  },
+  {
+    name: "format_xml_escape",
+    description: "Escape or unescape XML entities",
+    category: "format",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "Text to escape/unescape" },
+        action: {
+          type: "string",
+          enum: ["escape", "unescape"],
+          description: "Action (default: escape)",
+        },
+      },
+      required: ["text"],
+    },
+    handler: ({ text, action = "escape" }) => {
+      const xmlEntities: Record<string, string> = {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&apos;",
+      };
+
+      if (action === "escape") {
+        return (text as string).replace(/[&<>"']/g, (c) => xmlEntities[c] || c);
+      }
+
+      // Unescape
+      const reverseEntities: Record<string, string> = {};
+      for (const [char, entity] of Object.entries(xmlEntities)) {
+        reverseEntities[entity] = char;
+      }
+      return (text as string).replace(
+        /&(?:amp|lt|gt|quot|apos);/g,
+        (entity) => reverseEntities[entity] || entity,
+      );
+    },
+  },
+  {
+    name: "format_properties",
+    description: "Parse or stringify Java-style .properties format",
+    category: "format",
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: { type: "string", description: "Properties string or JSON object string" },
+        action: {
+          type: "string",
+          enum: ["parse", "stringify"],
+          description: "Action: parse properties to JSON, or stringify JSON to properties",
+        },
+      },
+      required: ["input", "action"],
+    },
+    handler: ({ input, action }) => {
+      if (action === "parse") {
+        const result: Record<string, string> = {};
+        const lines = (input as string).split(/\r?\n/);
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("!")) {
+            continue;
+          }
+
+          const separatorIndex = trimmed.search(/[=:]/);
+          if (separatorIndex === -1) continue;
+
+          const key = trimmed.slice(0, separatorIndex).trim();
+          const value = trimmed.slice(separatorIndex + 1).trim();
+          result[key] = value;
+        }
+
+        return result;
+      }
+
+      // Stringify
+      const obj = JSON.parse(input as string) as Record<string, unknown>;
+      const lines: string[] = [];
+
+      for (const [key, value] of Object.entries(obj)) {
+        lines.push(`${key}=${String(value)}`);
+      }
+
+      return lines.join("\n");
+    },
+  },
+  // Code formatters - inspired by IT-Tools MCP
+  {
+    name: "format_html",
+    description: "Format or minify HTML code",
+    category: "format",
+    inputSchema: {
+      type: "object",
+      properties: {
+        html: { type: "string", description: "HTML code to format" },
+        mode: {
+          type: "string",
+          enum: ["beautify", "minify"],
+          description: "Format mode (default: beautify)",
+        },
+        indent: { type: "number", description: "Indentation spaces (default: 2)" },
+      },
+      required: ["html"],
+    },
+    handler: ({ html, mode = "beautify", indent = 2 }) => {
+      const input = html as string;
+      const indentStr = " ".repeat(indent as number);
+
+      if (mode === "minify") {
+        return input
+          .replace(/<!--[\s\S]*?-->/g, "") // Remove comments
+          .replace(/>\s+</g, "><") // Remove whitespace between tags
+          .replace(/\s+/g, " ") // Collapse whitespace
+          .trim();
+      }
+
+      // Beautify HTML
+      let result = "";
+      let level = 0;
+      const selfClosing = /^(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/i;
+
+      // Simple tokenization
+      const tokens: string[] = [];
+      let current = "";
+
+      for (const char of input) {
+        if (char === "<") {
+          if (current.trim()) tokens.push(current.trim());
+          current = "<";
+        } else if (char === ">") {
+          current += ">";
+          tokens.push(current);
+          current = "";
+        } else {
+          current += char;
+        }
+      }
+      if (current.trim()) tokens.push(current.trim());
+
+      for (const token of tokens) {
+        if (token.startsWith("</")) {
+          // Closing tag
+          level = Math.max(0, level - 1);
+          result += indentStr.repeat(level) + token + "\n";
+        } else if (token.startsWith("<")) {
+          // Opening tag
+          const tagMatch = token.match(/^<(\w+)/);
+          const tagName = tagMatch ? tagMatch[1] : "";
+          const isSelfClose = token.endsWith("/>") || selfClosing.test(tagName);
+
+          result += indentStr.repeat(level) + token + "\n";
+
+          if (!isSelfClose && !token.startsWith("<!") && !token.startsWith("<?")) {
+            level++;
+          }
+        } else {
+          // Text content
+          result += indentStr.repeat(level) + token + "\n";
+        }
+      }
+
+      return result.trim();
+    },
+  },
+  {
+    name: "format_javascript",
+    description: "Format or minify JavaScript code (basic)",
+    category: "format",
+    inputSchema: {
+      type: "object",
+      properties: {
+        code: { type: "string", description: "JavaScript code to format" },
+        mode: {
+          type: "string",
+          enum: ["beautify", "minify"],
+          description: "Format mode (default: beautify)",
+        },
+        indent: { type: "number", description: "Indentation spaces (default: 2)" },
+      },
+      required: ["code"],
+    },
+    handler: ({ code, mode = "beautify", indent = 2 }) => {
+      const input = code as string;
+      const indentStr = " ".repeat(indent as number);
+
+      if (mode === "minify") {
+        return input
+          .replace(/\/\/[^\n]*/g, "") // Remove single-line comments
+          .replace(/\/\*[\s\S]*?\*\//g, "") // Remove multi-line comments
+          .replace(/\s+/g, " ") // Collapse whitespace
+          .replace(/\s*([{}()[\];,:])\s*/g, "$1") // Remove space around punctuation
+          .replace(/;\s*}/g, "}") // Remove trailing semicolons before }
+          .trim();
+      }
+
+      // Beautify - simple approach
+      let result = "";
+      let level = 0;
+      let inString = false;
+      let stringChar = "";
+      let newLine = true;
+
+      for (let i = 0; i < input.length; i++) {
+        const char = input[i];
+        const prev = input[i - 1] || "";
+
+        // Handle strings
+        if ((char === '"' || char === "'" || char === "`") && prev !== "\\") {
+          if (!inString) {
+            inString = true;
+            stringChar = char;
+          } else if (char === stringChar) {
+            inString = false;
+          }
+          result += char;
+          continue;
+        }
+
+        if (inString) {
+          result += char;
+          continue;
+        }
+
+        // Handle braces and indentation
+        if (char === "{" || char === "[" || char === "(") {
+          result += char + "\n";
+          level++;
+          newLine = true;
+        } else if (char === "}" || char === "]" || char === ")") {
+          level = Math.max(0, level - 1);
+          result += "\n" + indentStr.repeat(level) + char;
+          newLine = false;
+        } else if (char === ";") {
+          result += ";\n";
+          newLine = true;
+        } else if (char === ",") {
+          result += ",\n";
+          newLine = true;
+        } else if (char === "\n" || char === "\r") {
+          // Skip existing newlines
+        } else if (/\s/.test(char)) {
+          if (!newLine && result[result.length - 1] !== " ") {
+            result += " ";
+          }
+        } else {
+          if (newLine) {
+            result += indentStr.repeat(level);
+            newLine = false;
+          }
+          result += char;
+        }
+      }
+
+      return result.replace(/\n\s*\n/g, "\n").trim();
+    },
+  },
+  {
+    name: "format_xml",
+    description: "Format or minify XML code",
+    category: "format",
+    inputSchema: {
+      type: "object",
+      properties: {
+        xml: { type: "string", description: "XML code to format" },
+        mode: {
+          type: "string",
+          enum: ["beautify", "minify"],
+          description: "Format mode (default: beautify)",
+        },
+        indent: { type: "number", description: "Indentation spaces (default: 2)" },
+      },
+      required: ["xml"],
+    },
+    handler: ({ xml, mode = "beautify", indent = 2 }) => {
+      const input = xml as string;
+      const indentStr = " ".repeat(indent as number);
+
+      if (mode === "minify") {
+        return input
+          .replace(/<!--[\s\S]*?-->/g, "") // Remove comments
+          .replace(/>\s+</g, "><") // Remove whitespace between tags
+          .replace(/\s+/g, " ") // Collapse whitespace
+          .trim();
+      }
+
+      // Beautify XML
+      let result = "";
+      let level = 0;
+
+      // Split by tags
+      const parts = input.replace(/>\s*</g, ">\n<").split("\n");
+
+      for (const part of parts) {
+        const trimmed = part.trim();
+        if (!trimmed) continue;
+
+        if (trimmed.startsWith("</")) {
+          // Closing tag
+          level = Math.max(0, level - 1);
+          result += indentStr.repeat(level) + trimmed + "\n";
+        } else if (trimmed.startsWith("<?") || trimmed.startsWith("<!")) {
+          // Declaration or comment
+          result += indentStr.repeat(level) + trimmed + "\n";
+        } else if (trimmed.endsWith("/>")) {
+          // Self-closing tag
+          result += indentStr.repeat(level) + trimmed + "\n";
+        } else if (trimmed.startsWith("<") && trimmed.includes("</")) {
+          // Tag with content on same line
+          result += indentStr.repeat(level) + trimmed + "\n";
+        } else if (trimmed.startsWith("<")) {
+          // Opening tag
+          result += indentStr.repeat(level) + trimmed + "\n";
+          level++;
+        } else {
+          // Text content
+          result += indentStr.repeat(level) + trimmed + "\n";
+        }
+      }
+
+      return result.trim();
+    },
+  },
+  {
+    name: "format_yaml",
+    description: "Format or validate YAML",
+    category: "format",
+    inputSchema: {
+      type: "object",
+      properties: {
+        yamlInput: { type: "string", description: "YAML string to format" },
+        indent: { type: "number", description: "Indentation spaces (default: 2)" },
+        validate: { type: "boolean", description: "Only validate, don't format (default: false)" },
+      },
+      required: ["yamlInput"],
+    },
+    handler: ({ yamlInput, indent = 2, validate = false }) => {
+      // Parse and re-stringify to format
+      const parsed = yaml.parse(yamlInput as string);
+
+      if (validate) {
+        return {
+          valid: true,
+          message: "YAML is valid",
+          structure: typeof parsed,
+          topLevelKeys: parsed && typeof parsed === "object" ? Object.keys(parsed) : null,
+        };
+      }
+
+      return yaml.stringify(parsed, { indent: indent as number });
     },
   },
 ];

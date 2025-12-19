@@ -4,6 +4,16 @@
  * Handles human approval checkpoints during workflow execution.
  * Provides summary generation and approval processing.
  *
+ * ⚠️ STATUS: NON UTILISÉ (2025-12-19)
+ *
+ * Ce module n'est pas activé en production. Le mécanisme de validation
+ * humaine est maintenant géré par `per_layer_validation` via:
+ * - `requiresValidation()` dans workflow-execution-handler.ts
+ * - Détection automatique des tools dangereux (mcp-permissions.yaml)
+ *
+ * Le code est conservé pour référence future si on veut réactiver
+ * un flow HIL interactif plus granulaire.
+ *
  * @module dag/loops/hil-handler
  */
 
@@ -14,24 +24,30 @@ import type { WorkflowState } from "../state.ts";
 /**
  * Check if HIL approval checkpoint should be triggered (Story 2.5-3)
  *
+ * NOTE: This function is part of the legacy HIL mechanism.
+ * Server-side validation is now handled by requiresValidation() in workflow-execution-handler.
+ * Per-layer validation triggers when approvalMode: "hil" or unknown tools are in DAG.
+ *
  * @param config - Executor configuration
- * @param _layerIdx - Current layer index (unused, reserved for future)
- * @param layer - Tasks in current layer
+ * @param _layerIdx - Current layer index (unused)
+ * @param _layer - Tasks in current layer (unused)
  * @returns true if approval required
  */
 export function shouldRequireApproval(
   config: ExecutorConfig,
   _layerIdx: number,
-  layer: { sideEffects?: boolean }[],
+  _layer: unknown[],
 ): boolean {
   if (!config.hil?.enabled) return false;
 
   const mode = config.hil.approval_required;
   if (mode === "always") return true;
   if (mode === "never") return false;
+  // "critical_only" was based on deprecated sideEffects field
+  // Now handled by requiresValidation() server-side using mcp-permissions.yaml
+  // Returning false until Phase 4 per-task HIL is implemented
   if (mode === "critical_only") {
-    // Check if any task in layer has sideEffects flag
-    return layer.some((task) => task.sideEffects === true);
+    return false;
   }
 
   return false;

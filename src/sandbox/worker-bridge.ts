@@ -54,7 +54,26 @@ export interface WorkerBridgeConfig {
   capabilityStore?: CapabilityStore;
   /** Optional GraphRAGEngine for trace learning (Story 7.3b - AC#5) */
   graphRAG?: GraphRAGEngine;
+  // Note: permissionSet removed - Worker always uses "none" permissions.
+  // All I/O goes through MCP RPC for complete tracing. See WORKER_PERMISSIONS.
 }
+
+/**
+ * Deno Worker permissions are always "none" (most restrictive).
+ *
+ * DESIGN DECISION (2025-12-19):
+ * All I/O operations MUST go through MCP RPC proxy. This ensures:
+ * 1. Complete tracing of all operations (100% observable)
+ * 2. Centralized permission control in main process
+ * 3. No bypass possible via direct Deno APIs
+ *
+ * PermissionSet in mcp-permissions.yaml is used for METADATA only
+ * (inference, audit, HIL detection), not for Worker sandbox permissions.
+ *
+ * @see docs/spikes/2025-12-19-capability-vs-trace-clarification.md
+ * @see docs/tech-specs/tech-spec-hil-permission-escalation-fix.md
+ */
+const WORKER_PERMISSIONS = "none" as const;
 
 /**
  * Default configuration values
@@ -203,14 +222,15 @@ export class WorkerBridge {
         codeLength: code.length,
         toolCount: toolDefinitions.length,
         contextKeys: context ? Object.keys(context) : [],
+        workerPermissions: WORKER_PERMISSIONS, // Always "none" - all I/O via RPC
       });
 
-      // 1. Spawn Worker with no permissions (sandboxed)
+      // 1. Spawn Worker with "none" permissions - all I/O goes through MCP RPC
       const workerUrl = new URL("./sandbox-worker.ts", import.meta.url).href;
       this.worker = new Worker(workerUrl, {
         type: "module",
         // @ts-ignore: Deno-specific Worker option for permissions
-        deno: { permissions: "none" },
+        deno: { permissions: WORKER_PERMISSIONS },
       });
 
       // 2. Setup message handler

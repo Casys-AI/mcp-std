@@ -66,10 +66,9 @@ export interface Task {
     permissionSet?: PermissionSet;
   };
 
-  /**
-   * Flag for side-effects (Story 2.5-3 HIL approval)
-   */
-  sideEffects?: boolean;
+  // NOTE: sideEffects field removed - now inferred from mcp-permissions.yaml
+  // See requiresValidation() in workflow-execution-handler.ts
+  // See isSafeToFail() in task-router.ts
 
   /**
    * Static arguments structure from code analysis (Story 10.5)

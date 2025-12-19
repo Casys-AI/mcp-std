@@ -232,4 +232,135 @@ export const jsonTools: MiniTool[] = [
       return result;
     },
   },
+  {
+    name: "json_compare",
+    description: "Compare two JSON objects and show differences",
+    category: "json",
+    inputSchema: {
+      type: "object",
+      properties: {
+        obj1: { description: "First object to compare" },
+        obj2: { description: "Second object to compare" },
+        ignoreOrder: { type: "boolean", description: "Ignore array order (default: false)" },
+      },
+      required: ["obj1", "obj2"],
+    },
+    handler: ({ obj1, obj2, ignoreOrder = false }) => {
+      type Diff = {
+        path: string;
+        type: "added" | "removed" | "changed" | "type_changed";
+        oldValue?: unknown;
+        newValue?: unknown;
+      };
+
+      const diffs: Diff[] = [];
+
+      const compare = (a: unknown, b: unknown, path: string) => {
+        // Same reference or both null/undefined
+        if (a === b) return;
+
+        // Type mismatch
+        const typeA = Array.isArray(a) ? "array" : typeof a;
+        const typeB = Array.isArray(b) ? "array" : typeof b;
+
+        if (typeA !== typeB) {
+          diffs.push({ path, type: "type_changed", oldValue: a, newValue: b });
+          return;
+        }
+
+        // Arrays
+        if (Array.isArray(a) && Array.isArray(b)) {
+          if (ignoreOrder) {
+            // Compare as sets (simplified)
+            const setA = new Set(a.map((x) => JSON.stringify(x)));
+            const setB = new Set(b.map((x) => JSON.stringify(x)));
+
+            for (const item of a) {
+              const key = JSON.stringify(item);
+              if (!setB.has(key)) {
+                diffs.push({ path: `${path}[]`, type: "removed", oldValue: item });
+              }
+            }
+            for (const item of b) {
+              const key = JSON.stringify(item);
+              if (!setA.has(key)) {
+                diffs.push({ path: `${path}[]`, type: "added", newValue: item });
+              }
+            }
+          } else {
+            const maxLen = Math.max(a.length, b.length);
+            for (let i = 0; i < maxLen; i++) {
+              if (i >= a.length) {
+                diffs.push({ path: `${path}[${i}]`, type: "added", newValue: b[i] });
+              } else if (i >= b.length) {
+                diffs.push({ path: `${path}[${i}]`, type: "removed", oldValue: a[i] });
+              } else {
+                compare(a[i], b[i], `${path}[${i}]`);
+              }
+            }
+          }
+          return;
+        }
+
+        // Objects
+        if (typeA === "object" && a !== null && b !== null) {
+          const keysA = new Set(Object.keys(a as object));
+          const keysB = new Set(Object.keys(b as object));
+
+          // Keys in A but not in B (removed)
+          for (const key of keysA) {
+            if (!keysB.has(key)) {
+              diffs.push({
+                path: path ? `${path}.${key}` : key,
+                type: "removed",
+                oldValue: (a as Record<string, unknown>)[key],
+              });
+            }
+          }
+
+          // Keys in B but not in A (added)
+          for (const key of keysB) {
+            if (!keysA.has(key)) {
+              diffs.push({
+                path: path ? `${path}.${key}` : key,
+                type: "added",
+                newValue: (b as Record<string, unknown>)[key],
+              });
+            }
+          }
+
+          // Keys in both - compare values
+          for (const key of keysA) {
+            if (keysB.has(key)) {
+              compare(
+                (a as Record<string, unknown>)[key],
+                (b as Record<string, unknown>)[key],
+                path ? `${path}.${key}` : key
+              );
+            }
+          }
+          return;
+        }
+
+        // Primitives
+        if (a !== b) {
+          diffs.push({ path, type: "changed", oldValue: a, newValue: b });
+        }
+      };
+
+      compare(obj1, obj2, "");
+
+      return {
+        equal: diffs.length === 0,
+        diffCount: diffs.length,
+        diffs,
+        summary: {
+          added: diffs.filter((d) => d.type === "added").length,
+          removed: diffs.filter((d) => d.type === "removed").length,
+          changed: diffs.filter((d) => d.type === "changed").length,
+          typeChanged: diffs.filter((d) => d.type === "type_changed").length,
+        },
+      };
+    },
+  },
 ];

@@ -26,6 +26,7 @@ export { algoTools } from "./algo.ts";
 export { colorTools } from "./color.ts";
 export { networkTools } from "./network.ts";
 export { utilTools } from "./util.ts";
+export { systemTools } from "./system.ts";
 
 // Re-export types
 export type { MiniTool, MiniToolHandler, MiniToolResult } from "./types.ts";
@@ -49,6 +50,7 @@ import { algoTools } from "./algo.ts";
 import { colorTools } from "./color.ts";
 import { networkTools } from "./network.ts";
 import { utilTools } from "./util.ts";
+import { systemTools } from "./system.ts";
 import type { MiniTool, MiniToolResult } from "./types.ts";
 
 /**
@@ -73,6 +75,7 @@ export const allTools: MiniTool[] = [
   ...colorTools,
   ...networkTools,
   ...utilTools,
+  ...systemTools,
 ];
 
 /**
@@ -97,6 +100,7 @@ export const toolsByCategory: Record<string, MiniTool[]> = {
   color: colorTools,
   network: networkTools,
   util: utilTools,
+  system: systemTools,
 };
 
 /**

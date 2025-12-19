@@ -31,11 +31,14 @@ import {
   isValidForDagConversion,
   resolveArguments,
   type ConditionalDAGStructure,
+  createToolExecutorViaWorker,
+  cleanupWorkerBridgeExecutor,
 } from "../../dag/mod.ts";
 import { ControlledExecutor } from "../../dag/controlled-executor.ts";
 import type { Task } from "../../graphrag/types.ts";
-import type { TaskResult, ToolExecutor } from "../../dag/types.ts";
+import type { TaskResult } from "../../dag/types.ts";
 import type { PGliteClient } from "../../db/client.ts";
+import type { ToolDefinition } from "../../sandbox/types.ts";
 
 /**
  * Dependencies required for code execution handler
@@ -188,91 +191,105 @@ async function tryDagExecution(
       tools: dag.tasks.map((t) => t.tool),
     });
 
-    // Step 3: Create tool executor for DAG
-    const toolExecutor = createMcpToolExecutor(deps.mcpClients);
+    // Step 3: Build tool definitions for WorkerBridge context (AC10)
+    const toolDefs = await buildToolDefinitionsFromDAG(dag, deps);
 
-    // Step 4: Execute via ControlledExecutor (AC2)
-    const executor = new ControlledExecutor(toolExecutor, {
-      maxConcurrency: 5,
-      taskTimeout: request.sandbox_config?.timeout ?? 30000,
+    // Step 4: Create WorkerBridge-based executor for 100% traceability (AC10)
+    const [toolExecutor, executorContext] = createToolExecutorViaWorker({
+      mcpClients: deps.mcpClients,
+      toolDefinitions: toolDefs,
+      capabilityStore: deps.capabilityStore,
+      graphRAG: deps.graphEngine,
     });
 
-    // Set up checkpoints if DB available
-    if (deps.db) {
-      executor.setCheckpointManager(deps.db, true);
-    }
+    try {
+      // Step 5: Execute via ControlledExecutor (AC2)
+      const executor = new ControlledExecutor(toolExecutor, {
+        maxConcurrency: 5,
+        taskTimeout: request.sandbox_config?.timeout ?? 30000,
+      });
 
-    // Set up learning dependencies
-    if (deps.capabilityStore || deps.graphEngine) {
-      executor.setLearningDependencies(deps.capabilityStore, deps.graphEngine);
-    }
+      // Set up checkpoints if DB available
+      if (deps.db) {
+        executor.setCheckpointManager(deps.db, true);
+      }
 
-    const startTime = performance.now();
+      // Set up learning dependencies
+      if (deps.capabilityStore || deps.graphEngine) {
+        executor.setLearningDependencies(deps.capabilityStore, deps.graphEngine);
+      }
 
-    // Resolve arguments before execution (AC3)
-    const executionContext = {
-      parameters: request.context || {},
-    };
-    const dagWithResolvedArgs = resolveDAGArguments(dag, executionContext);
+      const startTime = performance.now();
 
-    // Execute the DAG
-    const executionResult = await executor.execute(dagWithResolvedArgs);
-    const executionTimeMs = performance.now() - startTime;
+      // Resolve arguments before execution (AC3)
+      const executionContext = {
+        parameters: request.context || {},
+      };
+      const dagWithResolvedArgs = resolveDAGArguments(dag, executionContext);
 
-    // Calculate output size
-    const resultData = executionResult.results
-      .filter((r) => r.status === "success")
-      .map((r) => r.output);
-    const outputSizeBytes = new TextEncoder().encode(
-      JSON.stringify(resultData),
-    ).length;
+      // Execute the DAG
+      const executionResult = await executor.execute(dagWithResolvedArgs);
+      const executionTimeMs = performance.now() - startTime;
 
-    // Build DAG metadata (AC8)
-    const dagMetadata: DAGExecutionMetadata = {
-      mode: "dag",
-      tasksCount: dag.tasks.length,
-      layersCount: executionResult.parallelizationLayers,
-      speedup: executor.calculateSpeedup(executionResult),
-      toolsDiscovered: dag.tasks.map((t) => t.tool),
-    };
+      // Calculate output size
+      const resultData = executionResult.results
+        .filter((r) => r.status === "success")
+        .map((r) => r.output);
+      const outputSizeBytes = new TextEncoder().encode(
+        JSON.stringify(resultData),
+      ).length;
 
-    // Build response
-    const response: CodeExecutionResponse & { dag?: DAGExecutionMetadata } = {
-      result: resultData.length === 1 ? (resultData[0] as import("../../capabilities/types.ts").JsonValue) : (resultData as import("../../capabilities/types.ts").JsonValue),
-      logs: [],
-      metrics: {
-        executionTimeMs,
-        inputSizeBytes: codeSizeBytes,
-        outputSizeBytes,
-      },
-      state: request.context,
-      dag: dagMetadata,
-    };
+      // Build DAG metadata (AC8)
+      const dagMetadata: DAGExecutionMetadata = {
+        mode: "dag",
+        tasksCount: dag.tasks.length,
+        layersCount: executionResult.parallelizationLayers,
+        speedup: executor.calculateSpeedup(executionResult),
+        toolsDiscovered: dag.tasks.map((t) => t.tool),
+      };
 
-    // Add any errors as tool_failures
-    const failures = executionResult.errors.map((e) => ({
-      tool: e.taskId,
-      error: e.error,
-    }));
-    if (failures.length > 0) {
-      response.tool_failures = failures;
-    }
-
-    log.info("[Story 10.5] DAG execution completed", {
-      successfulTasks: executionResult.successfulTasks,
-      failedTasks: executionResult.failedTasks,
-      executionTimeMs: executionTimeMs.toFixed(2),
-      speedup: dagMetadata.speedup?.toFixed(2),
-    });
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(response, null, 2),
+      // Build response
+      const response: CodeExecutionResponse & { dag?: DAGExecutionMetadata } = {
+        result: resultData.length === 1 ? (resultData[0] as import("../../capabilities/types.ts").JsonValue) : (resultData as import("../../capabilities/types.ts").JsonValue),
+        logs: [],
+        metrics: {
+          executionTimeMs,
+          inputSizeBytes: codeSizeBytes,
+          outputSizeBytes,
         },
-      ],
-    };
+        state: request.context,
+        dag: dagMetadata,
+      };
+
+      // Add any errors as tool_failures
+      const failures = executionResult.errors.map((e) => ({
+        tool: e.taskId,
+        error: e.error,
+      }));
+      if (failures.length > 0) {
+        response.tool_failures = failures;
+      }
+
+      log.info("[Story 10.5] DAG execution completed via WorkerBridge", {
+        successfulTasks: executionResult.successfulTasks,
+        failedTasks: executionResult.failedTasks,
+        executionTimeMs: executionTimeMs.toFixed(2),
+        speedup: dagMetadata.speedup?.toFixed(2),
+        tracesCount: executorContext.traces.length,
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(response, null, 2),
+          },
+        ],
+      };
+    } finally {
+      // Cleanup WorkerBridge resources
+      cleanupWorkerBridgeExecutor(executorContext);
+    }
   } catch (error) {
     // Log but don't fail - fall back to sandbox
     log.warn(`[Story 10.5] DAG execution failed, falling back to sandbox: ${error}`);
@@ -283,7 +300,22 @@ async function tryDagExecution(
 /**
  * Resolve arguments in DAG tasks before execution (Story 10.5 AC3)
  *
- * For each task with staticArguments, resolve them to actual values.
+ * For each task with staticArguments, resolve them to actual values using
+ * the provided context parameters. Explicit arguments in task.arguments
+ * take precedence over resolved staticArguments.
+ *
+ * @param dag - DAG structure with ConditionalTask[] containing staticArguments
+ * @param context - Execution context with parameters to resolve references
+ * @returns DAGStructure with resolved arguments ready for execution
+ *
+ * @example
+ * ```typescript
+ * const resolved = resolveDAGArguments(dag, {
+ *   parameters: { userId: "123", fileName: "test.txt" }
+ * });
+ * // Task with staticArguments: { path: { type: "parameter", ref: "fileName" } }
+ * // becomes: { path: "test.txt" }
+ * ```
  */
 function resolveDAGArguments(
   dag: ConditionalDAGStructure,
@@ -312,40 +344,57 @@ function resolveDAGArguments(
 }
 
 /**
- * Create a tool executor that calls MCP servers
+ * Build tool definitions from DAG tasks for WorkerBridge context
+ *
+ * Story 10.5 AC10: Extract tool definitions for RPC tracing.
+ *
+ * @param dag - DAG structure with tasks
+ * @param deps - Handler dependencies with MCP clients
+ * @returns Array of tool definitions for WorkerBridge
  */
-function createMcpToolExecutor(
-  mcpClients: Map<string, MCPClientBase>,
-): ToolExecutor {
-  return async (tool: string, args: Record<string, unknown>): Promise<unknown> => {
-    // Parse tool ID: "server:toolName" or just "toolName"
-    const [serverId, toolName] = tool.includes(":")
-      ? tool.split(":", 2)
-      : [null, tool];
+async function buildToolDefinitionsFromDAG(
+  dag: import("../../dag/mod.ts").ConditionalDAGStructure,
+  deps: CodeExecutionDependencies,
+): Promise<ToolDefinition[]> {
+  const toolDefs: ToolDefinition[] = [];
+  const seenTools = new Set<string>();
 
-    if (serverId) {
-      // Direct server call
-      const client = mcpClients.get(serverId);
-      if (!client) {
-        throw new Error(`MCP server not found: ${serverId}`);
+  for (const task of dag.tasks) {
+    if (!task.tool || seenTools.has(task.tool)) continue;
+    seenTools.add(task.tool);
+
+    const colonIndex = task.tool.indexOf(":");
+    if (colonIndex === -1) continue;
+
+    const serverId = task.tool.substring(0, colonIndex);
+    const toolName = task.tool.substring(colonIndex + 1);
+
+    const client = deps.mcpClients.get(serverId);
+    if (!client) continue;
+
+    try {
+      const tools = await client.listTools();
+      const toolSchema = tools.find((t) => t.name === toolName);
+      if (toolSchema) {
+        toolDefs.push({
+          server: serverId,
+          name: toolName,
+          description: toolSchema.description ?? "",
+          inputSchema: toolSchema.inputSchema as Record<string, unknown>,
+        });
       }
-      return await client.callTool(toolName, args);
+    } catch {
+      // Server doesn't have schema, add minimal definition
+      toolDefs.push({
+        server: serverId,
+        name: toolName,
+        description: "",
+        inputSchema: {},
+      });
     }
+  }
 
-    // Search for tool in all servers
-    for (const [_id, client] of mcpClients) {
-      try {
-        const tools = await client.listTools();
-        if (tools.some((t) => t.name === tool)) {
-          return await client.callTool(tool, args);
-        }
-      } catch {
-        // Server doesn't have this tool, continue
-      }
-    }
-
-    throw new Error(`Tool not found in any MCP server: ${tool}`);
-  };
+  return toolDefs;
 }
 
 /**

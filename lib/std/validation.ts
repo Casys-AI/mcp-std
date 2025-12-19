@@ -240,4 +240,138 @@ export const validationTools: MiniTool[] = [
       return { valid: validator.isDate(date as string, { format: format as string }) };
     },
   },
+  // IBAN validation - inspired by IT-Tools MCP
+  {
+    name: "validate_iban",
+    description: "Validate IBAN (International Bank Account Number)",
+    category: "validation",
+    inputSchema: {
+      type: "object",
+      properties: {
+        iban: { type: "string", description: "IBAN to validate" },
+      },
+      required: ["iban"],
+    },
+    handler: ({ iban }) => {
+      // Remove spaces and convert to uppercase
+      const cleaned = (iban as string).replace(/\s/g, "").toUpperCase();
+
+      // IBAN must be at least 15 characters
+      if (cleaned.length < 15 || cleaned.length > 34) {
+        return { valid: false, error: "Invalid IBAN length" };
+      }
+
+      // Check format: 2 letters + 2 digits + alphanumeric
+      if (!/^[A-Z]{2}\d{2}[A-Z0-9]+$/.test(cleaned)) {
+        return { valid: false, error: "Invalid IBAN format" };
+      }
+
+      // Country code lengths
+      const countryLengths: Record<string, number> = {
+        AL: 28, AD: 24, AT: 20, AZ: 28, BH: 22, BY: 28, BE: 16, BA: 20,
+        BR: 29, BG: 22, CR: 22, HR: 21, CY: 28, CZ: 24, DK: 18, DO: 28,
+        TL: 23, EE: 20, FO: 18, FI: 18, FR: 27, GE: 22, DE: 22, GI: 23,
+        GR: 27, GL: 18, GT: 28, HU: 28, IS: 26, IQ: 23, IE: 22, IL: 23,
+        IT: 27, JO: 30, KZ: 20, XK: 20, KW: 30, LV: 21, LB: 28, LY: 25,
+        LI: 21, LT: 20, LU: 20, MT: 31, MR: 27, MU: 30, MC: 27, MD: 24,
+        ME: 22, NL: 18, MK: 19, NO: 15, PK: 24, PS: 29, PL: 28, PT: 25,
+        QA: 29, RO: 24, LC: 32, SM: 27, ST: 25, SA: 24, RS: 22, SC: 31,
+        SK: 24, SI: 19, ES: 24, SD: 18, SE: 24, CH: 21, TN: 24, TR: 26,
+        UA: 29, AE: 23, GB: 22, VA: 22, VG: 24,
+      };
+
+      const countryCode = cleaned.slice(0, 2);
+      const expectedLength = countryLengths[countryCode];
+
+      if (expectedLength && cleaned.length !== expectedLength) {
+        return {
+          valid: false,
+          error: `Invalid length for ${countryCode}: expected ${expectedLength}, got ${cleaned.length}`,
+        };
+      }
+
+      // Move first 4 chars to end
+      const rearranged = cleaned.slice(4) + cleaned.slice(0, 4);
+
+      // Convert letters to numbers (A=10, B=11, etc.)
+      let numericString = "";
+      for (const char of rearranged) {
+        if (/[A-Z]/.test(char)) {
+          numericString += (char.charCodeAt(0) - 55).toString();
+        } else {
+          numericString += char;
+        }
+      }
+
+      // Validate checksum using mod 97
+      let remainder = 0;
+      for (const char of numericString) {
+        remainder = (remainder * 10 + parseInt(char, 10)) % 97;
+      }
+
+      const isValid = remainder === 1;
+
+      return {
+        valid: isValid,
+        iban: cleaned,
+        country: countryCode,
+        checkDigits: cleaned.slice(2, 4),
+        bban: cleaned.slice(4),
+        formatted: cleaned.match(/.{1,4}/g)?.join(" ") || cleaned,
+      };
+    },
+  },
+  {
+    name: "validate_credit_card_info",
+    description: "Validate credit card number and detect card type (Visa, Mastercard, etc.)",
+    category: "validation",
+    inputSchema: {
+      type: "object",
+      properties: {
+        number: { type: "string", description: "Credit card number" },
+      },
+      required: ["number"],
+    },
+    handler: ({ number }) => {
+      const cleaned = (number as string).replace(/[\s-]/g, "");
+
+      if (!/^\d{13,19}$/.test(cleaned)) {
+        return { valid: false, error: "Invalid card number format" };
+      }
+
+      // Luhn algorithm
+      let sum = 0;
+      let isEven = false;
+
+      for (let i = cleaned.length - 1; i >= 0; i--) {
+        let digit = parseInt(cleaned[i], 10);
+
+        if (isEven) {
+          digit *= 2;
+          if (digit > 9) digit -= 9;
+        }
+
+        sum += digit;
+        isEven = !isEven;
+      }
+
+      const isValid = sum % 10 === 0;
+
+      // Detect card type
+      let cardType = "Unknown";
+      if (/^4/.test(cleaned)) cardType = "Visa";
+      else if (/^5[1-5]/.test(cleaned) || /^2[2-7]/.test(cleaned)) cardType = "Mastercard";
+      else if (/^3[47]/.test(cleaned)) cardType = "American Express";
+      else if (/^6(?:011|5)/.test(cleaned)) cardType = "Discover";
+      else if (/^3(?:0[0-5]|[68])/.test(cleaned)) cardType = "Diners Club";
+      else if (/^35/.test(cleaned)) cardType = "JCB";
+
+      return {
+        valid: isValid,
+        cardType,
+        lastFour: cleaned.slice(-4),
+        masked: "*".repeat(cleaned.length - 4) + cleaned.slice(-4),
+      };
+    },
+  },
 ];

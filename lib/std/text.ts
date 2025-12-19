@@ -830,4 +830,706 @@ export const textTools: MiniTool[] = [
       }).join("");
     },
   },
+  // Emoji and Unicode tools - inspired by IT-Tools MCP
+  {
+    name: "text_emoji_search",
+    description: "Search for emojis by keyword or category",
+    category: "text",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query (e.g., 'smile', 'heart', 'animal')" },
+        limit: { type: "number", description: "Maximum results (default: 20)" },
+      },
+      required: ["query"],
+    },
+    handler: ({ query, limit = 20 }) => {
+      // Common emoji database with keywords
+      const emojis: Array<{ emoji: string; name: string; keywords: string[] }> = [
+        { emoji: "😀", name: "grinning face", keywords: ["smile", "happy", "joy"] },
+        { emoji: "😃", name: "grinning face with big eyes", keywords: ["smile", "happy"] },
+        { emoji: "😄", name: "grinning face with smiling eyes", keywords: ["smile", "happy", "laugh"] },
+        { emoji: "😁", name: "beaming face with smiling eyes", keywords: ["smile", "grin"] },
+        { emoji: "😆", name: "grinning squinting face", keywords: ["laugh", "happy"] },
+        { emoji: "😅", name: "grinning face with sweat", keywords: ["nervous", "laugh"] },
+        { emoji: "🤣", name: "rolling on the floor laughing", keywords: ["laugh", "lol", "rofl"] },
+        { emoji: "😂", name: "face with tears of joy", keywords: ["laugh", "cry", "happy"] },
+        { emoji: "🙂", name: "slightly smiling face", keywords: ["smile", "ok"] },
+        { emoji: "😊", name: "smiling face with smiling eyes", keywords: ["smile", "blush", "happy"] },
+        { emoji: "😇", name: "smiling face with halo", keywords: ["angel", "innocent"] },
+        { emoji: "🥰", name: "smiling face with hearts", keywords: ["love", "heart", "adore"] },
+        { emoji: "😍", name: "smiling face with heart-eyes", keywords: ["love", "heart", "crush"] },
+        { emoji: "🤩", name: "star-struck", keywords: ["star", "eyes", "wow", "amazing"] },
+        { emoji: "😘", name: "face blowing a kiss", keywords: ["kiss", "love"] },
+        { emoji: "😗", name: "kissing face", keywords: ["kiss"] },
+        { emoji: "😚", name: "kissing face with closed eyes", keywords: ["kiss", "love"] },
+        { emoji: "😋", name: "face savoring food", keywords: ["yummy", "delicious", "tongue"] },
+        { emoji: "😛", name: "face with tongue", keywords: ["tongue", "playful"] },
+        { emoji: "😜", name: "winking face with tongue", keywords: ["tongue", "wink", "playful"] },
+        { emoji: "🤪", name: "zany face", keywords: ["crazy", "silly", "wild"] },
+        { emoji: "😝", name: "squinting face with tongue", keywords: ["tongue", "playful"] },
+        { emoji: "🤑", name: "money-mouth face", keywords: ["money", "rich", "dollar"] },
+        { emoji: "🤗", name: "hugging face", keywords: ["hug", "embrace"] },
+        { emoji: "🤭", name: "face with hand over mouth", keywords: ["oops", "giggle", "secret"] },
+        { emoji: "🤔", name: "thinking face", keywords: ["think", "wonder", "hmm"] },
+        { emoji: "😐", name: "neutral face", keywords: ["meh", "neutral", "blank"] },
+        { emoji: "😑", name: "expressionless face", keywords: ["blank", "neutral"] },
+        { emoji: "😶", name: "face without mouth", keywords: ["silent", "speechless"] },
+        { emoji: "😏", name: "smirking face", keywords: ["smirk", "sly"] },
+        { emoji: "😒", name: "unamused face", keywords: ["bored", "unimpressed"] },
+        { emoji: "🙄", name: "face with rolling eyes", keywords: ["eye roll", "annoyed"] },
+        { emoji: "😬", name: "grimacing face", keywords: ["awkward", "nervous"] },
+        { emoji: "😮‍💨", name: "face exhaling", keywords: ["sigh", "relief", "tired"] },
+        { emoji: "😔", name: "pensive face", keywords: ["sad", "thoughtful"] },
+        { emoji: "😢", name: "crying face", keywords: ["cry", "sad", "tear"] },
+        { emoji: "😭", name: "loudly crying face", keywords: ["cry", "sob", "sad"] },
+        { emoji: "😤", name: "face with steam from nose", keywords: ["angry", "frustrated"] },
+        { emoji: "😠", name: "angry face", keywords: ["angry", "mad"] },
+        { emoji: "😡", name: "pouting face", keywords: ["angry", "rage", "mad"] },
+        { emoji: "🤬", name: "face with symbols on mouth", keywords: ["swear", "angry", "curse"] },
+        { emoji: "😈", name: "smiling face with horns", keywords: ["devil", "evil", "mischief"] },
+        { emoji: "👿", name: "angry face with horns", keywords: ["devil", "angry"] },
+        { emoji: "💀", name: "skull", keywords: ["dead", "death", "skeleton"] },
+        { emoji: "☠️", name: "skull and crossbones", keywords: ["death", "danger", "pirate"] },
+        { emoji: "💩", name: "pile of poo", keywords: ["poop", "crap"] },
+        { emoji: "🤡", name: "clown face", keywords: ["clown", "circus"] },
+        { emoji: "👻", name: "ghost", keywords: ["ghost", "halloween", "boo"] },
+        { emoji: "👽", name: "alien", keywords: ["alien", "ufo", "space"] },
+        { emoji: "🤖", name: "robot", keywords: ["robot", "bot", "ai"] },
+        { emoji: "❤️", name: "red heart", keywords: ["heart", "love", "red"] },
+        { emoji: "🧡", name: "orange heart", keywords: ["heart", "love", "orange"] },
+        { emoji: "💛", name: "yellow heart", keywords: ["heart", "love", "yellow"] },
+        { emoji: "💚", name: "green heart", keywords: ["heart", "love", "green"] },
+        { emoji: "💙", name: "blue heart", keywords: ["heart", "love", "blue"] },
+        { emoji: "💜", name: "purple heart", keywords: ["heart", "love", "purple"] },
+        { emoji: "🖤", name: "black heart", keywords: ["heart", "black"] },
+        { emoji: "🤍", name: "white heart", keywords: ["heart", "white"] },
+        { emoji: "💔", name: "broken heart", keywords: ["heart", "broken", "sad"] },
+        { emoji: "💕", name: "two hearts", keywords: ["heart", "love"] },
+        { emoji: "💞", name: "revolving hearts", keywords: ["heart", "love"] },
+        { emoji: "💓", name: "beating heart", keywords: ["heart", "love", "beat"] },
+        { emoji: "💗", name: "growing heart", keywords: ["heart", "love"] },
+        { emoji: "💖", name: "sparkling heart", keywords: ["heart", "love", "sparkle"] },
+        { emoji: "💘", name: "heart with arrow", keywords: ["heart", "love", "cupid"] },
+        { emoji: "💝", name: "heart with ribbon", keywords: ["heart", "love", "gift"] },
+        { emoji: "👍", name: "thumbs up", keywords: ["like", "yes", "ok", "good", "approve"] },
+        { emoji: "👎", name: "thumbs down", keywords: ["dislike", "no", "bad"] },
+        { emoji: "👏", name: "clapping hands", keywords: ["clap", "applause", "bravo"] },
+        { emoji: "🙌", name: "raising hands", keywords: ["celebrate", "hooray", "yay"] },
+        { emoji: "👋", name: "waving hand", keywords: ["wave", "hello", "bye", "hi"] },
+        { emoji: "✋", name: "raised hand", keywords: ["stop", "hand", "high five"] },
+        { emoji: "🤚", name: "raised back of hand", keywords: ["hand", "back"] },
+        { emoji: "🖐️", name: "hand with fingers splayed", keywords: ["hand", "five"] },
+        { emoji: "✌️", name: "victory hand", keywords: ["peace", "victory", "two"] },
+        { emoji: "🤞", name: "crossed fingers", keywords: ["luck", "hope", "fingers crossed"] },
+        { emoji: "🤟", name: "love-you gesture", keywords: ["love", "rock", "hand"] },
+        { emoji: "🤘", name: "sign of the horns", keywords: ["rock", "metal", "hand"] },
+        { emoji: "👌", name: "OK hand", keywords: ["ok", "perfect", "good"] },
+        { emoji: "🤌", name: "pinched fingers", keywords: ["italian", "chef", "perfect"] },
+        { emoji: "👈", name: "backhand index pointing left", keywords: ["left", "point"] },
+        { emoji: "👉", name: "backhand index pointing right", keywords: ["right", "point"] },
+        { emoji: "👆", name: "backhand index pointing up", keywords: ["up", "point"] },
+        { emoji: "👇", name: "backhand index pointing down", keywords: ["down", "point"] },
+        { emoji: "☝️", name: "index pointing up", keywords: ["one", "point", "up"] },
+        { emoji: "✍️", name: "writing hand", keywords: ["write", "pen"] },
+        { emoji: "🙏", name: "folded hands", keywords: ["pray", "please", "thank you", "namaste"] },
+        { emoji: "💪", name: "flexed biceps", keywords: ["strong", "muscle", "flex", "arm"] },
+        { emoji: "🦾", name: "mechanical arm", keywords: ["robot", "prosthetic", "strong"] },
+        { emoji: "🐶", name: "dog face", keywords: ["dog", "puppy", "animal", "pet"] },
+        { emoji: "🐱", name: "cat face", keywords: ["cat", "kitten", "animal", "pet"] },
+        { emoji: "🐭", name: "mouse face", keywords: ["mouse", "animal"] },
+        { emoji: "🐹", name: "hamster", keywords: ["hamster", "animal", "pet"] },
+        { emoji: "🐰", name: "rabbit face", keywords: ["rabbit", "bunny", "animal"] },
+        { emoji: "🦊", name: "fox", keywords: ["fox", "animal"] },
+        { emoji: "🐻", name: "bear", keywords: ["bear", "animal"] },
+        { emoji: "🐼", name: "panda", keywords: ["panda", "bear", "animal"] },
+        { emoji: "🐨", name: "koala", keywords: ["koala", "animal"] },
+        { emoji: "🐯", name: "tiger face", keywords: ["tiger", "animal", "cat"] },
+        { emoji: "🦁", name: "lion", keywords: ["lion", "animal", "king"] },
+        { emoji: "🐮", name: "cow face", keywords: ["cow", "animal"] },
+        { emoji: "🐷", name: "pig face", keywords: ["pig", "animal"] },
+        { emoji: "🐸", name: "frog", keywords: ["frog", "animal"] },
+        { emoji: "🐵", name: "monkey face", keywords: ["monkey", "animal", "ape"] },
+        { emoji: "🐔", name: "chicken", keywords: ["chicken", "bird", "animal"] },
+        { emoji: "🐧", name: "penguin", keywords: ["penguin", "bird", "animal"] },
+        { emoji: "🐦", name: "bird", keywords: ["bird", "animal"] },
+        { emoji: "🦆", name: "duck", keywords: ["duck", "bird", "animal"] },
+        { emoji: "🦅", name: "eagle", keywords: ["eagle", "bird", "animal"] },
+        { emoji: "🦉", name: "owl", keywords: ["owl", "bird", "animal", "night"] },
+        { emoji: "🦇", name: "bat", keywords: ["bat", "animal", "halloween"] },
+        { emoji: "🐺", name: "wolf", keywords: ["wolf", "animal", "dog"] },
+        { emoji: "🐗", name: "boar", keywords: ["boar", "pig", "animal"] },
+        { emoji: "🐴", name: "horse face", keywords: ["horse", "animal"] },
+        { emoji: "🦄", name: "unicorn", keywords: ["unicorn", "horse", "magic", "fantasy"] },
+        { emoji: "🐝", name: "honeybee", keywords: ["bee", "insect", "honey"] },
+        { emoji: "🐛", name: "bug", keywords: ["bug", "insect", "caterpillar"] },
+        { emoji: "🦋", name: "butterfly", keywords: ["butterfly", "insect"] },
+        { emoji: "🐌", name: "snail", keywords: ["snail", "slow"] },
+        { emoji: "🐙", name: "octopus", keywords: ["octopus", "sea", "animal"] },
+        { emoji: "🦑", name: "squid", keywords: ["squid", "sea", "animal"] },
+        { emoji: "🦀", name: "crab", keywords: ["crab", "sea", "animal"] },
+        { emoji: "🦞", name: "lobster", keywords: ["lobster", "sea", "animal"] },
+        { emoji: "🐠", name: "tropical fish", keywords: ["fish", "sea", "animal"] },
+        { emoji: "🐟", name: "fish", keywords: ["fish", "sea", "animal"] },
+        { emoji: "🐬", name: "dolphin", keywords: ["dolphin", "sea", "animal"] },
+        { emoji: "🐳", name: "spouting whale", keywords: ["whale", "sea", "animal"] },
+        { emoji: "🐋", name: "whale", keywords: ["whale", "sea", "animal"] },
+        { emoji: "🦈", name: "shark", keywords: ["shark", "sea", "animal", "danger"] },
+        { emoji: "🐊", name: "crocodile", keywords: ["crocodile", "alligator", "animal"] },
+        { emoji: "🐢", name: "turtle", keywords: ["turtle", "slow", "animal"] },
+        { emoji: "🐍", name: "snake", keywords: ["snake", "animal"] },
+        { emoji: "🦎", name: "lizard", keywords: ["lizard", "animal", "reptile"] },
+        { emoji: "🦖", name: "T-Rex", keywords: ["dinosaur", "trex", "animal"] },
+        { emoji: "🦕", name: "sauropod", keywords: ["dinosaur", "animal"] },
+        { emoji: "🌸", name: "cherry blossom", keywords: ["flower", "spring", "pink"] },
+        { emoji: "💮", name: "white flower", keywords: ["flower", "white"] },
+        { emoji: "🌹", name: "rose", keywords: ["flower", "rose", "red", "love"] },
+        { emoji: "🌺", name: "hibiscus", keywords: ["flower", "tropical"] },
+        { emoji: "🌻", name: "sunflower", keywords: ["flower", "sun", "yellow"] },
+        { emoji: "🌼", name: "blossom", keywords: ["flower"] },
+        { emoji: "🌷", name: "tulip", keywords: ["flower", "spring"] },
+        { emoji: "🌱", name: "seedling", keywords: ["plant", "grow", "sprout"] },
+        { emoji: "🌲", name: "evergreen tree", keywords: ["tree", "christmas", "pine"] },
+        { emoji: "🌳", name: "deciduous tree", keywords: ["tree", "nature"] },
+        { emoji: "🌴", name: "palm tree", keywords: ["tree", "tropical", "beach"] },
+        { emoji: "🌵", name: "cactus", keywords: ["cactus", "desert", "plant"] },
+        { emoji: "☀️", name: "sun", keywords: ["sun", "weather", "hot", "sunny"] },
+        { emoji: "🌙", name: "crescent moon", keywords: ["moon", "night", "sleep"] },
+        { emoji: "⭐", name: "star", keywords: ["star", "night", "sky"] },
+        { emoji: "🌟", name: "glowing star", keywords: ["star", "shine", "sparkle"] },
+        { emoji: "✨", name: "sparkles", keywords: ["sparkle", "shine", "magic", "star"] },
+        { emoji: "⚡", name: "high voltage", keywords: ["lightning", "electric", "power", "flash"] },
+        { emoji: "🔥", name: "fire", keywords: ["fire", "hot", "flame", "lit"] },
+        { emoji: "💧", name: "droplet", keywords: ["water", "drop", "sweat"] },
+        { emoji: "🌊", name: "water wave", keywords: ["wave", "ocean", "sea", "water"] },
+        { emoji: "☁️", name: "cloud", keywords: ["cloud", "weather"] },
+        { emoji: "🌈", name: "rainbow", keywords: ["rainbow", "weather", "color"] },
+        { emoji: "❄️", name: "snowflake", keywords: ["snow", "cold", "winter"] },
+        { emoji: "☃️", name: "snowman", keywords: ["snow", "winter", "christmas"] },
+        { emoji: "🎉", name: "party popper", keywords: ["party", "celebrate", "birthday"] },
+        { emoji: "🎊", name: "confetti ball", keywords: ["party", "celebrate"] },
+        { emoji: "🎈", name: "balloon", keywords: ["balloon", "party", "birthday"] },
+        { emoji: "🎁", name: "wrapped gift", keywords: ["gift", "present", "birthday"] },
+        { emoji: "🎂", name: "birthday cake", keywords: ["cake", "birthday", "party"] },
+        { emoji: "🍕", name: "pizza", keywords: ["pizza", "food", "italian"] },
+        { emoji: "🍔", name: "hamburger", keywords: ["burger", "food", "fast food"] },
+        { emoji: "🍟", name: "french fries", keywords: ["fries", "food", "fast food"] },
+        { emoji: "🌭", name: "hot dog", keywords: ["hot dog", "food"] },
+        { emoji: "🍿", name: "popcorn", keywords: ["popcorn", "movie", "snack"] },
+        { emoji: "🍦", name: "soft ice cream", keywords: ["ice cream", "dessert", "sweet"] },
+        { emoji: "🍩", name: "doughnut", keywords: ["donut", "dessert", "sweet"] },
+        { emoji: "🍪", name: "cookie", keywords: ["cookie", "dessert", "sweet"] },
+        { emoji: "🎂", name: "birthday cake", keywords: ["cake", "birthday", "dessert"] },
+        { emoji: "🍰", name: "shortcake", keywords: ["cake", "dessert", "sweet"] },
+        { emoji: "☕", name: "hot beverage", keywords: ["coffee", "tea", "drink", "hot"] },
+        { emoji: "🍵", name: "teacup without handle", keywords: ["tea", "drink"] },
+        { emoji: "🍺", name: "beer mug", keywords: ["beer", "drink", "alcohol"] },
+        { emoji: "🍷", name: "wine glass", keywords: ["wine", "drink", "alcohol"] },
+        { emoji: "🍹", name: "tropical drink", keywords: ["cocktail", "drink", "tropical"] },
+        { emoji: "💻", name: "laptop", keywords: ["computer", "laptop", "tech"] },
+        { emoji: "🖥️", name: "desktop computer", keywords: ["computer", "desktop", "tech"] },
+        { emoji: "📱", name: "mobile phone", keywords: ["phone", "mobile", "cell", "tech"] },
+        { emoji: "📧", name: "e-mail", keywords: ["email", "mail", "message"] },
+        { emoji: "💡", name: "light bulb", keywords: ["idea", "light", "bulb"] },
+        { emoji: "🔧", name: "wrench", keywords: ["tool", "fix", "wrench"] },
+        { emoji: "🔨", name: "hammer", keywords: ["tool", "hammer", "build"] },
+        { emoji: "⚙️", name: "gear", keywords: ["gear", "settings", "cog"] },
+        { emoji: "🔒", name: "locked", keywords: ["lock", "security", "safe"] },
+        { emoji: "🔓", name: "unlocked", keywords: ["unlock", "open"] },
+        { emoji: "🔑", name: "key", keywords: ["key", "lock", "password"] },
+        { emoji: "✅", name: "check mark button", keywords: ["check", "done", "yes", "complete"] },
+        { emoji: "❌", name: "cross mark", keywords: ["no", "wrong", "x", "cancel"] },
+        { emoji: "❓", name: "question mark", keywords: ["question", "help", "what"] },
+        { emoji: "❗", name: "exclamation mark", keywords: ["exclamation", "warning", "alert"] },
+        { emoji: "⚠️", name: "warning", keywords: ["warning", "caution", "alert"] },
+        { emoji: "🚀", name: "rocket", keywords: ["rocket", "launch", "space", "ship"] },
+        { emoji: "✈️", name: "airplane", keywords: ["plane", "travel", "flight"] },
+        { emoji: "🚗", name: "automobile", keywords: ["car", "vehicle", "drive"] },
+        { emoji: "🚕", name: "taxi", keywords: ["taxi", "cab", "car"] },
+        { emoji: "🚌", name: "bus", keywords: ["bus", "vehicle", "transport"] },
+        { emoji: "🚲", name: "bicycle", keywords: ["bike", "bicycle", "cycle"] },
+        { emoji: "⏰", name: "alarm clock", keywords: ["clock", "time", "alarm", "wake"] },
+        { emoji: "📅", name: "calendar", keywords: ["calendar", "date", "schedule"] },
+        { emoji: "📌", name: "pushpin", keywords: ["pin", "location", "mark"] },
+        { emoji: "📍", name: "round pushpin", keywords: ["pin", "location", "map"] },
+        { emoji: "🔗", name: "link", keywords: ["link", "chain", "url"] },
+        { emoji: "📝", name: "memo", keywords: ["note", "memo", "write", "document"] },
+        { emoji: "📚", name: "books", keywords: ["book", "read", "library", "study"] },
+        { emoji: "🎵", name: "musical note", keywords: ["music", "note", "song"] },
+        { emoji: "🎶", name: "musical notes", keywords: ["music", "notes", "song"] },
+        { emoji: "🎤", name: "microphone", keywords: ["microphone", "sing", "karaoke"] },
+        { emoji: "🎬", name: "clapper board", keywords: ["movie", "film", "action"] },
+        { emoji: "📸", name: "camera with flash", keywords: ["camera", "photo", "picture"] },
+        { emoji: "🎮", name: "video game", keywords: ["game", "controller", "play"] },
+        { emoji: "🏆", name: "trophy", keywords: ["trophy", "winner", "award", "prize"] },
+        { emoji: "🥇", name: "1st place medal", keywords: ["medal", "gold", "first", "winner"] },
+        { emoji: "🥈", name: "2nd place medal", keywords: ["medal", "silver", "second"] },
+        { emoji: "🥉", name: "3rd place medal", keywords: ["medal", "bronze", "third"] },
+        { emoji: "⚽", name: "soccer ball", keywords: ["soccer", "football", "ball", "sport"] },
+        { emoji: "🏀", name: "basketball", keywords: ["basketball", "ball", "sport"] },
+        { emoji: "🏈", name: "american football", keywords: ["football", "ball", "sport"] },
+        { emoji: "⚾", name: "baseball", keywords: ["baseball", "ball", "sport"] },
+        { emoji: "🎾", name: "tennis", keywords: ["tennis", "ball", "sport"] },
+        { emoji: "🏐", name: "volleyball", keywords: ["volleyball", "ball", "sport"] },
+        { emoji: "🎯", name: "direct hit", keywords: ["target", "bullseye", "dart"] },
+      ];
+
+      const q = (query as string).toLowerCase();
+      const results = emojis.filter((e) =>
+        e.name.toLowerCase().includes(q) ||
+        e.keywords.some((k) => k.includes(q))
+      ).slice(0, limit as number);
+
+      return {
+        query: query as string,
+        count: results.length,
+        emojis: results.map((e) => ({
+          emoji: e.emoji,
+          name: e.name,
+          keywords: e.keywords,
+        })),
+      };
+    },
+  },
+  {
+    name: "text_unicode_info",
+    description: "Get Unicode information about characters in text",
+    category: "text",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "Text to analyze" },
+      },
+      required: ["text"],
+    },
+    handler: ({ text }) => {
+      const chars = [...(text as string)];
+      const info = chars.map((char) => {
+        const codePoint = char.codePointAt(0)!;
+        const hex = codePoint.toString(16).toUpperCase().padStart(4, "0");
+
+        // Determine Unicode block (simplified)
+        let block = "Unknown";
+        if (codePoint <= 0x007F) block = "Basic Latin";
+        else if (codePoint <= 0x00FF) block = "Latin-1 Supplement";
+        else if (codePoint <= 0x017F) block = "Latin Extended-A";
+        else if (codePoint <= 0x024F) block = "Latin Extended-B";
+        else if (codePoint <= 0x036F) block = "Combining Diacritical Marks";
+        else if (codePoint <= 0x03FF) block = "Greek and Coptic";
+        else if (codePoint <= 0x04FF) block = "Cyrillic";
+        else if (codePoint <= 0x052F) block = "Cyrillic Supplement";
+        else if (codePoint <= 0x058F) block = "Armenian";
+        else if (codePoint <= 0x05FF) block = "Hebrew";
+        else if (codePoint <= 0x06FF) block = "Arabic";
+        else if (codePoint >= 0x4E00 && codePoint <= 0x9FFF) block = "CJK Unified Ideographs";
+        else if (codePoint >= 0x3040 && codePoint <= 0x309F) block = "Hiragana";
+        else if (codePoint >= 0x30A0 && codePoint <= 0x30FF) block = "Katakana";
+        else if (codePoint >= 0xAC00 && codePoint <= 0xD7AF) block = "Hangul Syllables";
+        else if (codePoint >= 0x1F600 && codePoint <= 0x1F64F) block = "Emoticons";
+        else if (codePoint >= 0x1F300 && codePoint <= 0x1F5FF) block = "Miscellaneous Symbols and Pictographs";
+        else if (codePoint >= 0x1F680 && codePoint <= 0x1F6FF) block = "Transport and Map Symbols";
+        else if (codePoint >= 0x1F900 && codePoint <= 0x1F9FF) block = "Supplemental Symbols and Pictographs";
+        else if (codePoint >= 0x2600 && codePoint <= 0x26FF) block = "Miscellaneous Symbols";
+        else if (codePoint >= 0x2700 && codePoint <= 0x27BF) block = "Dingbats";
+
+        return {
+          char,
+          codePoint,
+          hex: `U+${hex}`,
+          utf8: Array.from(new TextEncoder().encode(char)).map((b) => b.toString(16).toUpperCase().padStart(2, "0")).join(" "),
+          utf16: char.split("").map((c) => c.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0")).join(" "),
+          block,
+          htmlEntity: codePoint > 127 ? `&#${codePoint};` : char,
+          cssEscape: `\\${hex}`,
+        };
+      });
+
+      return {
+        text: text as string,
+        length: chars.length,
+        byteLength: new TextEncoder().encode(text as string).length,
+        characters: info,
+      };
+    },
+  },
+  {
+    name: "text_homoglyph",
+    description: "Detect or create homoglyphs (look-alike characters)",
+    category: "text",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "Text to process" },
+        action: {
+          type: "string",
+          enum: ["detect", "create", "normalize"],
+          description: "Action: detect suspicious chars, create homoglyphs, or normalize to ASCII",
+        },
+      },
+      required: ["text", "action"],
+    },
+    handler: ({ text, action }) => {
+      const homoglyphs: Record<string, string[]> = {
+        a: ["а", "ɑ", "α", "ａ"],
+        b: ["Ь", "ｂ"],
+        c: ["с", "ϲ", "ｃ"],
+        d: ["ԁ", "ｄ"],
+        e: ["е", "ҽ", "ｅ"],
+        g: ["ɡ", "ｇ"],
+        h: ["һ", "ｈ"],
+        i: ["і", "ı", "ｉ"],
+        j: ["ј", "ｊ"],
+        k: ["κ", "ｋ"],
+        l: ["ӏ", "Ɩ", "ｌ"],
+        m: ["м", "ｍ"],
+        n: ["ո", "ｎ"],
+        o: ["о", "ο", "ｏ"],
+        p: ["р", "ρ", "ｐ"],
+        q: ["ԛ", "ｑ"],
+        r: ["г", "ｒ"],
+        s: ["ѕ", "ｓ"],
+        t: ["ｔ"],
+        u: ["υ", "ｕ"],
+        v: ["ν", "ｖ"],
+        w: ["ѡ", "ｗ"],
+        x: ["х", "ｘ"],
+        y: ["у", "γ", "ｙ"],
+        z: ["ｚ"],
+        A: ["А", "Α", "Ａ"],
+        B: ["В", "Β", "Ｂ"],
+        C: ["С", "Ϲ", "Ｃ"],
+        E: ["Е", "Ε", "Ｅ"],
+        H: ["Н", "Η", "Ｈ"],
+        I: ["І", "Ι", "Ｉ"],
+        K: ["К", "Κ", "Ｋ"],
+        M: ["М", "Μ", "Ｍ"],
+        N: ["Ν", "Ｎ"],
+        O: ["О", "Ο", "Ｏ"],
+        P: ["Р", "Ρ", "Ｐ"],
+        S: ["Ѕ", "Ｓ"],
+        T: ["Т", "Τ", "Ｔ"],
+        X: ["Х", "Χ", "Ｘ"],
+        Y: ["Υ", "Ｙ"],
+        Z: ["Ζ", "Ｚ"],
+        "0": ["О", "ο", "０"],
+        "1": ["І", "ı", "１"],
+      };
+
+      const t = text as string;
+
+      if (action === "detect") {
+        const suspicious: Array<{ char: string; position: number; lookalike: string }> = [];
+        const reverseMap: Record<string, string> = {};
+        for (const [ascii, glyphs] of Object.entries(homoglyphs)) {
+          for (const glyph of glyphs) {
+            reverseMap[glyph] = ascii;
+          }
+        }
+
+        for (let i = 0; i < t.length; i++) {
+          const char = t[i];
+          if (reverseMap[char]) {
+            suspicious.push({
+              char,
+              position: i,
+              lookalike: reverseMap[char],
+            });
+          }
+        }
+
+        return {
+          text: t,
+          suspicious: suspicious.length > 0,
+          count: suspicious.length,
+          characters: suspicious,
+        };
+      }
+
+      if (action === "create") {
+        const result = t.split("").map((char) => {
+          const glyphs = homoglyphs[char];
+          if (glyphs && glyphs.length > 0) {
+            return glyphs[Math.floor(Math.random() * glyphs.length)];
+          }
+          return char;
+        }).join("");
+
+        return { original: t, homoglyph: result };
+      }
+
+      // Normalize
+      const reverseMap: Record<string, string> = {};
+      for (const [ascii, glyphs] of Object.entries(homoglyphs)) {
+        for (const glyph of glyphs) {
+          reverseMap[glyph] = ascii;
+        }
+      }
+
+      const normalized = t.split("").map((char) => reverseMap[char] || char).join("");
+      return { original: t, normalized };
+    },
+  },
+  // Word analysis - inspired by IT-Tools MCP
+  {
+    name: "text_analyze_words",
+    description: "Analyze words in text - count unique/distinct words, frequency analysis",
+    category: "text",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "Text to analyze" },
+        caseSensitive: {
+          type: "boolean",
+          description: "Treat different cases as different words (default: false)",
+        },
+        minLength: {
+          type: "number",
+          description: "Minimum word length to include (default: 1)",
+        },
+        stopWords: {
+          type: "array",
+          items: { type: "string" },
+          description: "Words to exclude from analysis",
+        },
+        topN: {
+          type: "number",
+          description: "Return only top N most frequent words (default: all)",
+        },
+      },
+      required: ["text"],
+    },
+    handler: ({ text, caseSensitive = false, minLength = 1, stopWords = [], topN }) => {
+      const t = text as string;
+      const minLen = minLength as number;
+      const userStops = (stopWords as string[]).map((w) =>
+        caseSensitive ? w : w.toLowerCase()
+      );
+
+      // Default English stop words
+      const defaultStopWords = [
+        "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+        "of", "with", "by", "from", "as", "is", "was", "are", "were", "been",
+        "be", "have", "has", "had", "do", "does", "did", "will", "would", "could",
+        "should", "may", "might", "can", "this", "that", "these", "those", "it",
+        "its", "i", "you", "he", "she", "we", "they", "their", "them", "my",
+        "your", "his", "her", "our", "not", "no", "so", "if", "then",
+      ];
+
+      // Use user stop words if provided, otherwise use defaults
+      const stops = new Set(userStops.length > 0 ? userStops : defaultStopWords);
+
+      // Extract words - split on non-word characters
+      const words = t.match(/\b[\w'-]+\b/g) || [];
+
+      // Process and count
+      const frequency: Record<string, number> = {};
+      let totalWords = 0;
+
+      for (const word of words) {
+        const normalized = caseSensitive ? word : word.toLowerCase();
+
+        // Skip short words
+        if (normalized.length < minLen) continue;
+
+        // Skip stop words
+        if (stops.size > 0 && stops.has(normalized)) continue;
+
+        frequency[normalized] = (frequency[normalized] || 0) + 1;
+        totalWords++;
+      }
+
+      // Sort by frequency
+      const sorted = Object.entries(frequency)
+        .sort((a, b) => b[1] - a[1])
+        .map(([word, count]) => ({
+          word,
+          count,
+          percentage: ((count / totalWords) * 100).toFixed(2) + "%",
+        }));
+
+      // Apply topN limit if specified
+      const results = topN ? sorted.slice(0, topN as number) : sorted;
+
+      // Find words that appear only once (hapax legomena)
+      const hapax = sorted.filter((w) => w.count === 1).map((w) => w.word);
+
+      return {
+        totalWords,
+        uniqueWords: Object.keys(frequency).length,
+        averageWordLength: (
+          Object.keys(frequency).reduce((sum, w) => sum + w.length, 0) /
+          Object.keys(frequency).length
+        ).toFixed(2),
+        hapaxLegomena: {
+          count: hapax.length,
+          words: hapax.slice(0, 20), // First 20 hapax
+        },
+        lexicalDiversity: (
+          (Object.keys(frequency).length / totalWords) * 100
+        ).toFixed(2) + "%",
+        mostFrequent: results.slice(0, 10),
+        leastFrequent: sorted.slice(-5).reverse(),
+        allWords: results,
+      };
+    },
+  },
+  // List format converter - inspired by IT-Tools MCP
+  {
+    name: "text_list_convert",
+    description: "Convert between list formats (comma, newline, JSON array, semicolon, pipe, tabs, numbered)",
+    category: "text",
+    inputSchema: {
+      type: "object",
+      properties: {
+        input: { type: "string", description: "Input list" },
+        from: {
+          type: "string",
+          enum: ["comma", "newline", "json", "semicolon", "pipe", "tabs", "space", "auto"],
+          description: "Input format (default: auto-detect)",
+        },
+        to: {
+          type: "string",
+          enum: ["comma", "newline", "json", "semicolon", "pipe", "tabs", "numbered", "bulleted", "quoted"],
+          description: "Output format",
+        },
+        trim: { type: "boolean", description: "Trim whitespace from items (default: true)" },
+        removeEmpty: { type: "boolean", description: "Remove empty items (default: true)" },
+        sort: {
+          type: "string",
+          enum: ["none", "asc", "desc", "alpha", "alpha_desc"],
+          description: "Sort order (default: none)",
+        },
+        unique: { type: "boolean", description: "Remove duplicates (default: false)" },
+      },
+      required: ["input", "to"],
+    },
+    handler: ({ input, from = "auto", to, trim = true, removeEmpty = true, sort = "none", unique = false }) => {
+      const text = input as string;
+
+      // Auto-detect input format
+      let items: string[];
+      const inputFormat = from as string;
+
+      if (inputFormat === "auto" || inputFormat === undefined) {
+        // Try to detect format
+        if (text.startsWith("[") && text.endsWith("]")) {
+          // JSON array
+          try {
+            items = JSON.parse(text);
+          } catch {
+            items = [text];
+          }
+        } else if (text.includes("\n")) {
+          items = text.split("\n");
+        } else if (text.includes("\t")) {
+          items = text.split("\t");
+        } else if (text.includes("|")) {
+          items = text.split("|");
+        } else if (text.includes(";")) {
+          items = text.split(";");
+        } else if (text.includes(",")) {
+          items = text.split(",");
+        } else {
+          items = text.split(/\s+/);
+        }
+      } else {
+        switch (inputFormat) {
+          case "comma":
+            items = text.split(",");
+            break;
+          case "newline":
+            items = text.split("\n");
+            break;
+          case "json":
+            try {
+              items = JSON.parse(text);
+            } catch {
+              throw new Error("Invalid JSON array");
+            }
+            break;
+          case "semicolon":
+            items = text.split(";");
+            break;
+          case "pipe":
+            items = text.split("|");
+            break;
+          case "tabs":
+            items = text.split("\t");
+            break;
+          case "space":
+            items = text.split(/\s+/);
+            break;
+          default:
+            items = [text];
+        }
+      }
+
+      // Process items
+      if (trim) {
+        items = items.map((item) => (typeof item === "string" ? item.trim() : String(item)));
+      }
+      if (removeEmpty) {
+        items = items.filter((item) => item !== "");
+      }
+      if (unique) {
+        items = [...new Set(items)];
+      }
+
+      // Sort
+      switch (sort) {
+        case "asc":
+          items.sort((a, b) => parseFloat(a) - parseFloat(b));
+          break;
+        case "desc":
+          items.sort((a, b) => parseFloat(b) - parseFloat(a));
+          break;
+        case "alpha":
+          items.sort((a, b) => a.localeCompare(b));
+          break;
+        case "alpha_desc":
+          items.sort((a, b) => b.localeCompare(a));
+          break;
+      }
+
+      // Format output
+      let output: string;
+      switch (to as string) {
+        case "comma":
+          output = items.join(", ");
+          break;
+        case "newline":
+          output = items.join("\n");
+          break;
+        case "json":
+          output = JSON.stringify(items, null, 2);
+          break;
+        case "semicolon":
+          output = items.join("; ");
+          break;
+        case "pipe":
+          output = items.join(" | ");
+          break;
+        case "tabs":
+          output = items.join("\t");
+          break;
+        case "numbered":
+          output = items.map((item, i) => `${i + 1}. ${item}`).join("\n");
+          break;
+        case "bulleted":
+          output = items.map((item) => `• ${item}`).join("\n");
+          break;
+        case "quoted":
+          output = items.map((item) => `"${item}"`).join(", ");
+          break;
+        default:
+          output = items.join(", ");
+      }
+
+      return {
+        output,
+        count: items.length,
+        items,
+      };
+    },
+  },
 ];

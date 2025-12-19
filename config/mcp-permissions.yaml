@@ -1,4 +1,17 @@
-# MCP Tool Permission Mappings
+# MCP Tool Permission Metadata
+#
+# IMPORTANT: These are NOT sandbox permissions!
+# The Deno Worker sandbox ALWAYS runs with permissions: "none" (most restrictive).
+# All I/O goes through MCP RPC proxy for 100% traceability.
+# MCP servers run as separate processes with their own permissions.
+#
+# This file defines METADATA used for:
+#   1. Validation detection - Does this DAG need per-layer human approval?
+#   2. Audit logging - What scope does this tool claim to use?
+#
+# =============================================================================
+# Configuration Format
+# =============================================================================
 #
 # Two formats supported:
 #
@@ -8,23 +21,31 @@
 #      isReadOnly: false
 #
 # 2. Explicit (recommended for new entries):
-#    numpy:
-#      scope: minimal        # minimal|readonly|filesystem|network-api|mcp-standard
-#      ffi: true             # Allow FFI (native calls via Deno.dlopen)
-#      run: false            # Allow subprocess (Deno.Command)
-#      approvalMode: auto    # hil = ask human, auto = trust & auto-approve
+#    github:
+#      scope: network-api    # minimal|readonly|filesystem|network-api|mcp-standard
+#      approvalMode: auto    # auto = works freely, hil = requires human approval
 #
-# Shorthand defaults: scope=permissionSet, ffi=false, run=false, approvalMode=hil
+# Shorthand defaults: scope=permissionSet, approvalMode=auto
 #
-# Permission Scopes (from ADR-035):
-#   - minimal: No permissions (pure computation)
-#   - readonly: Read files only (./data)
-#   - filesystem: Read + write to /tmp
-#   - network-api: Network access only
-#   - mcp-standard: Standard MCP permissions (read, /tmp write, network)
+# =============================================================================
+# Scope Levels (metadata only - for documentation/audit)
+# =============================================================================
+#   - minimal: Pure computation, no I/O
+#   - readonly: Read files only
+#   - filesystem: Read + write files
+#   - network-api: Network access
+#   - mcp-standard: Full MCP capabilities
+#
+# =============================================================================
+# Validation Rules (requiresValidation in workflow-execution-handler.ts)
+# =============================================================================
+# Per-layer validation is triggered when:
+#   - Unknown tool (not in this file) → requires validation
+#   - approvalMode: hil (explicit human approval required)
+#   - code_execution task with non-minimal permissions
 #
 # Note: 'trusted' is deprecated - use explicit format with approvalMode: auto
-# Unknown tools default to: mcp-standard (secure fallback)
+# Add tools to this file with approvalMode: auto to skip validation
 
 # Filesystem tools - local file operations
 filesystem:
@@ -195,13 +216,11 @@ vfs:
 # The real filesystem MCP server is defined above as 'filesystem'
 
 # =============================================================================
-# FFI-ENABLED TOOLS (explicit format with sandbox escape permissions)
+# EXTERNAL PROCESS TOOLS (run as separate processes, not in Worker sandbox)
 # =============================================================================
 
 # Plots MCP (mcp-plots) - Generate visualizations (line, bar, scatter, etc.)
-# Requires Python + uvx to be installed on the host
+# Runs as separate Python process via uvx
 plots:
   scope: filesystem
-  ffi: true
-  run: false
   approvalMode: auto

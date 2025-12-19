@@ -444,4 +444,431 @@ export const mathTools: MiniTool[] = [
       return result;
     },
   },
+  // Temperature conversion - inspired by IT-Tools MCP
+  {
+    name: "math_convert_temperature",
+    description: "Convert between temperature units (Celsius, Fahrenheit, Kelvin, Rankine)",
+    category: "math",
+    inputSchema: {
+      type: "object",
+      properties: {
+        value: { type: "number", description: "Temperature value" },
+        from: {
+          type: "string",
+          enum: ["celsius", "fahrenheit", "kelvin", "rankine"],
+          description: "Source unit",
+        },
+        to: {
+          type: "string",
+          enum: ["celsius", "fahrenheit", "kelvin", "rankine"],
+          description: "Target unit",
+        },
+      },
+      required: ["value", "from", "to"],
+    },
+    handler: ({ value, from, to }) => {
+      const v = value as number;
+
+      // First convert to Celsius
+      let celsius: number;
+      switch (from) {
+        case "celsius":
+          celsius = v;
+          break;
+        case "fahrenheit":
+          celsius = (v - 32) * (5 / 9);
+          break;
+        case "kelvin":
+          celsius = v - 273.15;
+          break;
+        case "rankine":
+          celsius = (v - 491.67) * (5 / 9);
+          break;
+        default:
+          throw new Error(`Unknown unit: ${from}`);
+      }
+
+      // Then convert from Celsius to target
+      let result: number;
+      switch (to) {
+        case "celsius":
+          result = celsius;
+          break;
+        case "fahrenheit":
+          result = celsius * (9 / 5) + 32;
+          break;
+        case "kelvin":
+          result = celsius + 273.15;
+          break;
+        case "rankine":
+          result = (celsius + 273.15) * (9 / 5);
+          break;
+        default:
+          throw new Error(`Unknown unit: ${to}`);
+      }
+
+      return {
+        from: { value: v, unit: from },
+        to: { value: Math.round(result * 1000) / 1000, unit: to },
+      };
+    },
+  },
+  {
+    name: "math_percentage_calc",
+    description: "Calculate percentage operations (of, change, increase, decrease)",
+    category: "math",
+    inputSchema: {
+      type: "object",
+      properties: {
+        operation: {
+          type: "string",
+          enum: ["of", "change", "increase", "decrease", "what_percent"],
+          description: "Operation type",
+        },
+        value: { type: "number", description: "Main value" },
+        percent: { type: "number", description: "Percentage value" },
+        from: { type: "number", description: "For 'change' operation: original value" },
+        to: { type: "number", description: "For 'change' operation: new value" },
+      },
+      required: ["operation"],
+    },
+    handler: ({ operation, value, percent, from, to }) => {
+      switch (operation) {
+        case "of":
+          // What is X% of Y?
+          if (percent === undefined || value === undefined) {
+            throw new Error("'of' requires 'percent' and 'value'");
+          }
+          return {
+            operation: `${percent}% of ${value}`,
+            result: ((percent as number) / 100) * (value as number),
+          };
+
+        case "change":
+          // What is the percentage change from X to Y?
+          if (from === undefined || to === undefined) {
+            throw new Error("'change' requires 'from' and 'to'");
+          }
+          const change = (((to as number) - (from as number)) / (from as number)) * 100;
+          return {
+            operation: `Change from ${from} to ${to}`,
+            result: Math.round(change * 100) / 100,
+            direction: change >= 0 ? "increase" : "decrease",
+          };
+
+        case "increase":
+          // Increase X by Y%
+          if (value === undefined || percent === undefined) {
+            throw new Error("'increase' requires 'value' and 'percent'");
+          }
+          return {
+            operation: `Increase ${value} by ${percent}%`,
+            result: (value as number) * (1 + (percent as number) / 100),
+          };
+
+        case "decrease":
+          // Decrease X by Y%
+          if (value === undefined || percent === undefined) {
+            throw new Error("'decrease' requires 'value' and 'percent'");
+          }
+          return {
+            operation: `Decrease ${value} by ${percent}%`,
+            result: (value as number) * (1 - (percent as number) / 100),
+          };
+
+        case "what_percent":
+          // X is what percent of Y?
+          if (value === undefined || from === undefined) {
+            throw new Error("'what_percent' requires 'value' (part) and 'from' (whole)");
+          }
+          return {
+            operation: `${value} is what % of ${from}`,
+            result: Math.round(((value as number) / (from as number)) * 10000) / 100,
+          };
+
+        default:
+          throw new Error(`Unknown operation: ${operation}`);
+      }
+    },
+  },
+  // Comprehensive unit conversion - inspired by calculator-server
+  {
+    name: "math_convert_units",
+    description: "Convert between units (length, weight, volume, area, speed, data)",
+    category: "math",
+    inputSchema: {
+      type: "object",
+      properties: {
+        value: { type: "number", description: "Value to convert" },
+        from: { type: "string", description: "Source unit" },
+        to: { type: "string", description: "Target unit" },
+        category: {
+          type: "string",
+          enum: ["length", "weight", "volume", "area", "speed", "data"],
+          description: "Unit category (auto-detected if omitted)",
+        },
+      },
+      required: ["value", "from", "to"],
+    },
+    handler: ({ value, from, to }) => {
+      const v = value as number;
+      const fromUnit = (from as string).toLowerCase().replace(/\s+/g, "_");
+      const toUnit = (to as string).toLowerCase().replace(/\s+/g, "_");
+
+      // Length conversions (base: meters)
+      const length: Record<string, number> = {
+        meters: 1, m: 1, meter: 1,
+        kilometers: 1000, km: 1000,
+        centimeters: 0.01, cm: 0.01,
+        millimeters: 0.001, mm: 0.001,
+        micrometers: 1e-6, um: 1e-6,
+        nanometers: 1e-9, nm: 1e-9,
+        miles: 1609.344, mi: 1609.344,
+        yards: 0.9144, yd: 0.9144,
+        feet: 0.3048, ft: 0.3048, foot: 0.3048,
+        inches: 0.0254, in: 0.0254, inch: 0.0254,
+        nautical_miles: 1852, nmi: 1852,
+        light_years: 9.461e15, ly: 9.461e15,
+      };
+
+      // Weight/mass conversions (base: kilograms)
+      const weight: Record<string, number> = {
+        kilograms: 1, kg: 1,
+        grams: 0.001, g: 0.001,
+        milligrams: 1e-6, mg: 1e-6,
+        micrograms: 1e-9, ug: 1e-9,
+        metric_tons: 1000, tonnes: 1000, t: 1000,
+        pounds: 0.453592, lb: 0.453592, lbs: 0.453592,
+        ounces: 0.0283495, oz: 0.0283495,
+        stones: 6.35029, st: 6.35029,
+        short_tons: 907.185, us_tons: 907.185,
+        long_tons: 1016.05, uk_tons: 1016.05,
+      };
+
+      // Volume conversions (base: liters)
+      const volume: Record<string, number> = {
+        liters: 1, l: 1, liter: 1, litres: 1,
+        milliliters: 0.001, ml: 0.001,
+        cubic_meters: 1000, m3: 1000,
+        cubic_centimeters: 0.001, cm3: 0.001, cc: 0.001,
+        gallons: 3.78541, gal: 3.78541, us_gallons: 3.78541,
+        uk_gallons: 4.54609, imperial_gallons: 4.54609,
+        quarts: 0.946353, qt: 0.946353,
+        pints: 0.473176, pt: 0.473176,
+        cups: 0.236588, cup: 0.236588,
+        fluid_ounces: 0.0295735, fl_oz: 0.0295735,
+        tablespoons: 0.0147868, tbsp: 0.0147868,
+        teaspoons: 0.00492892, tsp: 0.00492892,
+      };
+
+      // Area conversions (base: square meters)
+      const area: Record<string, number> = {
+        square_meters: 1, m2: 1, sq_m: 1,
+        square_kilometers: 1e6, km2: 1e6, sq_km: 1e6,
+        square_centimeters: 1e-4, cm2: 1e-4, sq_cm: 1e-4,
+        square_millimeters: 1e-6, mm2: 1e-6, sq_mm: 1e-6,
+        hectares: 10000, ha: 10000,
+        acres: 4046.86, ac: 4046.86,
+        square_feet: 0.092903, ft2: 0.092903, sq_ft: 0.092903,
+        square_yards: 0.836127, yd2: 0.836127, sq_yd: 0.836127,
+        square_inches: 0.00064516, in2: 0.00064516, sq_in: 0.00064516,
+        square_miles: 2.59e6, mi2: 2.59e6, sq_mi: 2.59e6,
+      };
+
+      // Speed conversions (base: meters per second)
+      const speed: Record<string, number> = {
+        meters_per_second: 1, m_s: 1, mps: 1,
+        kilometers_per_hour: 0.277778, km_h: 0.277778, kph: 0.277778, kmh: 0.277778,
+        miles_per_hour: 0.44704, mph: 0.44704, mi_h: 0.44704,
+        feet_per_second: 0.3048, ft_s: 0.3048, fps: 0.3048,
+        knots: 0.514444, kn: 0.514444, kt: 0.514444,
+        mach: 343, // at sea level
+      };
+
+      // Data conversions (base: bytes)
+      const data: Record<string, number> = {
+        bytes: 1, b: 1, byte: 1,
+        kilobytes: 1024, kb: 1024,
+        megabytes: 1048576, mb: 1048576,
+        gigabytes: 1073741824, gb: 1073741824,
+        terabytes: 1099511627776, tb: 1099511627776,
+        petabytes: 1125899906842624, pb: 1125899906842624,
+        bits: 0.125, bit: 0.125,
+        kilobits: 128, kbit: 128,
+        megabits: 131072, mbit: 131072,
+        gigabits: 134217728, gbit: 134217728,
+      };
+
+      const categories = { length, weight, volume, area, speed, data };
+
+      // Find which category contains both units
+      for (const [catName, units] of Object.entries(categories)) {
+        if (units[fromUnit] !== undefined && units[toUnit] !== undefined) {
+          const baseValue = v * units[fromUnit];
+          const result = baseValue / units[toUnit];
+          return {
+            from: { value: v, unit: from },
+            to: { value: result, unit: to },
+            category: catName,
+          };
+        }
+      }
+
+      throw new Error(`Cannot convert between '${from}' and '${to}'. Ensure both units are in the same category.`);
+    },
+  },
+  // Financial calculations - inspired by calculator-server
+  {
+    name: "math_financial",
+    description: "Financial calculations (compound interest, loan payment, present/future value, NPV, IRR)",
+    category: "math",
+    inputSchema: {
+      type: "object",
+      properties: {
+        operation: {
+          type: "string",
+          enum: ["compound_interest", "simple_interest", "loan_payment", "present_value", "future_value", "npv", "roi"],
+          description: "Financial operation",
+        },
+        principal: { type: "number", description: "Principal amount (P)" },
+        rate: { type: "number", description: "Interest rate as percentage (e.g., 5 for 5%)" },
+        time: { type: "number", description: "Time in years" },
+        periods: { type: "number", description: "Compounding periods per year (default: 12 for monthly)" },
+        payment: { type: "number", description: "Regular payment amount" },
+        cashFlows: {
+          type: "array",
+          items: { type: "number" },
+          description: "Array of cash flows for NPV (first is initial investment, negative)",
+        },
+        initialInvestment: { type: "number", description: "Initial investment for ROI" },
+        finalValue: { type: "number", description: "Final value for ROI" },
+      },
+      required: ["operation"],
+    },
+    handler: ({ operation, principal, rate, time, periods = 12, cashFlows, initialInvestment, finalValue }) => {
+      const P = principal as number;
+      const r = (rate as number) / 100; // Convert percentage to decimal
+      const t = time as number;
+      const n = periods as number;
+
+      switch (operation) {
+        case "compound_interest": {
+          // A = P(1 + r/n)^(nt)
+          if (P === undefined || rate === undefined || t === undefined) {
+            throw new Error("compound_interest requires principal, rate, and time");
+          }
+          const amount = P * Math.pow(1 + r / n, n * t);
+          const interest = amount - P;
+          return {
+            principal: P,
+            rate: `${rate}%`,
+            time: `${t} years`,
+            periods: n,
+            finalAmount: Math.round(amount * 100) / 100,
+            interestEarned: Math.round(interest * 100) / 100,
+            effectiveRate: `${Math.round((Math.pow(1 + r / n, n) - 1) * 10000) / 100}%`,
+          };
+        }
+
+        case "simple_interest": {
+          // I = P * r * t
+          if (P === undefined || rate === undefined || t === undefined) {
+            throw new Error("simple_interest requires principal, rate, and time");
+          }
+          const interest = P * r * t;
+          return {
+            principal: P,
+            rate: `${rate}%`,
+            time: `${t} years`,
+            interest: Math.round(interest * 100) / 100,
+            finalAmount: Math.round((P + interest) * 100) / 100,
+          };
+        }
+
+        case "loan_payment": {
+          // Monthly payment = P * [r(1+r)^n] / [(1+r)^n - 1]
+          if (P === undefined || rate === undefined || t === undefined) {
+            throw new Error("loan_payment requires principal, rate, and time");
+          }
+          const monthlyRate = r / 12;
+          const numPayments = t * 12;
+          const payment = P * (monthlyRate * Math.pow(1 + monthlyRate, numPayments)) /
+            (Math.pow(1 + monthlyRate, numPayments) - 1);
+          const totalPaid = payment * numPayments;
+          return {
+            loanAmount: P,
+            annualRate: `${rate}%`,
+            termYears: t,
+            monthlyPayment: Math.round(payment * 100) / 100,
+            totalPayments: numPayments,
+            totalPaid: Math.round(totalPaid * 100) / 100,
+            totalInterest: Math.round((totalPaid - P) * 100) / 100,
+          };
+        }
+
+        case "present_value": {
+          // PV = FV / (1 + r)^t
+          if (finalValue === undefined || rate === undefined || t === undefined) {
+            throw new Error("present_value requires finalValue, rate, and time");
+          }
+          const pv = (finalValue as number) / Math.pow(1 + r, t);
+          return {
+            futureValue: finalValue,
+            rate: `${rate}%`,
+            time: `${t} years`,
+            presentValue: Math.round(pv * 100) / 100,
+          };
+        }
+
+        case "future_value": {
+          // FV = PV * (1 + r)^t
+          if (P === undefined || rate === undefined || t === undefined) {
+            throw new Error("future_value requires principal, rate, and time");
+          }
+          const fv = P * Math.pow(1 + r, t);
+          return {
+            presentValue: P,
+            rate: `${rate}%`,
+            time: `${t} years`,
+            futureValue: Math.round(fv * 100) / 100,
+          };
+        }
+
+        case "npv": {
+          // NPV = sum of [Ct / (1+r)^t] for each period
+          if (!cashFlows || rate === undefined) {
+            throw new Error("npv requires cashFlows array and rate");
+          }
+          const flows = cashFlows as number[];
+          let npv = 0;
+          for (let i = 0; i < flows.length; i++) {
+            npv += flows[i] / Math.pow(1 + r, i);
+          }
+          return {
+            cashFlows: flows,
+            discountRate: `${rate}%`,
+            npv: Math.round(npv * 100) / 100,
+            profitable: npv > 0,
+          };
+        }
+
+        case "roi": {
+          // ROI = (Final - Initial) / Initial * 100
+          if (initialInvestment === undefined || finalValue === undefined) {
+            throw new Error("roi requires initialInvestment and finalValue");
+          }
+          const roi = ((finalValue as number) - (initialInvestment as number)) / (initialInvestment as number) * 100;
+          return {
+            initialInvestment,
+            finalValue,
+            roi: `${Math.round(roi * 100) / 100}%`,
+            profit: Math.round(((finalValue as number) - (initialInvestment as number)) * 100) / 100,
+          };
+        }
+
+        default:
+          throw new Error(`Unknown operation: ${operation}`);
+      }
+    },
+  },
 ];

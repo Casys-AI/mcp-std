@@ -6,9 +6,10 @@ This folder contains MCP-compatible libraries and their server bootstraps.
 
 ```
 lib/
-├── std/                      # Standard library (~200 tools)
+├── std/                      # Standard library (~305 tools)
 │   ├── mod.ts                # Main entry point
 │   ├── text.ts, json.ts, ... # Tool modules by category
+│   ├── system.ts             # System CLI tools (docker, git, kubectl, etc.)
 │   └── bundle.js             # Pre-bundled for sandbox use
 ├── mcp-tools.ts              # Re-exports from std/
 ├── mcp-tools-server.ts       # MCP server bootstrap
@@ -23,7 +24,7 @@ lib/
 
 ### std (Standard Library)
 
-**~200 utility tools across 18 categories**, inspired by popular MCP tool servers:
+**~305 utility tools across 19 categories**, inspired by popular MCP tool servers:
 
 #### Sources & Credits
 
@@ -40,24 +41,25 @@ This library is inspired by and includes tools from the following open-source MC
 
 | Category | Count | Examples |
 |----------|-------|----------|
-| text | 21 | split, join, regex, case, template, slugify, nato, lorem, diff, stats, crontab, markdown_toc, ascii_art, numeronym, obfuscate |
-| json | 9 | parse, stringify, query, merge, flatten, unflatten, pick, omit |
-| math | 13 | eval, stats, round, random, mode, convert, base_convert, roman, convert_angle, convert_energy, convert_power |
-| datetime | 7 | now, format, diff, add, parse, cron_parse, unix |
-| crypto | 19 | hash, uuid, ulid, base64, hex, url, html, password, jwt_decode, hmac, totp, text_to_binary, generate_token, basic_auth |
+| **system** | 71 | docker, git, curl, dig, ping, ps, tar, zip, ssh, rsync, kubectl, sqlite, psql, redis, ffmpeg, imagemagick, npm, pip, aws, gcloud, chmod, df, du, sed, awk, jq |
+| text | 26 | split, join, regex, case, template, slugify, nato, lorem, diff, stats, crontab, markdown_toc, ascii_art, numeronym, obfuscate, emoji_search, unicode_info, homoglyph, analyze_words, list_convert |
+| format | 25 | number, bytes, duration, truncate, yaml_to_json, json_to_yaml, toml_to_json, json_to_toml, markdown_to_html, html_to_markdown, json_to_csv, format_sql, format_phone, xml_escape, properties, format_html, format_javascript, format_xml, format_yaml |
+| crypto | 20 | hash, uuid, ulid, base64, hex, url, html, password, jwt_decode, hmac, totp, text_to_binary, generate_token, basic_auth, bcrypt, bip39, md5 |
 | collections | 20 | map, filter, sort, unique, group, chunk, zip, flatten, partition, sample |
-| vfs | 8 | read, write, list, mkdir, rm, stat, exists, copy |
-| data | 8 | fake_name, fake_email, lorem, fake_phone, fake_address, fake_company |
-| http | 6 | build_url, parse_url, headers, query_string |
-| validation | 9 | email, url, uuid, ip, phone, date, json, schema, credit_card |
-| format | 17 | number, bytes, duration, truncate, yaml_to_json, json_to_yaml, markdown_to_html, html_to_markdown, json_to_csv, format_sql, format_phone |
-| transform | 8 | csv_parse, csv_stringify, xml_parse, xml_stringify |
-| state | 10 | set, get, delete, has, keys, values, clear, size, entries (KV store with TTL) |
-| compare | 6 | diff, levenshtein, similarity, fuzzy, deep_equal, array_diff |
 | algo | 20 | binary_search, group_aggregate, top_n, sort variants, quickselect |
-| color | 4 | hex_to_rgb, rgb_to_hex, rgb_to_hsl, hsl_to_rgb |
-| network | 6 | parse_url, build_url, ip_info, subnet_calc, mac_format, fang_url |
-| util | 8 | http_status, http_status_list, mime_type, mime_reverse, rem_px, format_css, normalize_email, port_numbers |
+| math | 17 | eval, stats, round, random, mode, convert, base_convert, roman, convert_angle, convert_energy, convert_power, convert_temperature, percentage, convert_units, financial |
+| data | 11 | person, address, company, lorem, internet, finance, date, image, svg_placeholder, qr_code, barcode |
+| network | 11 | parse_url, build_url, ip_info, ipv6_info, subnet_calc, mac_format, fang_url, decode_safelink, generate_mac, generate_ipv6_ula, random_port |
+| util | 11 | http_status, mime_type, mime_reverse, rem_px, format_css, normalize_email, port_numbers, file_signature, user_agent_parse, slugify |
+| validation | 11 | email, url, uuid, ip, phone, date, json, schema, credit_card, iban |
+| state | 10 | set, get, delete, has, keys, values, clear, size, entries (KV store with TTL) |
+| json | 10 | parse, stringify, query, merge, flatten, unflatten, pick, omit, keys, compare |
+| vfs | 8 | read, write, list, mkdir, rm, stat, exists, copy |
+| transform | 8 | csv_parse, csv_stringify, xml_parse, xml_stringify |
+| datetime | 7 | now, format, diff, add, parse, cron_parse, unix |
+| color | 7 | hex_to_rgb, rgb_to_hex, rgb_to_hsl, hsl_to_rgb, palette, blend, contrast |
+| http | 6 | build_url, parse_url, headers, query_string |
+| compare | 6 | diff, levenshtein, similarity, fuzzy, deep_equal, array_diff |
 
 ## Usage
 

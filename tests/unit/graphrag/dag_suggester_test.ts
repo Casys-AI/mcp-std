@@ -14,6 +14,7 @@ import { MockEmbeddingModel } from "../../fixtures/mock-embedding-model.ts";
 import type { EmbeddingModel } from "../../../src/vector/embeddings.ts";
 import { PGliteClient } from "../../../src/db/client.ts";
 import { getAllMigrations, MigrationRunner } from "../../../src/db/migrations.ts";
+import { DEFAULT_DAG_SCORING_CONFIG } from "../../../src/graphrag/dag-scoring-config.ts";
 
 // Shared DB and model for all tests in this file (migrations run once)
 let sharedDb: PGliteClient;
@@ -116,6 +117,17 @@ Deno.test({
 
     const vectorSearch = new VectorSearch(sharedDb, sharedModel as unknown as EmbeddingModel);
     const suggester = new DAGSuggester(graphEngine, vectorSearch);
+
+    // Use lower thresholds for sparse test graphs (8 nodes, 7 edges)
+    // Production graphs are much denser, so use test-appropriate thresholds
+    suggester.setScoringConfig({
+      ...DEFAULT_DAG_SCORING_CONFIG,
+      thresholds: {
+        ...DEFAULT_DAG_SCORING_CONFIG.thresholds,
+        suggestionReject: 0.30, // Lower for sparse test graph
+        suggestionFloor: 0.40,
+      },
+    });
 
     const suggestion = await suggester.suggestDAG({
       text: "read file and parse JSON",

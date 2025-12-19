@@ -40,7 +40,8 @@ export type ToolCategory =
   | "algo"
   | "color"
   | "network"
-  | "util";
+  | "util"
+  | "system";
 
 /** Mini tool handler function type */
 export type MiniToolHandler = (args: Record<string, unknown>) => Promise<unknown> | unknown;

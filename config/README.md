@@ -8,6 +8,7 @@ Ce dossier contient les fichiers de configuration versionnés pour Casys PML.
 config/
 ├── workflow-templates.yaml    # Templates GraphRAG pour bootstrap
 ├── speculation_config.yaml    # Configuration spéculation
+├── mcp-permissions.yaml       # Métadonnées permissions MCP tools
 └── README.md                  # Ce fichier
 
 # À la racine du projet :
@@ -15,6 +16,38 @@ config/
 .mcp-servers.json              # Config MCP locale (gitignored)
 .mcp.json                      # Config Claude Code
 ```
+
+## MCP Permissions (`mcp-permissions.yaml`)
+
+**Important:** Ce fichier contient des **métadonnées**, pas des permissions sandbox.
+Le Worker Deno exécute toujours avec `permissions: "none"`. Les MCP servers
+tournent comme des processus séparés avec leurs propres droits.
+
+### Utilité
+
+1. **Détection de validation** - Déclenche `per_layer_validation` si nécessaire
+2. **Audit/Logging** - Documente le scope revendiqué par chaque outil
+
+### Format
+
+```yaml
+# Format simple
+github:
+  scope: network-api    # minimal|readonly|filesystem|network-api|mcp-standard
+  approvalMode: auto    # auto = fonctionne, hil = validation requise
+
+# Format legacy (rétrocompatible)
+filesystem:
+  permissionSet: filesystem
+  isReadOnly: false
+```
+
+### Validation Rules
+
+La validation per-layer est déclenchée si :
+- **Outil inconnu** (pas dans ce fichier)
+- **`approvalMode: hil`** explicite
+- **`code_execution`** avec permissions non-minimales
 
 ## Configuration MCP
 

@@ -474,4 +474,271 @@ export const utilTools: MiniTool[] = [
       return { count: entries.length, ports: entries };
     },
   },
+  // File type identification - inspired by IT-Tools MCP
+  {
+    name: "util_file_signature",
+    description: "Identify file type from magic bytes / file signature (hex)",
+    category: "util",
+    inputSchema: {
+      type: "object",
+      properties: {
+        hex: {
+          type: "string",
+          description: "First few bytes of file as hex string (e.g., '89504E47' for PNG)",
+        },
+        base64: {
+          type: "string",
+          description: "First few bytes as base64 (alternative to hex)",
+        },
+      },
+    },
+    handler: ({ hex, base64 }) => {
+      // File signatures database
+      const signatures: Array<{
+        bytes: string;
+        extension: string;
+        mime: string;
+        description: string;
+      }> = [
+        // Images
+        { bytes: "89504E47", extension: "png", mime: "image/png", description: "PNG image" },
+        { bytes: "FFD8FF", extension: "jpg", mime: "image/jpeg", description: "JPEG image" },
+        { bytes: "47494638", extension: "gif", mime: "image/gif", description: "GIF image" },
+        { bytes: "424D", extension: "bmp", mime: "image/bmp", description: "BMP image" },
+        { bytes: "52494646", extension: "webp", mime: "image/webp", description: "WebP image" },
+        { bytes: "00000100", extension: "ico", mime: "image/x-icon", description: "ICO icon" },
+        { bytes: "49492A00", extension: "tiff", mime: "image/tiff", description: "TIFF image (little endian)" },
+        { bytes: "4D4D002A", extension: "tiff", mime: "image/tiff", description: "TIFF image (big endian)" },
+        // Documents
+        { bytes: "25504446", extension: "pdf", mime: "application/pdf", description: "PDF document" },
+        { bytes: "504B0304", extension: "zip", mime: "application/zip", description: "ZIP archive (or Office document)" },
+        { bytes: "D0CF11E0", extension: "doc", mime: "application/msword", description: "Microsoft Office document (old format)" },
+        { bytes: "7B5C727466", extension: "rtf", mime: "application/rtf", description: "RTF document" },
+        // Compressed
+        { bytes: "1F8B08", extension: "gz", mime: "application/gzip", description: "GZIP compressed" },
+        { bytes: "425A68", extension: "bz2", mime: "application/x-bzip2", description: "BZIP2 compressed" },
+        { bytes: "377ABCAF", extension: "7z", mime: "application/x-7z-compressed", description: "7-Zip archive" },
+        { bytes: "526172211A", extension: "rar", mime: "application/vnd.rar", description: "RAR archive" },
+        { bytes: "FD377A585A", extension: "xz", mime: "application/x-xz", description: "XZ compressed" },
+        // Audio/Video
+        { bytes: "494433", extension: "mp3", mime: "audio/mpeg", description: "MP3 audio" },
+        { bytes: "FFFB", extension: "mp3", mime: "audio/mpeg", description: "MP3 audio" },
+        { bytes: "4F676753", extension: "ogg", mime: "audio/ogg", description: "OGG audio" },
+        { bytes: "664C6143", extension: "flac", mime: "audio/flac", description: "FLAC audio" },
+        { bytes: "52494646", extension: "wav", mime: "audio/wav", description: "WAV audio" },
+        { bytes: "00000020", extension: "mp4", mime: "video/mp4", description: "MP4 video" },
+        { bytes: "0000001C", extension: "mp4", mime: "video/mp4", description: "MP4 video" },
+        { bytes: "1A45DFA3", extension: "webm", mime: "video/webm", description: "WebM video" },
+        { bytes: "000001BA", extension: "mpeg", mime: "video/mpeg", description: "MPEG video" },
+        { bytes: "000001B3", extension: "mpeg", mime: "video/mpeg", description: "MPEG video" },
+        // Executables
+        { bytes: "4D5A", extension: "exe", mime: "application/x-msdownload", description: "Windows executable" },
+        { bytes: "7F454C46", extension: "elf", mime: "application/x-executable", description: "ELF executable (Linux)" },
+        { bytes: "CAFEBABE", extension: "class", mime: "application/java-vm", description: "Java class file" },
+        { bytes: "FEEDFACE", extension: "macho", mime: "application/x-mach-binary", description: "Mach-O executable (32-bit)" },
+        { bytes: "FEEDFACF", extension: "macho", mime: "application/x-mach-binary", description: "Mach-O executable (64-bit)" },
+        // Database
+        { bytes: "53514C69746520666F726D617420", extension: "sqlite", mime: "application/x-sqlite3", description: "SQLite database" },
+        // Other
+        { bytes: "3C3F786D6C", extension: "xml", mime: "application/xml", description: "XML document" },
+        { bytes: "3C21444F43545950", extension: "html", mime: "text/html", description: "HTML document" },
+        { bytes: "3C68746D6C", extension: "html", mime: "text/html", description: "HTML document" },
+        { bytes: "7B", extension: "json", mime: "application/json", description: "JSON document (likely)" },
+        { bytes: "5B", extension: "json", mime: "application/json", description: "JSON array (likely)" },
+      ];
+
+      let hexString = "";
+
+      if (hex) {
+        hexString = (hex as string).toUpperCase().replace(/[\s-]/g, "");
+      } else if (base64) {
+        // Convert base64 to hex
+        const binary = atob(base64 as string);
+        hexString = Array.from(binary)
+          .map((c) => c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0"))
+          .join("");
+      }
+
+      if (!hexString) {
+        throw new Error("Provide either 'hex' or 'base64' parameter");
+      }
+
+      // Find matching signatures
+      const matches = signatures
+        .filter((sig) => hexString.startsWith(sig.bytes))
+        .sort((a, b) => b.bytes.length - a.bytes.length); // Prefer longer matches
+
+      if (matches.length === 0) {
+        return {
+          hex: hexString.slice(0, 32),
+          found: false,
+          message: "Unknown file type",
+        };
+      }
+
+      const best = matches[0];
+      return {
+        hex: hexString.slice(0, 32),
+        found: true,
+        extension: best.extension,
+        mime: best.mime,
+        description: best.description,
+        alternatives: matches.length > 1 ? matches.slice(1) : undefined,
+      };
+    },
+  },
+  {
+    name: "util_user_agent_parse",
+    description: "Parse a User-Agent string to extract browser, OS, and device info",
+    category: "util",
+    inputSchema: {
+      type: "object",
+      properties: {
+        userAgent: { type: "string", description: "User-Agent string to parse" },
+      },
+      required: ["userAgent"],
+    },
+    handler: ({ userAgent }) => {
+      const ua = userAgent as string;
+
+      // Extract browser
+      let browser = "Unknown";
+      let browserVersion = "";
+      if (ua.includes("Firefox/")) {
+        browser = "Firefox";
+        browserVersion = ua.match(/Firefox\/([\d.]+)/)?.[1] || "";
+      } else if (ua.includes("Edg/")) {
+        browser = "Edge";
+        browserVersion = ua.match(/Edg\/([\d.]+)/)?.[1] || "";
+      } else if (ua.includes("Chrome/")) {
+        browser = "Chrome";
+        browserVersion = ua.match(/Chrome\/([\d.]+)/)?.[1] || "";
+      } else if (ua.includes("Safari/") && !ua.includes("Chrome")) {
+        browser = "Safari";
+        browserVersion = ua.match(/Version\/([\d.]+)/)?.[1] || "";
+      } else if (ua.includes("MSIE") || ua.includes("Trident/")) {
+        browser = "Internet Explorer";
+        browserVersion = ua.match(/(?:MSIE |rv:)([\d.]+)/)?.[1] || "";
+      } else if (ua.includes("Opera/") || ua.includes("OPR/")) {
+        browser = "Opera";
+        browserVersion = ua.match(/(?:Opera|OPR)\/([\d.]+)/)?.[1] || "";
+      }
+
+      // Extract OS
+      let os = "Unknown";
+      let osVersion = "";
+      if (ua.includes("Windows NT")) {
+        os = "Windows";
+        const ntVersion = ua.match(/Windows NT ([\d.]+)/)?.[1] || "";
+        const windowsVersions: Record<string, string> = {
+          "10.0": "10/11",
+          "6.3": "8.1",
+          "6.2": "8",
+          "6.1": "7",
+          "6.0": "Vista",
+          "5.1": "XP",
+        };
+        osVersion = windowsVersions[ntVersion] || ntVersion;
+      } else if (ua.includes("Mac OS X")) {
+        os = "macOS";
+        osVersion = ua.match(/Mac OS X ([\d_]+)/)?.[1]?.replace(/_/g, ".") || "";
+      } else if (ua.includes("Linux")) {
+        os = "Linux";
+        if (ua.includes("Android")) {
+          os = "Android";
+          osVersion = ua.match(/Android ([\d.]+)/)?.[1] || "";
+        }
+      } else if (ua.includes("iPhone") || ua.includes("iPad")) {
+        os = ua.includes("iPad") ? "iPadOS" : "iOS";
+        osVersion = ua.match(/OS ([\d_]+)/)?.[1]?.replace(/_/g, ".") || "";
+      }
+
+      // Extract device type
+      let device = "Desktop";
+      if (ua.includes("Mobile")) device = "Mobile";
+      else if (ua.includes("Tablet") || ua.includes("iPad")) device = "Tablet";
+
+      // Check if bot
+      const isBot = /bot|crawler|spider|scraper|headless/i.test(ua);
+
+      return {
+        userAgent: ua,
+        browser,
+        browserVersion,
+        os,
+        osVersion,
+        device,
+        isBot,
+        isMobile: device === "Mobile",
+        isTablet: device === "Tablet",
+        isDesktop: device === "Desktop",
+      };
+    },
+  },
+  {
+    name: "util_slugify",
+    description: "Convert text to URL-safe slug",
+    category: "util",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "Text to convert to slug" },
+        separator: { type: "string", description: "Word separator (default: -)" },
+        lowercase: { type: "boolean", description: "Convert to lowercase (default: true)" },
+        maxLength: { type: "number", description: "Maximum slug length" },
+      },
+      required: ["text"],
+    },
+    handler: ({ text, separator = "-", lowercase = true, maxLength }) => {
+      let slug = text as string;
+
+      // Replace accented characters
+      const accents: Record<string, string> = {
+        à: "a", á: "a", â: "a", ã: "a", ä: "a", å: "a",
+        è: "e", é: "e", ê: "e", ë: "e",
+        ì: "i", í: "i", î: "i", ï: "i",
+        ò: "o", ó: "o", ô: "o", õ: "o", ö: "o",
+        ù: "u", ú: "u", û: "u", ü: "u",
+        ñ: "n", ç: "c", ß: "ss",
+        À: "A", Á: "A", Â: "A", Ã: "A", Ä: "A", Å: "A",
+        È: "E", É: "E", Ê: "E", Ë: "E",
+        Ì: "I", Í: "I", Î: "I", Ï: "I",
+        Ò: "O", Ó: "O", Ô: "O", Õ: "O", Ö: "O",
+        Ù: "U", Ú: "U", Û: "U", Ü: "U",
+        Ñ: "N", Ç: "C",
+      };
+
+      slug = slug.split("").map((c) => accents[c] || c).join("");
+
+      // Remove non-alphanumeric characters
+      slug = slug.replace(/[^a-zA-Z0-9\s-]/g, "");
+
+      // Replace spaces with separator
+      slug = slug.replace(/\s+/g, separator as string);
+
+      // Remove consecutive separators
+      const sep = separator as string;
+      const sepRegex = new RegExp(`${sep.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}+`, "g");
+      slug = slug.replace(sepRegex, sep);
+
+      // Remove leading/trailing separators
+      slug = slug.replace(new RegExp(`^${sep}|${sep}$`, "g"), "");
+
+      // Convert to lowercase if requested
+      if (lowercase) {
+        slug = slug.toLowerCase();
+      }
+
+      // Truncate if maxLength specified
+      if (maxLength && slug.length > (maxLength as number)) {
+        slug = slug.slice(0, maxLength as number).replace(new RegExp(`${sep}$`), "");
+      }
+
+      return {
+        original: text,
+        slug,
+        length: slug.length,
+      };
+    },
+  },
 ];

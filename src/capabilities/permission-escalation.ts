@@ -4,10 +4,9 @@
  * Parses Deno PermissionDenied errors and suggests appropriate permission
  * escalations for human approval.
  *
- * Refactored to 3-axis matrix model (scope, ffi, run, approvalMode):
- * - FFI and run are now independent flags, not blocked by default
- * - Tools can declare ffi/run needs in their PermissionConfig
- * - ApprovalMode determines if HIL is needed or auto-approve
+ * Note: This module detects Deno permission errors (read, write, net, env, run, ffi)
+ * from error messages. The ffi/run patterns are for error DETECTION only - they're
+ * not used for configuration. Worker sandbox always runs with permissions: "none".
  *
  * @module capabilities/permission-escalation
  */
@@ -146,37 +145,12 @@ export function suggestEscalation(
     return null;
   }
 
-  // Handle sandbox-escape permissions (ffi, run) - now configurable!
+  // Handle sandbox-escape permissions (ffi, run)
+  // Note: With WorkerBridge architecture, MCP tools execute in main process,
+  // so sandbox-escape permissions are typically not needed. This code path
+  // exists for legacy compatibility and edge cases.
   if (SANDBOX_ESCAPE_PERMISSIONS.has(detectedOperation)) {
-    // Check if tool's config explicitly allows this permission
-    if (toolConfig) {
-      const isAllowed =
-        (detectedOperation === "ffi" && toolConfig.ffi) ||
-        (detectedOperation === "run" && toolConfig.run);
-
-      if (isAllowed) {
-        // Tool declares it needs this permission - allow escalation
-        logger.info("Sandbox-escape permission allowed via tool config", {
-          capabilityId,
-          detectedOperation,
-          toolConfig,
-        });
-
-        // For ffi/run, we don't change scope - just flag the permission
-        const request: PermissionEscalationRequest = {
-          capabilityId,
-          currentSet,
-          requestedSet: currentSet, // Keep same scope
-          reason: error,
-          detectedOperation,
-          confidence: 0.95, // High confidence - explicitly declared
-        };
-        return request;
-      }
-    }
-
-    // No tool config or permission not declared - warn but don't hard-block
-    // The HIL handler will still ask for human approval
+    // Sandbox-escape permission needs explicit approval via HIL
     logger.warn("Sandbox-escape permission needs explicit approval", {
       capabilityId,
       detectedOperation,

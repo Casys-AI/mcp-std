@@ -52,7 +52,9 @@ export class ParallelExecutor {
       maxConcurrency: config.maxConcurrency ?? Infinity,
       taskTimeout: config.taskTimeout ?? 30000,
       verbose: config.verbose ?? false,
-      ail: config.ail ?? { enabled: false, decision_points: "manual" },
+      // AIL enabled by default with on_error mode for replan support (2025-12-19)
+      ail: config.ail ?? { enabled: true, decision_points: "on_error" },
+      // HIL disabled - replaced by per_layer_validation via requiresValidation()
       hil: config.hil ?? { enabled: false, approval_required: "never" },
       userId: config.userId ?? "local", // Story 9.5: Multi-tenant isolation
       timeouts: config.timeouts ?? { hil: 300000, ail: 60000, pollInterval: 100 },

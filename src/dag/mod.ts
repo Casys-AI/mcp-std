@@ -82,3 +82,14 @@ export {
   buildResolutionSummary,
 } from "./argument-resolver.ts";
 export type { ExecutionContext } from "./argument-resolver.ts";
+
+// Story 10.5 AC10/AC11: WorkerBridge-based Tool Executor
+export {
+  createToolExecutorViaWorker,
+  createSimpleToolExecutorViaWorker,
+  cleanupWorkerBridgeExecutor,
+} from "./execution/workerbridge-executor.ts";
+export type {
+  WorkerBridgeExecutorConfig,
+  ExecutorContext,
+} from "./execution/workerbridge-executor.ts";

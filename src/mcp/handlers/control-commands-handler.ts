@@ -7,7 +7,6 @@
  */
 
 import * as log from "@std/log";
-import type { MCPClientBase } from "../types.ts";
 import type {
   MCPToolResponse,
   MCPErrorResponse,
@@ -33,20 +32,77 @@ import {
 } from "../workflow-dag-store.ts";
 import { processGeneratorUntilPause } from "./workflow-execution-handler.ts";
 import type { WorkflowHandlerDependencies } from "./workflow-handler-types.ts";
+// Story 10.5 AC10: WorkerBridge-based executor for 100% traceability
+import {
+  createToolExecutorViaWorker,
+  type ExecutorContext,
+} from "../../dag/execution/workerbridge-executor.ts";
+import type { ToolDefinition } from "../../sandbox/types.ts";
+import type { DAGStructure } from "../../graphrag/types.ts";
 
 /**
- * Create tool executor function for ControlledExecutor
+ * Build tool definitions from DAG tasks for WorkerBridge context
+ *
+ * Story 10.5 AC10: Extract tool definitions for RPC tracing.
  */
-function createToolExecutor(mcpClients: Map<string, MCPClientBase>) {
-  return async (tool: string, args: Record<string, unknown>): Promise<unknown> => {
-    const [serverId, ...toolNameParts] = tool.split(":");
-    const toolName = toolNameParts.join(":");
-    const client = mcpClients.get(serverId);
-    if (!client) {
-      throw new Error(`Unknown MCP server: ${serverId}`);
+async function buildToolDefinitionsFromDAG(
+  dag: DAGStructure,
+  deps: WorkflowHandlerDependencies,
+): Promise<ToolDefinition[]> {
+  const toolDefs: ToolDefinition[] = [];
+  const seenTools = new Set<string>();
+
+  for (const task of dag.tasks) {
+    if (!task.tool || seenTools.has(task.tool)) continue;
+    seenTools.add(task.tool);
+
+    const [serverId, toolName] = task.tool.split(":");
+    if (!serverId || !toolName) continue;
+
+    const client = deps.mcpClients.get(serverId);
+    if (!client) continue;
+
+    try {
+      const tools = await client.listTools();
+      const toolSchema = tools.find((t) => t.name === toolName);
+      if (toolSchema) {
+        toolDefs.push({
+          server: serverId,
+          name: toolName,
+          description: toolSchema.description ?? "",
+          inputSchema: toolSchema.inputSchema as Record<string, unknown>,
+        });
+      }
+    } catch {
+      toolDefs.push({
+        server: serverId,
+        name: toolName,
+        description: "",
+        inputSchema: {},
+      });
     }
-    return await client.callTool(toolName, args);
-  };
+  }
+
+  return toolDefs;
+}
+
+/**
+ * Create tool executor using WorkerBridge for 100% traceability
+ *
+ * Story 10.5 AC10: All MCP tool calls go through WorkerBridge RPC.
+ */
+function createToolExecutorWithTracing(
+  deps: WorkflowHandlerDependencies,
+  toolDefs: ToolDefinition[],
+): { executor: import("../../dag/types.ts").ToolExecutor; context: ExecutorContext } {
+  const [executor, context] = createToolExecutorViaWorker({
+    mcpClients: deps.mcpClients,
+    toolDefinitions: toolDefs,
+    capabilityStore: deps.capabilityStore,
+    graphRAG: deps.graphEngine,
+  });
+
+  return { executor, context };
 }
 
 /**
@@ -92,19 +148,25 @@ export async function handleContinue(
     return formatMCPToolError(`No checkpoints found for workflow ${params.workflow_id}`);
   }
 
+  // Story 10.5 AC10: Build tool definitions and create WorkerBridge executor
+  const toolDefs = await buildToolDefinitionsFromDAG(dag, deps);
+  const { executor, context } = createToolExecutorWithTracing(deps, toolDefs);
+
   // Create new executor and resume from checkpoint
-  const controlledExecutor = new ControlledExecutor(
-    createToolExecutor(deps.mcpClients),
-    {
-      taskTimeout: ServerDefaults.taskTimeout,
-    },
-  );
+  const controlledExecutor = new ControlledExecutor(executor, {
+    taskTimeout: ServerDefaults.taskTimeout,
+  });
 
   controlledExecutor.setCheckpointManager(deps.db, true);
   controlledExecutor.setDAGSuggester(deps.dagSuggester);
   controlledExecutor.setLearningDependencies(deps.capabilityStore, deps.graphEngine);
 
   const generator = controlledExecutor.resumeFromCheckpoint(dag, latestCheckpoint.id);
+
+  log.info(`[Story 10.5] Resuming workflow via WorkerBridge`, {
+    workflowId: params.workflow_id,
+    layer: latestCheckpoint.layer + 1,
+  });
 
   return await processGeneratorUntilPause(
     params.workflow_id,
@@ -113,6 +175,7 @@ export async function handleContinue(
     dag,
     latestCheckpoint.layer + 1,
     deps,
+    context,
   );
 }
 

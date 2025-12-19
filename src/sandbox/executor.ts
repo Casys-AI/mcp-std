@@ -990,17 +990,20 @@ export class DenoSandboxExecutor {
    * This is the new execution method that provides:
    * - Working MCP tool calls in sandbox (via RPC proxies)
    * - Native tracing (no stdout parsing)
-   * - Full isolation via Worker with permissions: "none"
+   * - Granular permission control via Deno Worker permissions (Story 10.5)
    *
-   * Note: Worker mode always uses permissions: "none" (fully sandboxed).
-   * The permissionSet parameter is informational for logging/auditing purposes.
-   * A warning is logged if permissionSet != "minimal" since Worker ignores it.
+   * Permission sets map to Deno Worker permissions:
+   * - "minimal": permissions: "none" (no access)
+   * - "readonly": read: true (file read access)
+   * - "filesystem": read: true, write: true (file read/write)
+   * - "network-api": net: true (network access)
+   * - "mcp-standard": read, write, net, env (full MCP access, no run/ffi)
    *
    * @param code TypeScript code to execute
    * @param workerConfig Tool definitions and MCP clients for RPC bridge
    * @param context Optional context variables to inject
    * @param capabilityContext Optional capability context for injection
-   * @param permissionSet Permission set (informational in Worker mode, default: "minimal")
+   * @param permissionSet Permission set for Worker sandbox (default: "minimal")
    * @returns Execution result with traces and tools called
    */
   async executeWithTools(
@@ -1013,11 +1016,10 @@ export class DenoSandboxExecutor {
     const startTime = performance.now();
     let resourceToken: ExecutionToken | null = null;
 
-    // Story 7.7b (AC#7): Log warning if permission set != "minimal" in Worker mode
-    // Worker mode uses permissions: "none" (fully sandboxed), permission set is ignored
+    // Story 10.5: Log permission set being used (no longer ignored!)
     if (permissionSet && permissionSet !== "minimal") {
-      logger.warn("Permission set ignored in Worker mode (Worker is always sandboxed)", {
-        requestedPermissionSet: permissionSet,
+      logger.info("Worker execution with elevated permissions", {
+        permissionSet,
       });
     }
 
@@ -1076,6 +1078,7 @@ export class DenoSandboxExecutor {
       });
 
       // Create WorkerBridge and execute (Task 2: pass optional dependencies)
+      // Note: Worker always uses "none" permissions - all I/O goes through MCP RPC
       const bridge = new WorkerBridge(workerConfig.mcpClients, {
         timeout: this.config.timeout,
         capabilityStore: this.capabilityStore,

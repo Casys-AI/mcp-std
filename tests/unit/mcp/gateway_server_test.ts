@@ -295,7 +295,9 @@ Deno.test("PMLGatewayServer - call_tool workflow execution", async () => {
   const graphEngine = createMockGraphEngine();
   const dagSuggester = createMockDAGSuggester();
   const executor = createMockExecutor();
+  // Add filesystem client so the tool is known and doesn't require validation
   const mcpClients = new Map<string, MCPClient>();
+  mcpClients.set("filesystem", createMockMCPClient("filesystem"));
 
   const gateway = new PMLGatewayServer(
     db,
@@ -313,7 +315,8 @@ Deno.test("PMLGatewayServer - call_tool workflow execution", async () => {
       arguments: {
         workflow: {
           tasks: [
-            { id: "t1", tool: "test:tool", arguments: {}, dependsOn: [] },
+            // Use known tool (filesystem:read) to avoid validation requirement
+            { id: "t1", tool: "filesystem:read", arguments: { path: "/tmp/test.txt" }, dependsOn: [] },
           ],
         },
       },
@@ -390,8 +393,10 @@ Deno.test({
     },
   });
 
-  assertExists(result.error);
-  assertEquals(result.error.code, -32602); // INVALID_PARAMS
-  assert(result.error.message.includes("Unknown MCP server"));
+  // Gateway returns MCP tool error format (visible to LLM)
+  assertEquals(result.isError, true);
+  assertExists(result.content);
+  const errorContent = JSON.parse(result.content[0].text);
+  assert(errorContent.error.includes("Unknown MCP server"));
   },
 });

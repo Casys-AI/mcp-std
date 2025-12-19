@@ -7,7 +7,6 @@
  */
 
 import * as log from "@std/log";
-import type { MCPClientBase } from "../types.ts";
 import type { DAGStructure } from "../../graphrag/types.ts";
 import type { ExecutionEvent, TaskResult } from "../../dag/types.ts";
 import type { WorkflowState } from "../../dag/state.ts";
@@ -31,6 +30,13 @@ import type { WorkflowHandlerDependencies } from "./workflow-handler-types.ts";
 import { getTaskType } from "../../dag/execution/task-router.ts";
 import type { CapabilityStore } from "../../capabilities/capability-store.ts";
 import { getToolPermissionConfig } from "../../capabilities/permission-inferrer.ts";
+// Story 10.5 AC10: WorkerBridge-based executor for 100% traceability
+import {
+  createToolExecutorViaWorker,
+  cleanupWorkerBridgeExecutor,
+  type ExecutorContext,
+} from "../../dag/execution/workerbridge-executor.ts";
+import type { ToolDefinition } from "../../sandbox/types.ts";
 
 /**
  * Determine if a DAG requires per-layer validation based on permissions.
@@ -75,50 +81,98 @@ async function requiresValidation(
       }
     }
 
-    // MCP tool with elevated permissions or human approval required → needs validation
+    // MCP tool validation check
     if (taskType === "mcp_tool" && task.tool) {
       const toolPrefix = task.tool.split(":")[0]; // "github:create_issue" → "github"
       const permConfig = getToolPermissionConfig(toolPrefix);
 
-      if (permConfig) {
-        // Scope !== minimal → needs validation
-        if (permConfig.scope !== "minimal") {
-          log.info(`Validation required: MCP tool ${task.tool} has scope (${permConfig.scope})`);
-          return true;
-        }
+      // Unknown tool → requires validation (security: don't auto-approve unknown tools)
+      if (!permConfig) {
+        log.info(`Validation required: MCP tool ${task.tool} is unknown (not in mcp-permissions.yaml)`);
+        return true;
+      }
 
-        // approvalMode: "hil" → needs human validation
-        if (permConfig.approvalMode === "hil") {
-          log.info(`Validation required: MCP tool ${task.tool} requires human approval`);
-          return true;
-        }
-
-        // FFI or subprocess permissions → needs validation
-        if (permConfig.ffi || permConfig.run) {
-          log.info(`Validation required: MCP tool ${task.tool} has special permissions (ffi: ${permConfig.ffi}, run: ${permConfig.run})`);
-          return true;
-        }
+      // Explicit HIL → requires validation
+      if (permConfig.approvalMode === "hil") {
+        log.info(`Validation required: MCP tool ${task.tool} explicitly requires human approval`);
+        return true;
       }
     }
   }
 
-  // Minimal permissions or unknown tools → no validation needed
+  // Known tools with auto approval → no validation needed
   return false;
 }
 
 /**
- * Create tool executor function for ControlledExecutor
+ * Build tool definitions from DAG tasks for WorkerBridge context
+ *
+ * @param dag - DAG structure with tasks
+ * @param deps - Handler dependencies with MCP clients
+ * @returns Array of tool definitions
  */
-function createToolExecutor(mcpClients: Map<string, MCPClientBase>) {
-  return async (tool: string, args: Record<string, unknown>): Promise<unknown> => {
-    const [serverId, ...toolNameParts] = tool.split(":");
-    const toolName = toolNameParts.join(":");
-    const client = mcpClients.get(serverId);
-    if (!client) {
-      throw new Error(`Unknown MCP server: ${serverId}`);
+async function buildToolDefinitionsFromDAG(
+  dag: DAGStructure,
+  deps: WorkflowHandlerDependencies,
+): Promise<ToolDefinition[]> {
+  const toolDefs: ToolDefinition[] = [];
+  const seenTools = new Set<string>();
+
+  for (const task of dag.tasks) {
+    if (!task.tool || seenTools.has(task.tool)) continue;
+    seenTools.add(task.tool);
+
+    const [serverId, toolName] = task.tool.split(":");
+    if (!serverId || !toolName) continue;
+
+    const client = deps.mcpClients.get(serverId);
+    if (!client) continue;
+
+    try {
+      const tools = await client.listTools();
+      const toolSchema = tools.find((t) => t.name === toolName);
+      if (toolSchema) {
+        toolDefs.push({
+          server: serverId,
+          name: toolName,
+          description: toolSchema.description ?? "",
+          inputSchema: toolSchema.inputSchema as Record<string, unknown>,
+        });
+      }
+    } catch {
+      // Server doesn't have schema, add minimal definition
+      toolDefs.push({
+        server: serverId,
+        name: toolName,
+        description: "",
+        inputSchema: {},
+      });
     }
-    return await client.callTool(toolName, args);
-  };
+  }
+
+  return toolDefs;
+}
+
+/**
+ * Create tool executor using WorkerBridge for 100% traceability
+ *
+ * Story 10.5 AC10: All MCP tool calls go through WorkerBridge RPC.
+ * This ensures complete tracing with tool_start/tool_end events.
+ *
+ * @deprecated Use createToolExecutorViaWorker directly for new code
+ */
+function createToolExecutorWithTracing(
+  deps: WorkflowHandlerDependencies,
+  toolDefs: ToolDefinition[],
+): { executor: import("../../dag/types.ts").ToolExecutor; context: ExecutorContext } {
+  const [executor, context] = createToolExecutorViaWorker({
+    mcpClients: deps.mcpClients,
+    toolDefinitions: toolDefs,
+    capabilityStore: deps.capabilityStore,
+    graphRAG: deps.graphEngine,
+  });
+
+  return { executor, context };
 }
 
 /**
@@ -254,6 +308,8 @@ export async function handleWorkflowExecution(
 
 /**
  * Execute standard workflow without validation pauses
+ *
+ * Story 10.5 AC10: Uses WorkerBridge for 100% RPC traceability.
  */
 async function executeStandardWorkflow(
   dag: DAGStructure,
@@ -261,41 +317,56 @@ async function executeStandardWorkflow(
   deps: WorkflowHandlerDependencies,
   userId?: string,
 ): Promise<MCPToolResponse> {
-  const controlledExecutor = new ControlledExecutor(
-    createToolExecutor(deps.mcpClients),
-    {
+  // Build tool definitions for WorkerBridge context
+  const toolDefs = await buildToolDefinitionsFromDAG(dag, deps);
+
+  // Create WorkerBridge-based executor for tracing
+  const { executor, context } = createToolExecutorWithTracing(deps, toolDefs);
+
+  try {
+    const controlledExecutor = new ControlledExecutor(executor, {
       taskTimeout: ServerDefaults.taskTimeout,
       userId: userId ?? "local",
-    },
-  );
+    });
 
-  controlledExecutor.setDAGSuggester(deps.dagSuggester);
-  controlledExecutor.setLearningDependencies(deps.capabilityStore, deps.graphEngine);
+    controlledExecutor.setDAGSuggester(deps.dagSuggester);
+    controlledExecutor.setLearningDependencies(deps.capabilityStore, deps.graphEngine);
 
-  const result = await controlledExecutor.execute(dag);
+    const result = await controlledExecutor.execute(dag);
 
-  // Update graph with execution data (learning loop)
-  await deps.graphEngine.updateFromExecution({
-    executionId: crypto.randomUUID(),
-    executedAt: new Date(),
-    intentText: intent ?? "",
-    dagStructure: dag,
-    success: result.errors.length === 0,
-    executionTimeMs: result.executionTimeMs,
-    userId: userId ?? "local",
-  });
+    // Update graph with execution data (learning loop)
+    await deps.graphEngine.updateFromExecution({
+      executionId: crypto.randomUUID(),
+      executedAt: new Date(),
+      intentText: intent ?? "",
+      dagStructure: dag,
+      success: result.errors.length === 0,
+      executionTimeMs: result.executionTimeMs,
+      userId: userId ?? "local",
+    });
 
-  return formatMCPSuccess({
-    status: "completed",
-    results: result.results,
-    executionTimeMs: result.executionTimeMs,
-    parallelization_layers: result.parallelizationLayers,
-    errors: result.errors,
-  });
+    log.info(`[Story 10.5] Workflow executed via WorkerBridge`, {
+      tracesCount: context.traces.length,
+      tasksCount: dag.tasks.length,
+    });
+
+    return formatMCPSuccess({
+      status: "completed",
+      results: result.results,
+      executionTimeMs: result.executionTimeMs,
+      parallelization_layers: result.parallelizationLayers,
+      errors: result.errors,
+    });
+  } finally {
+    // Cleanup WorkerBridge resources
+    cleanupWorkerBridgeExecutor(context);
+  }
 }
 
 /**
  * Execute workflow with per-layer validation (Story 2.5-4)
+ *
+ * Story 10.5 AC10: Uses WorkerBridge for 100% RPC traceability.
  */
 async function executeWithPerLayerValidation(
   dag: DAGStructure,
@@ -308,14 +379,17 @@ async function executeWithPerLayerValidation(
   // Save DAG to database for stateless continuation
   await saveWorkflowDAG(deps.db, workflowId, dag, intent);
 
+  // Build tool definitions for WorkerBridge context
+  const toolDefs = await buildToolDefinitionsFromDAG(dag, deps);
+
+  // Create WorkerBridge-based executor for tracing
+  const { executor, context } = createToolExecutorWithTracing(deps, toolDefs);
+
   // Create ControlledExecutor for this workflow
-  const controlledExecutor = new ControlledExecutor(
-    createToolExecutor(deps.mcpClients),
-    {
-      taskTimeout: ServerDefaults.taskTimeout,
-      userId: userId ?? "local",
-    },
-  );
+  const controlledExecutor = new ControlledExecutor(executor, {
+    taskTimeout: ServerDefaults.taskTimeout,
+    userId: userId ?? "local",
+  });
 
   // Configure checkpointing
   controlledExecutor.setCheckpointManager(deps.db, true);
@@ -325,7 +399,14 @@ async function executeWithPerLayerValidation(
   // Start streaming execution
   const generator = controlledExecutor.executeStream(dag, workflowId);
 
+  log.info(`[Story 10.5] Starting per-layer validation via WorkerBridge`, {
+    workflowId,
+    tasksCount: dag.tasks.length,
+    toolDefsCount: toolDefs.length,
+  });
+
   // Process events until first layer completes
+  // Note: ExecutorContext cleanup happens when workflow completes or aborts
   return await processGeneratorUntilPause(
     workflowId,
     controlledExecutor,
@@ -333,11 +414,14 @@ async function executeWithPerLayerValidation(
     dag,
     0,
     deps,
+    context,
   );
 }
 
 /**
  * Process generator events until next pause point or completion
+ *
+ * @param executorContext - Optional ExecutorContext for WorkerBridge cleanup (Story 10.5)
  */
 export async function processGeneratorUntilPause(
   workflowId: string,
@@ -346,6 +430,7 @@ export async function processGeneratorUntilPause(
   dag: DAGStructure,
   expectedLayer: number,
   deps: WorkflowHandlerDependencies,
+  executorContext?: ExecutorContext,
 ): Promise<MCPToolResponse> {
   const layerResults: TaskResult[] = [];
   let currentLayer = expectedLayer;
@@ -433,6 +518,15 @@ export async function processGeneratorUntilPause(
       deps.activeWorkflows.delete(workflowId);
       await deleteWorkflowDAG(deps.db, workflowId);
 
+      // Story 10.5: Cleanup WorkerBridge resources
+      if (executorContext) {
+        cleanupWorkerBridgeExecutor(executorContext);
+        log.debug(`[Story 10.5] WorkerBridge cleanup on workflow complete`, {
+          workflowId,
+          tracesCount: executorContext.traces.length,
+        });
+      }
+
       return formatWorkflowComplete(
         workflowId,
         event.totalTimeMs ?? 0,
@@ -444,5 +538,9 @@ export async function processGeneratorUntilPause(
   }
 
   // Generator exhausted without workflow_complete (unexpected)
+  // Story 10.5: Still cleanup WorkerBridge
+  if (executorContext) {
+    cleanupWorkerBridgeExecutor(executorContext);
+  }
   return formatMCPSuccess({ status: "complete", workflow_id: workflowId });
 }

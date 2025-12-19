@@ -5,11 +5,12 @@
  * Analyzes code patterns (fetch, mcp.*, Deno.* APIs) to determine minimal permission sets
  * following the principle of least privilege.
  *
- * Refactored to support 3-axis permission matrix:
- * - scope: Resource access level (minimal → readonly → filesystem → network-api → mcp-standard)
- * - ffi: Independent flag for FFI (native calls)
- * - run: Independent flag for subprocess execution
- * - approvalMode: hil (human approval) or auto (trusted)
+ * Permission model (simplified 2025-12-19):
+ * - scope: Resource access level (metadata for audit/documentation)
+ * - approvalMode: auto (works freely) or hil (requires human approval)
+ *
+ * Note: Worker sandbox always runs with permissions: "none".
+ * These are METADATA used for validation detection, not enforcement.
  *
  * @module capabilities/permission-inferrer
  */
@@ -58,7 +59,7 @@ export interface InferredPermissions {
  *
  * Supports two formats:
  * 1. Shorthand (legacy): { permissionSet: "network-api", isReadOnly: true }
- * 2. Explicit (new): { scope: "network-api", ffi: false, run: false, approvalMode: "hil" }
+ * 2. Explicit (new): { scope: "network-api", approvalMode: "auto" }
  */
 interface McpPermissionConfigLegacy {
   permissionSet: PermissionSet;
@@ -66,12 +67,10 @@ interface McpPermissionConfigLegacy {
 }
 
 /**
- * Explicit permission config (new 3-axis model)
+ * Explicit permission config (simplified model)
  */
 interface McpPermissionConfigExplicit {
   scope: PermissionScope;
-  ffi?: boolean;
-  run?: boolean;
   approvalMode?: ApprovalMode;
   isReadOnly?: boolean;
 }
@@ -95,9 +94,7 @@ function toPermissionConfig(config: McpPermissionConfigYaml): PermissionConfig {
   if (isExplicitConfig(config)) {
     return {
       scope: config.scope,
-      ffi: config.ffi ?? false,
-      run: config.run ?? false,
-      approvalMode: config.approvalMode ?? "hil",
+      approvalMode: config.approvalMode ?? "auto",
     };
   }
   // Legacy format - convert shorthand to explicit
@@ -106,9 +103,7 @@ function toPermissionConfig(config: McpPermissionConfigYaml): PermissionConfig {
     : config.permissionSet;
   return {
     scope,
-    ffi: false,
-    run: false,
-    approvalMode: config.permissionSet === "trusted" ? "auto" : "hil",
+    approvalMode: "auto",
   };
 }
 
@@ -132,35 +127,35 @@ let MCP_TOOL_PERMISSIONS: Record<string, McpPermissionCacheEntry> | null = null;
 const DEFAULT_MCP_PERMISSIONS: Record<string, McpPermissionCacheEntry> = {
   "filesystem": {
     legacy: { permissionSet: "filesystem", isReadOnly: false },
-    config: { scope: "filesystem", ffi: false, run: false, approvalMode: "hil" },
+    config: { scope: "filesystem", approvalMode: "auto" },
   },
   "fs": {
     legacy: { permissionSet: "filesystem", isReadOnly: false },
-    config: { scope: "filesystem", ffi: false, run: false, approvalMode: "hil" },
+    config: { scope: "filesystem", approvalMode: "auto" },
   },
   "github": {
     legacy: { permissionSet: "network-api", isReadOnly: false },
-    config: { scope: "network-api", ffi: false, run: false, approvalMode: "hil" },
+    config: { scope: "network-api", approvalMode: "auto" },
   },
   "slack": {
     legacy: { permissionSet: "network-api", isReadOnly: false },
-    config: { scope: "network-api", ffi: false, run: false, approvalMode: "hil" },
+    config: { scope: "network-api", approvalMode: "auto" },
   },
   "tavily": {
     legacy: { permissionSet: "network-api", isReadOnly: false },
-    config: { scope: "network-api", ffi: false, run: false, approvalMode: "hil" },
+    config: { scope: "network-api", approvalMode: "auto" },
   },
   "api": {
     legacy: { permissionSet: "network-api", isReadOnly: false },
-    config: { scope: "network-api", ffi: false, run: false, approvalMode: "hil" },
+    config: { scope: "network-api", approvalMode: "auto" },
   },
   "kubernetes": {
     legacy: { permissionSet: "mcp-standard", isReadOnly: false },
-    config: { scope: "mcp-standard", ffi: false, run: false, approvalMode: "hil" },
+    config: { scope: "mcp-standard", approvalMode: "auto" },
   },
   "docker": {
     legacy: { permissionSet: "mcp-standard", isReadOnly: false },
-    config: { scope: "mcp-standard", ffi: false, run: false, approvalMode: "hil" },
+    config: { scope: "mcp-standard", approvalMode: "auto" },
   },
 };
 
@@ -170,7 +165,7 @@ const DEFAULT_MCP_PERMISSIONS: Record<string, McpPermissionCacheEntry> = {
  *
  * Supports both formats:
  * - Shorthand: { permissionSet: "network-api", isReadOnly: true }
- * - Explicit: { scope: "network-api", ffi: false, run: false, approvalMode: "hil" }
+ * - Explicit: { scope: "network-api", approvalMode: "auto" }
  */
 async function loadMcpPermissions(): Promise<Record<string, McpPermissionCacheEntry>> {
   if (MCP_TOOL_PERMISSIONS !== null) {

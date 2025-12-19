@@ -203,5 +203,8 @@ Deno.test("estimateParallelLayers - sequential structure", () => {
 
 Deno.test("estimateParallelLayers - parallel structure", () => {
   const layers = estimateParallelLayers(parallelStructure);
-  assertEquals(layers, 2); // 1 fork + 1 = 2 layers
+  // Layer 1: 3 parallel tasks (n1, n2, n3) after fork
+  // Layer 2: join point (j1) waits for all parallel tasks
+  // Fork/join nodes don't add layers, they structure parallelism
+  assertEquals(layers, 2);
 });

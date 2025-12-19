@@ -67,6 +67,12 @@ import { isPermissionError } from "./permissions/escalation-integration.ts";
 const log = getLogger("controlled-executor");
 
 /**
+ * Maximum length for result preview strings in AIL decision making events.
+ * Used to truncate large results for SSE streaming efficiency.
+ */
+export const RESULT_PREVIEW_MAX_LENGTH = 240;
+
+/**
  * ControlledExecutor extends ParallelExecutor with adaptive feedback loops
  *
  * Features:
@@ -966,8 +972,8 @@ export class ControlledExecutor extends ParallelExecutor {
         // Generate result preview for AIL decision making
         const resultJson = JSON.stringify(result.value.output);
         const resultSize = new TextEncoder().encode(resultJson).length;
-        const resultPreview = resultJson.length > 240
-          ? resultJson.substring(0, 240) + "..."
+        const resultPreview = resultJson.length > RESULT_PREVIEW_MAX_LENGTH
+          ? resultJson.substring(0, RESULT_PREVIEW_MAX_LENGTH) + "..."
           : resultJson;
 
         const completeEvent: ExecutionEvent = {

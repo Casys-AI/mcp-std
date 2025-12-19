@@ -29,15 +29,22 @@ export function getTaskType(task: Task): TaskType {
  *
  * Safe-to-fail tasks:
  * - Are code_execution type (NOT MCP tools)
- * - Have NO side effects (idempotent, isolated)
+ * - Have minimal permissions (no elevated access)
  *
- * These tasks can fail without halting the workflow.
+ * MCP tools are NEVER safe-to-fail because they have external side effects.
+ * Validation for MCP tools is handled by requiresValidation() in workflow-execution-handler.
  *
  * @param task - Task to check
  * @returns true if task can fail safely
  */
 export function isSafeToFail(task: Task): boolean {
-  return !task.sideEffects && task.type === "code_execution";
+  // Only code_execution tasks with minimal permissions are safe-to-fail
+  if (task.type !== "code_execution") {
+    return false;
+  }
+  // Check permissionSet directly - minimal means no external access
+  const permSet = task.sandboxConfig?.permissionSet ?? "minimal";
+  return permSet === "minimal";
 }
 
 /**
