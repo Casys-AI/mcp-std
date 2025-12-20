@@ -276,8 +276,13 @@ Deno.test("execute - minimal permission set blocks network", async () => {
   );
 });
 
-Deno.test("execute - network-api permission set allows fetch", async () => {
-  const executor = new DenoSandboxExecutor({ timeout: 15000 });
+Deno.test("execute - network-api permission set allows fetch (subprocess only)", async () => {
+  // Permission sets only work with subprocess mode.
+  // Worker mode always uses permissions: "none" for 100% traceability (all I/O via MCP RPC).
+  const executor = new DenoSandboxExecutor({
+    timeout: 15000,
+    useWorkerForExecute: false, // Subprocess mode for permission set support
+  });
 
   // Code that performs network access (using reliable endpoint pattern from E2E tests)
   const result = await executor.execute(

@@ -273,7 +273,6 @@ Deno.test("Integration: Full DAG execution with mixed task types", async (t) => 
           code: `throw new Error("Safe failure");`,
           arguments: {},
           dependsOn: [],
-          sideEffects: false, // Safe-to-fail
         },
         {
           id: "next_task",
@@ -520,8 +519,10 @@ Deno.test({
   });
 
   await t.step({
-    name: "HIL critical_only triggers for tasks with side effects",
+    name: "HIL critical_only is deprecated and does not trigger",
     fn: async () => {
+    // NOTE: critical_only was based on deprecated sideEffects field
+    // Now returns false - validation is handled server-side via mcp-permissions.yaml
     const config: ExecutorConfig = {
       ail: { enabled: false, decision_points: "manual" },
       hil: { enabled: true, approval_required: "critical_only" },
@@ -533,25 +534,24 @@ Deno.test({
 
     const dag: DAGStructure = {
       tasks: [
-        { id: "safe_task", type: "mcp_tool", tool: "test:read", arguments: {}, dependsOn: [], sideEffects: false },
+        { id: "safe_task", type: "mcp_tool", tool: "test:read", arguments: {}, dependsOn: [] },
         {
           id: "critical_task",
           type: "mcp_tool",
           tool: "test:write",
           arguments: {},
           dependsOn: ["safe_task"],
-          sideEffects: true,
         },
       ],
     };
 
     const events = await collectEvents(executor, dag, { autoApproveHIL: true });
 
-    // Should have 1 HIL decision point (only for layer with side effects)
+    // critical_only is deprecated - should NOT trigger HIL (returns false)
     const hilEvents = events.filter((e) => e.type === "decision_required" && e.decisionType === "HIL");
-    assertEquals(hilEvents.length, 1);
+    assertEquals(hilEvents.length, 0);
 
-      console.log("  ✓ HIL critical_only triggers only for side effects");
+      console.log("  ✓ HIL critical_only is deprecated (no HIL events)");
     },
   });
 
@@ -998,7 +998,6 @@ Deno.test("Integration: Error handling and resilience", async (t) => {
           code: `throw new Error("Safe to fail");`,
           arguments: {},
           dependsOn: [],
-          sideEffects: false,
         },
         {
           id: "next_task",
@@ -1038,7 +1037,6 @@ Deno.test("Integration: Error handling and resilience", async (t) => {
           code: `throw new Error("Critical failure");`,
           arguments: {},
           dependsOn: [],
-          sideEffects: true, // NOT safe to fail
         },
         {
           id: "next_task",

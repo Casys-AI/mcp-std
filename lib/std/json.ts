@@ -10,7 +10,7 @@ import type { MiniTool } from "./types.ts";
 export const jsonTools: MiniTool[] = [
   {
     name: "json_parse",
-    description: "Parse JSON string into object",
+    description: "Parse JSON string into JavaScript object or array. Convert JSON text from APIs, files, or user input into usable data structures. Use for processing API responses, reading config files, or deserializing stored data. Keywords: JSON parse, parse JSON, deserialize, string to object, JSON decode, read JSON.",
     category: "json",
     inputSchema: {
       type: "object",
@@ -23,7 +23,7 @@ export const jsonTools: MiniTool[] = [
   },
   {
     name: "json_stringify",
-    description: "Convert object to JSON string",
+    description: "Convert JavaScript object or array to JSON string. Serialize data for storage, API requests, or display. Option for pretty-printing with indentation. Use for saving data, sending to APIs, or debugging object contents. Keywords: JSON stringify, serialize, object to string, JSON encode, pretty print, format JSON.",
     category: "json",
     inputSchema: {
       type: "object",
@@ -37,8 +37,7 @@ export const jsonTools: MiniTool[] = [
   },
   {
     name: "json_query",
-    description:
-      "Query JSON data using JMESPath expressions (e.g., 'people[?age > `20`].name')",
+    description: "Query and extract data from JSON using JMESPath expressions. Filter arrays, select nested properties, or transform data structure. Supports complex queries like 'people[?age > `20`].name'. Use for data extraction, filtering results, or reshaping API responses. Keywords: JMESPath, JSON query, filter JSON, extract data, JSON path, query expression.",
     category: "json",
     inputSchema: {
       type: "object",
@@ -68,7 +67,7 @@ export const jsonTools: MiniTool[] = [
   },
   {
     name: "json_merge",
-    description: "Deep merge multiple objects",
+    description: "Deep merge multiple objects into one, recursively combining nested properties. Later objects override earlier ones for conflicting keys. Use for combining configs, merging API responses, or aggregating data. Keywords: deep merge, merge objects, combine JSON, object merge, config merge, recursive merge.",
     category: "json",
     inputSchema: {
       type: "object",
@@ -103,7 +102,7 @@ export const jsonTools: MiniTool[] = [
   },
   {
     name: "json_keys",
-    description: "Get all keys from an object (optionally nested)",
+    description: "Get all keys from an object, optionally including nested keys in dot notation. Discover object structure, list available properties, or build dynamic schemas. Use for introspection, validation, or documentation. Keywords: object keys, list properties, nested keys, dot notation, property names, schema discovery.",
     category: "json",
     inputSchema: {
       type: "object",
@@ -131,7 +130,7 @@ export const jsonTools: MiniTool[] = [
   },
   {
     name: "json_flatten",
-    description: "Flatten nested object to dot notation keys (e.g., { a: { b: 1 } } → { 'a.b': 1 })",
+    description: "Flatten nested object to dot notation keys (e.g., {a: {b: 1}} → {'a.b': 1}). Convert hierarchical data to flat key-value pairs for easier processing or storage. Use for database storage, form handling, or simplifying complex structures. Keywords: flatten object, dot notation, unnest JSON, flat structure, denormalize, object to flat.",
     category: "json",
     inputSchema: {
       type: "object",
@@ -160,7 +159,7 @@ export const jsonTools: MiniTool[] = [
   },
   {
     name: "json_unflatten",
-    description: "Unflatten dot notation keys to nested object (e.g., { 'a.b': 1 } → { a: { b: 1 } })",
+    description: "Unflatten dot notation keys back to nested object (e.g., {'a.b': 1} → {a: {b: 1}}). Reconstruct hierarchical data from flat key-value pairs. Use for restoring flattened data, form processing, or building nested structures. Keywords: unflatten object, nest object, restore hierarchy, flat to nested, rebuild structure.",
     category: "json",
     inputSchema: {
       type: "object",
@@ -189,7 +188,7 @@ export const jsonTools: MiniTool[] = [
   },
   {
     name: "json_pick",
-    description: "Pick only specified keys from object",
+    description: "Pick only specified keys from an object, creating a new object with just those properties. Extract subset of data, filter sensitive fields, or simplify objects. Use for data projection, API response filtering, or security. Keywords: pick keys, select properties, filter object, subset, whitelist keys, project fields.",
     category: "json",
     inputSchema: {
       type: "object",
@@ -211,7 +210,7 @@ export const jsonTools: MiniTool[] = [
   },
   {
     name: "json_omit",
-    description: "Omit specified keys from object",
+    description: "Omit specified keys from an object, returning a new object without those properties. Remove sensitive data, exclude fields before serialization, or clean up objects. Use for data sanitization, privacy, or simplification. Keywords: omit keys, exclude properties, remove fields, blacklist keys, filter out, delete properties.",
     category: "json",
     inputSchema: {
       type: "object",
@@ -234,7 +233,7 @@ export const jsonTools: MiniTool[] = [
   },
   {
     name: "json_compare",
-    description: "Compare two JSON objects and show differences",
+    description: "Compare two JSON objects and show detailed differences. Find added, removed, changed, or type-changed values with exact paths. Option to ignore array order. Use for config comparison, change detection, or debugging data discrepancies. Keywords: compare objects, JSON diff, find differences, object comparison, detect changes, diff JSON.",
     category: "json",
     inputSchema: {
       type: "object",

@@ -27,9 +27,10 @@ Deno.test({
     assertEquals(result.success, false);
     assertExists(result.error);
     assertEquals(result.error.type, "PermissionError");
-    // Should mention permission denial
+    // Should mention permission denial (message format varies between subprocess/Worker)
     assertEquals(
       result.error.message.toLowerCase().includes("permission") ||
+        result.error.message.toLowerCase().includes("requires") ||
         result.error.message.includes("PermissionDenied") ||
         result.error.message.includes("NotCapable"),
       true,
@@ -239,8 +240,12 @@ Deno.test({
 });
 
 Deno.test({
-  name: "Isolation - allow reading with allowedReadPaths (future use)",
+  name: "Isolation - allow reading with allowedReadPaths (subprocess only)",
   fn: async () => {
+    // Note: allowedReadPaths only works with subprocess mode.
+    // Worker mode uses permissions: "none" for 100% traceability (all I/O via MCP RPC).
+    // This test uses useWorkerForExecute: false to test subprocess-specific feature.
+
     // Create a temp file to test allowed reads
     const tempDir = Deno.makeTempDirSync();
     const testFile = `${tempDir}/allowed-test.txt`;
@@ -249,6 +254,7 @@ Deno.test({
     try {
       const sandbox = new DenoSandboxExecutor({
         allowedReadPaths: [tempDir],
+        useWorkerForExecute: false, // Subprocess mode for allowedReadPaths support
       });
 
       const code = `

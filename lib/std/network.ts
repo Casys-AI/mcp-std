@@ -1,724 +1,305 @@
 /**
- * Network utility tools
+ * Network tools - HTTP, DNS, connectivity
  *
- * Inspired by:
- * - IT-Tools MCP: https://github.com/wrenchpilot/it-tools-mcp
- *
- * @module lib/std/network
+ * @module lib/std/tools/network
  */
 
-import type { MiniTool } from "./types.ts";
+import { runCommand, type MiniTool } from "./common.ts";
 
 export const networkTools: MiniTool[] = [
   {
-    name: "network_parse_url",
-    description: "Parse a URL into its components",
-    category: "network",
+    name: "curl_fetch",
+    description: "Make HTTP request using curl for API calls, web scraping, and testing endpoints. Supports all HTTP methods, custom headers, request bodies, and SSL options. Use for REST API interactions, webhook testing, file downloads, or HTTP debugging. Keywords: HTTP request, API call, REST client, web fetch, curl command, HTTP GET POST.",
+    category: "system",
     inputSchema: {
       type: "object",
       properties: {
-        url: { type: "string", description: "URL to parse" },
+        url: { type: "string", description: "URL to fetch" },
+        method: { type: "string", enum: ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"], description: "HTTP method" },
+        headers: { type: "object", description: "Request headers" },
+        data: { type: "string", description: "Request body" },
+        timeout: { type: "number", description: "Timeout in seconds (default: 30)" },
+        followRedirects: { type: "boolean", description: "Follow redirects (default: true)" },
+        insecure: { type: "boolean", description: "Allow insecure SSL connections" },
       },
       required: ["url"],
     },
-    handler: ({ url }) => {
-      try {
-        const parsed = new URL(url as string);
-        const params: Record<string, string> = {};
-        parsed.searchParams.forEach((value, key) => {
-          params[key] = value;
-        });
+    handler: async ({ url, method = "GET", headers, data, timeout = 30, followRedirects = true, insecure = false }) => {
+      const args = ["-s", "-w", "\n%{http_code}\n%{time_total}"];
 
-        return {
-          href: parsed.href,
-          protocol: parsed.protocol.replace(":", ""),
-          host: parsed.host,
-          hostname: parsed.hostname,
-          port: parsed.port || (parsed.protocol === "https:" ? "443" : "80"),
-          pathname: parsed.pathname,
-          search: parsed.search,
-          hash: parsed.hash,
-          origin: parsed.origin,
-          username: parsed.username || null,
-          password: parsed.password || null,
-          params,
-        };
-      } catch {
-        throw new Error(`Invalid URL: ${url}`);
-      }
-    },
-  },
-  {
-    name: "network_build_url",
-    description: "Build a URL from components",
-    category: "network",
-    inputSchema: {
-      type: "object",
-      properties: {
-        protocol: { type: "string", description: "Protocol (default: https)" },
-        hostname: { type: "string", description: "Hostname" },
-        port: { type: "number", description: "Port (optional)" },
-        pathname: { type: "string", description: "Path (default: /)" },
-        params: { type: "object", description: "Query parameters" },
-        hash: { type: "string", description: "Hash/fragment" },
-      },
-      required: ["hostname"],
-    },
-    handler: ({ protocol = "https", hostname, port, pathname = "/", params, hash }) => {
-      const url = new URL(`${protocol}://${hostname}`);
-      if (port) url.port = String(port);
-      url.pathname = pathname as string;
-      if (params) {
-        for (const [key, value] of Object.entries(params as Record<string, string>)) {
-          url.searchParams.set(key, value);
+      if (method !== "GET") args.push("-X", method as string);
+      if (followRedirects) args.push("-L");
+      if (insecure) args.push("-k");
+      args.push("--max-time", String(timeout));
+
+      if (headers) {
+        for (const [key, value] of Object.entries(headers as Record<string, string>)) {
+          args.push("-H", `${key}: ${value}`);
         }
       }
-      if (hash) url.hash = hash as string;
-      return url.href;
-    },
-  },
-  {
-    name: "network_ip_info",
-    description: "Parse and analyze an IPv4 address",
-    category: "network",
-    inputSchema: {
-      type: "object",
-      properties: {
-        ip: { type: "string", description: "IPv4 address" },
-      },
-      required: ["ip"],
-    },
-    handler: ({ ip }) => {
-      const parts = (ip as string).split(".").map(Number);
-      if (parts.length !== 4 || parts.some((p) => isNaN(p) || p < 0 || p > 255)) {
-        throw new Error(`Invalid IPv4 address: ${ip}`);
+
+      if (data) {
+        args.push("-d", data as string);
       }
 
-      const [a, b, c, d] = parts;
-      const numeric = (a << 24) + (b << 16) + (c << 8) + d;
-      const binary = parts.map((p) => p.toString(2).padStart(8, "0")).join(".");
+      args.push(url as string);
 
-      // Determine class
-      let ipClass = "Unknown";
-      let defaultMask = "";
-      if (a >= 1 && a <= 126) {
-        ipClass = "A";
-        defaultMask = "255.0.0.0";
-      } else if (a >= 128 && a <= 191) {
-        ipClass = "B";
-        defaultMask = "255.255.0.0";
-      } else if (a >= 192 && a <= 223) {
-        ipClass = "C";
-        defaultMask = "255.255.255.0";
-      } else if (a >= 224 && a <= 239) {
-        ipClass = "D (Multicast)";
-      } else if (a >= 240 && a <= 255) {
-        ipClass = "E (Reserved)";
-      }
+      const result = await runCommand("curl", args, { timeout: (timeout as number) * 1000 + 5000 });
 
-      // Check if private
-      const isPrivate =
-        (a === 10) ||
-        (a === 172 && b >= 16 && b <= 31) ||
-        (a === 192 && b === 168) ||
-        (a === 127);
+      const lines = result.stdout.trim().split("\n");
+      const timeTotal = parseFloat(lines.pop() || "0");
+      const statusCode = parseInt(lines.pop() || "0", 10);
+      const body = lines.join("\n");
 
       return {
-        ip,
-        binary,
-        numeric: numeric >>> 0, // Convert to unsigned
-        class: ipClass,
-        defaultMask,
-        isPrivate,
-        isLoopback: a === 127,
+        statusCode,
+        body,
+        timeMs: Math.round(timeTotal * 1000),
+        success: statusCode >= 200 && statusCode < 300,
       };
     },
   },
   {
-    name: "network_subnet_calc",
-    description: "Calculate subnet information from IP and CIDR",
-    category: "network",
+    name: "dig_lookup",
+    description: "Perform DNS lookup to resolve domain names to IP addresses. Query A, AAAA, MX, NS, TXT, CNAME, and SOA records from any DNS server. Use for DNS debugging, verifying records, checking propagation, or troubleshooting domain issues. Keywords: DNS query, domain lookup, name resolution, dig command, DNS records, MX lookup.",
+    category: "system",
     inputSchema: {
       type: "object",
       properties: {
-        cidr: {
-          type: "string",
-          description: "CIDR notation (e.g., '192.168.1.0/24')",
-        },
+        domain: { type: "string", description: "Domain to lookup" },
+        type: { type: "string", enum: ["A", "AAAA", "MX", "NS", "TXT", "CNAME", "SOA", "ANY"], description: "Record type (default: A)" },
+        server: { type: "string", description: "DNS server to use (e.g., 8.8.8.8)" },
+        short: { type: "boolean", description: "Short output (answers only)" },
       },
-      required: ["cidr"],
+      required: ["domain"],
     },
-    handler: ({ cidr }) => {
-      const [ip, maskBits] = (cidr as string).split("/");
-      const mask = parseInt(maskBits, 10);
+    handler: async ({ domain, type = "A", server, short = true }) => {
+      const args = [];
+      if (server) args.push(`@${server}`);
+      args.push(domain as string, type as string);
+      if (short) args.push("+short");
 
-      if (mask < 0 || mask > 32) {
-        throw new Error(`Invalid CIDR mask: /${maskBits}`);
+      const result = await runCommand("dig", args);
+      if (result.code !== 0) {
+        throw new Error(`dig failed: ${result.stderr}`);
       }
 
-      const parts = ip.split(".").map(Number);
-      if (parts.length !== 4 || parts.some((p) => isNaN(p) || p < 0 || p > 255)) {
-        throw new Error(`Invalid IP address: ${ip}`);
+      if (short) {
+        const records = result.stdout.trim().split("\n").filter(Boolean);
+        return { domain, type, records, count: records.length };
+      }
+      return { output: result.stdout };
+    },
+  },
+  {
+    name: "ping_host",
+    description: "Ping a host using ICMP to check network connectivity and measure latency. Returns round-trip time (RTT) statistics, packet loss percentage, and reachability status. Use for network diagnostics, uptime monitoring, troubleshooting connectivity, or testing host availability. Keywords: ping test, network connectivity, latency check, host reachable, ICMP echo, network diagnostics.",
+    category: "system",
+    inputSchema: {
+      type: "object",
+      properties: {
+        host: { type: "string", description: "Host to ping" },
+        count: { type: "number", description: "Number of pings (default: 4)" },
+        timeout: { type: "number", description: "Timeout per ping in seconds (default: 5)" },
+      },
+      required: ["host"],
+    },
+    handler: async ({ host, count = 4, timeout = 5 }) => {
+      const args = ["-c", String(count), "-W", String(timeout), host as string];
+
+      const result = await runCommand("ping", args, { timeout: (count as number) * (timeout as number) * 1000 + 5000 });
+
+      const lines = result.stdout.split("\n");
+      const statsLine = lines.find((l) => l.includes("packets transmitted"));
+      const rttLine = lines.find((l) => l.includes("rtt") || l.includes("round-trip"));
+
+      let transmitted = 0, received = 0, loss = 0;
+      if (statsLine) {
+        const match = statsLine.match(/(\d+) packets transmitted, (\d+) (?:packets )?received, (\d+(?:\.\d+)?)% packet loss/);
+        if (match) {
+          transmitted = parseInt(match[1], 10);
+          received = parseInt(match[2], 10);
+          loss = parseFloat(match[3]);
+        }
       }
 
-      const ipNum = (parts[0] << 24) + (parts[1] << 16) + (parts[2] << 8) + parts[3];
-      const maskNum = mask === 0 ? 0 : (~0 << (32 - mask)) >>> 0;
-      const networkNum = (ipNum & maskNum) >>> 0;
-      const broadcastNum = (networkNum | ~maskNum) >>> 0;
-      const hostCount = Math.pow(2, 32 - mask) - 2;
-
-      const numToIp = (n: number) =>
-        [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join(".");
-
-      const maskToIp = (bits: number) => {
-        const m = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
-        return numToIp(m);
-      };
+      let min = 0, avg = 0, max = 0;
+      if (rttLine) {
+        const match = rttLine.match(/([\d.]+)\/([\d.]+)\/([\d.]+)/);
+        if (match) {
+          min = parseFloat(match[1]);
+          avg = parseFloat(match[2]);
+          max = parseFloat(match[3]);
+        }
+      }
 
       return {
-        cidr,
-        networkAddress: numToIp(networkNum),
-        broadcastAddress: numToIp(broadcastNum),
-        subnetMask: maskToIp(mask),
-        wildcardMask: numToIp(~maskNum >>> 0),
-        firstHost: mask < 31 ? numToIp(networkNum + 1) : numToIp(networkNum),
-        lastHost: mask < 31 ? numToIp(broadcastNum - 1) : numToIp(broadcastNum),
-        hostCount: Math.max(0, hostCount),
-        totalAddresses: Math.pow(2, 32 - mask),
-        maskBits: mask,
+        host,
+        alive: received > 0,
+        transmitted,
+        received,
+        lossPercent: loss,
+        rtt: { min, avg, max },
       };
     },
   },
   {
-    name: "network_mac_format",
-    description: "Format or validate a MAC address",
-    category: "network",
+    name: "nslookup",
+    description: "Simple DNS lookup to resolve domain names to IP addresses. Easier alternative to dig for basic queries. Use for quick domain resolution, verifying DNS settings, or checking what IP a domain points to. Keywords: DNS lookup, nslookup, domain to IP, name server query, resolve hostname.",
+    category: "system",
     inputSchema: {
       type: "object",
       properties: {
-        mac: { type: "string", description: "MAC address in any format" },
-        format: {
-          type: "string",
-          enum: ["colon", "hyphen", "dot", "none"],
-          description: "Output format (default: colon)",
-        },
+        domain: { type: "string", description: "Domain to lookup" },
+        server: { type: "string", description: "DNS server to use" },
       },
-      required: ["mac"],
+      required: ["domain"],
     },
-    handler: ({ mac, format = "colon" }) => {
-      // Remove all separators and validate
-      const clean = (mac as string).replace(/[:\-. ]/g, "").toUpperCase();
-      if (!/^[0-9A-F]{12}$/.test(clean)) {
-        throw new Error(`Invalid MAC address: ${mac}`);
+    handler: async ({ domain, server }) => {
+      const args = [domain as string];
+      if (server) args.push(server as string);
+
+      const result = await runCommand("nslookup", args);
+
+      const lines = result.stdout.split("\n");
+      const addresses: string[] = [];
+
+      for (const line of lines) {
+        const match = line.match(/Address:\s*([^\s]+)/);
+        if (match && !line.includes("#")) {
+          addresses.push(match[1]);
+        }
       }
-
-      const pairs = clean.match(/.{2}/g)!;
-
-      let formatted: string;
-      switch (format) {
-        case "hyphen":
-          formatted = pairs.join("-");
-          break;
-        case "dot":
-          formatted = `${pairs[0]}${pairs[1]}.${pairs[2]}${pairs[3]}.${pairs[4]}${pairs[5]}`;
-          break;
-        case "none":
-          formatted = clean;
-          break;
-        default:
-          formatted = pairs.join(":");
-      }
-
-      // Determine vendor prefix (OUI)
-      const oui = pairs.slice(0, 3).join(":");
 
       return {
-        formatted,
-        canonical: pairs.join(":"),
-        oui,
-        isUnicast: (parseInt(pairs[0], 16) & 1) === 0,
-        isLocal: (parseInt(pairs[0], 16) & 2) !== 0,
+        domain,
+        addresses,
+        resolved: addresses.length > 0,
       };
     },
   },
   {
-    name: "network_fang_url",
-    description: "Defang or refang URLs/IPs for safe sharing in threat intelligence",
-    category: "network",
+    name: "traceroute",
+    description: "Trace the network path to a destination showing each hop and latency. Identifies routers between source and destination, useful for diagnosing network routing issues, finding bottlenecks, or understanding network topology. Keywords: traceroute, network path, hops, routing, network topology, packet path, latency by hop.",
+    category: "system",
     inputSchema: {
       type: "object",
       properties: {
-        input: { type: "string", description: "URL, IP, or domain to defang/refang" },
-        mode: {
-          type: "string",
-          enum: ["defang", "refang"],
-          description: "Mode: defang (make safe) or refang (restore) (default: defang)",
-        },
+        host: { type: "string", description: "Target host" },
+        maxHops: { type: "number", description: "Maximum hops (default: 30)" },
       },
-      required: ["input"],
+      required: ["host"],
     },
-    handler: ({ input, mode = "defang" }) => {
-      const s = input as string;
+    handler: async ({ host, maxHops = 30 }) => {
+      const args = ["-m", String(maxHops), host as string];
 
-      if (mode === "refang") {
-        // Restore defanged URLs
-        return s
-          .replace(/\[:\]/g, ":")
-          .replace(/\[\.\]/g, ".")
-          .replace(/hxxp/gi, "http")
-          .replace(/hXXp/gi, "http")
-          .replace(/\[@\]/g, "@")
-          .replace(/\[\/\]/g, "/");
-      }
-
-      // Defang: make URLs safe to share
-      return s
-        .replace(/\./g, "[.]")
-        .replace(/:/g, "[:]")
-        .replace(/http/gi, "hxxp")
-        .replace(/@/g, "[@]");
+      const result = await runCommand("traceroute", args, { timeout: 60000 });
+      return { output: result.stdout, success: result.code === 0 };
     },
   },
-  // SafeLink decoder - inspired by IT-Tools MCP
   {
-    name: "network_decode_safelink",
-    description: "Decode SafeLinks (URL wrappers from email security like Microsoft Defender, Proofpoint, Mimecast)",
-    category: "network",
+    name: "netcat",
+    description: "Swiss army knife for TCP/UDP networking. Check if ports are open, scan port ranges, test network services. Use for port scanning, service availability checks, firewall testing, or verifying that services are listening. Keywords: netcat, nc, port scan, port check, TCP connection, service test, open ports.",
+    category: "system",
     inputSchema: {
       type: "object",
       properties: {
-        url: {
-          type: "string",
-          description: "SafeLink URL to decode",
-        },
+        host: { type: "string", description: "Target host" },
+        port: { type: "number", description: "Target port" },
+        scan: { type: "boolean", description: "Port scan mode" },
+        portRange: { type: "string", description: "Port range for scan (e.g., '20-80')" },
+        timeout: { type: "number", description: "Timeout in seconds" },
+      },
+      required: ["host"],
+    },
+    handler: async ({ host, port, scan = false, portRange, timeout = 5 }) => {
+      const args = ["-z", "-v", "-w", String(timeout)];
+      args.push(host as string);
+
+      if (scan && portRange) {
+        args.push(portRange as string);
+      } else if (port) {
+        args.push(String(port));
+      }
+
+      const result = await runCommand("nc", args, { timeout: (timeout as number) * 1000 + 5000 });
+      return {
+        host,
+        port: port || portRange,
+        open: result.code === 0,
+        output: result.stderr,
+      };
+    },
+  },
+  {
+    name: "wget_download",
+    description: "Download files from URLs with wget. Supports resumable downloads, recursive website mirroring, and custom output paths. Use for downloading assets, mirroring sites, fetching remote files, or automated downloads with retry capability. Keywords: wget, file download, URL fetch, mirror website, resume download, recursive download.",
+    category: "system",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "URL to download" },
+        output: { type: "string", description: "Output file path" },
+        recursive: { type: "boolean", description: "Recursive download" },
+        depth: { type: "number", description: "Recursion depth" },
+        continueDownload: { type: "boolean", description: "Continue partial download" },
       },
       required: ["url"],
     },
-    handler: ({ url }) => {
-      const u = url as string;
+    handler: async ({ url, output, recursive = false, depth, continueDownload = false }) => {
+      const args = ["-q"];
+      if (output) args.push("-O", output as string);
+      if (recursive) args.push("-r");
+      if (depth) args.push("-l", String(depth));
+      if (continueDownload) args.push("-c");
+      args.push(url as string);
 
-      // Microsoft Defender SafeLinks
-      // Format: https://eur02.safelinks.protection.outlook.com/?url=...&data=...
-      if (u.includes("safelinks.protection.outlook.com")) {
-        const urlObj = new URL(u);
-        const encodedUrl = urlObj.searchParams.get("url");
-        if (encodedUrl) {
-          const decoded = decodeURIComponent(encodedUrl);
-          return {
-            type: "Microsoft Defender SafeLinks",
-            original: u,
-            decoded,
-          };
-        }
+      const result = await runCommand("wget", args, { timeout: 600000 });
+      if (result.code !== 0) {
+        throw new Error(`wget failed: ${result.stderr}`);
       }
-
-      // Proofpoint URL Defense
-      // Format: https://urldefense.proofpoint.com/v2/url?u=https-3A__example.com&d=...
-      if (u.includes("urldefense.proofpoint.com") || u.includes("urldefense.com")) {
-        const urlObj = new URL(u);
-        let encodedUrl = urlObj.searchParams.get("u");
-        if (encodedUrl) {
-          // Proofpoint v2 encoding: -XX for special chars
-          const decoded = encodedUrl
-            .replace(/-2D/g, "-")
-            .replace(/-3A/g, ":")
-            .replace(/-2F/g, "/")
-            .replace(/-3F/g, "?")
-            .replace(/-3D/g, "=")
-            .replace(/-26/g, "&")
-            .replace(/-23/g, "#")
-            .replace(/-25/g, "%")
-            .replace(/__/g, "/")
-            .replace(/_/g, "/");
-
-          return {
-            type: "Proofpoint URL Defense",
-            original: u,
-            decoded,
-          };
-        }
-      }
-
-      // Mimecast
-      // Format: https://url.mimecast.com/s/...?domain=example.com
-      if (u.includes("url.mimecast.com") || u.includes("protect-us.mimecast.com")) {
-        // Mimecast doesn't easily expose the original URL in the wrapper
-        // The domain is sometimes in a parameter
-        const urlObj = new URL(u);
-        const domain = urlObj.searchParams.get("domain");
-        return {
-          type: "Mimecast",
-          original: u,
-          domain: domain || "Unknown - Mimecast encoding is not reversible",
-          note: "Mimecast SafeLinks cannot be fully decoded without API access",
-        };
-      }
-
-      // Barracuda
-      // Format: https://linkprotect.cudasvc.com/url?a=...
-      if (u.includes("linkprotect.cudasvc.com")) {
-        const urlObj = new URL(u);
-        const encodedUrl = urlObj.searchParams.get("a");
-        if (encodedUrl) {
-          try {
-            const decoded = atob(encodedUrl);
-            return {
-              type: "Barracuda Link Protection",
-              original: u,
-              decoded,
-            };
-          } catch {
-            // Base64 decode failed
-          }
-        }
-      }
-
-      // Google redirect
-      // Format: https://www.google.com/url?q=...&sa=...
-      if (u.includes("google.com/url")) {
-        const urlObj = new URL(u);
-        const encodedUrl = urlObj.searchParams.get("q") || urlObj.searchParams.get("url");
-        if (encodedUrl) {
-          return {
-            type: "Google Redirect",
-            original: u,
-            decoded: decodeURIComponent(encodedUrl),
-          };
-        }
-      }
-
-      // Generic URL parameter extraction
-      // Try common parameter names
-      try {
-        const urlObj = new URL(u);
-        const possibleParams = ["url", "u", "link", "target", "redirect", "goto", "dest", "destination"];
-
-        for (const param of possibleParams) {
-          const value = urlObj.searchParams.get(param);
-          if (value && (value.startsWith("http") || value.includes("."))) {
-            return {
-              type: "Generic URL Wrapper",
-              original: u,
-              decoded: decodeURIComponent(value),
-              parameterUsed: param,
-            };
-          }
-        }
-      } catch {
-        // URL parsing failed
-      }
-
-      return {
-        type: "Unknown",
-        original: u,
-        note: "Could not detect SafeLink format or extract original URL",
-      };
+      return { success: true, url, output: output || "downloaded" };
     },
   },
   {
-    name: "network_ipv6_info",
-    description: "Parse and analyze an IPv6 address",
-    category: "network",
+    name: "ip_address",
+    description: "Get network interface information including IP addresses, MAC addresses, and interface status. Shows all network adapters with IPv4/IPv6 addresses and subnet masks. Use to find your IP, check network configuration, or list available interfaces. Keywords: IP address, network interface, ifconfig, ip addr, local IP, network config, MAC address.",
+    category: "system",
     inputSchema: {
       type: "object",
       properties: {
-        ip: { type: "string", description: "IPv6 address" },
-      },
-      required: ["ip"],
-    },
-    handler: ({ ip }) => {
-      const original = ip as string;
-
-      // Expand the IPv6 address
-      let expanded = original.toLowerCase();
-
-      // Handle :: expansion
-      if (expanded.includes("::")) {
-        const parts = expanded.split("::");
-        const left = parts[0] ? parts[0].split(":") : [];
-        const right = parts[1] ? parts[1].split(":") : [];
-        const missing = 8 - left.length - right.length;
-        const middle = Array(missing).fill("0000");
-        expanded = [...left, ...middle, ...right].join(":");
-      }
-
-      // Pad each group to 4 digits
-      const groups = expanded.split(":");
-      if (groups.length !== 8) {
-        throw new Error(`Invalid IPv6 address: ${ip}`);
-      }
-
-      const paddedGroups = groups.map((g) => g.padStart(4, "0"));
-      const fullExpanded = paddedGroups.join(":");
-
-      // Create compressed version
-      let compressed = paddedGroups.map((g) => g.replace(/^0+/, "") || "0").join(":");
-
-      // Find longest sequence of zeros for ::
-      const zeroRuns: Array<{ start: number; length: number }> = [];
-      let runStart = -1;
-      let runLength = 0;
-
-      paddedGroups.forEach((g, i) => {
-        if (g === "0000") {
-          if (runStart === -1) runStart = i;
-          runLength++;
-        } else {
-          if (runLength > 1) {
-            zeroRuns.push({ start: runStart, length: runLength });
-          }
-          runStart = -1;
-          runLength = 0;
-        }
-      });
-      if (runLength > 1) {
-        zeroRuns.push({ start: runStart, length: runLength });
-      }
-
-      if (zeroRuns.length > 0) {
-        const longest = zeroRuns.reduce((a, b) => (b.length > a.length ? b : a));
-        const parts = compressed.split(":");
-        const before = parts.slice(0, longest.start).join(":");
-        const after = parts.slice(longest.start + longest.length).join(":");
-        compressed = `${before}::${after}`;
-        if (compressed.startsWith(":::")) compressed = "::" + compressed.slice(3);
-        if (compressed.endsWith(":::")) compressed = compressed.slice(0, -3) + "::";
-      }
-
-      // Determine address type
-      let type = "Global Unicast";
-      const firstGroup = parseInt(paddedGroups[0], 16);
-
-      if (fullExpanded === "0000:0000:0000:0000:0000:0000:0000:0001") {
-        type = "Loopback (::1)";
-      } else if (fullExpanded === "0000:0000:0000:0000:0000:0000:0000:0000") {
-        type = "Unspecified (::)";
-      } else if (paddedGroups[0].startsWith("fe8")) {
-        type = "Link-Local";
-      } else if (paddedGroups[0].startsWith("fc") || paddedGroups[0].startsWith("fd")) {
-        type = "Unique Local (Private)";
-      } else if (paddedGroups[0].startsWith("ff")) {
-        type = "Multicast";
-      } else if (firstGroup >= 0x2000 && firstGroup <= 0x3fff) {
-        type = "Global Unicast";
-      }
-
-      return {
-        original,
-        expanded: fullExpanded,
-        compressed,
-        groups: paddedGroups,
-        type,
-        isLoopback: fullExpanded === "0000:0000:0000:0000:0000:0000:0000:0001",
-        isPrivate: paddedGroups[0].startsWith("fc") || paddedGroups[0].startsWith("fd"),
-        isLinkLocal: paddedGroups[0].startsWith("fe8"),
-      };
-    },
-  },
-  // MAC address generator - inspired by IT-Tools MCP
-  {
-    name: "network_generate_mac",
-    description: "Generate random MAC address(es)",
-    category: "network",
-    inputSchema: {
-      type: "object",
-      properties: {
-        count: { type: "number", description: "Number of MACs to generate (default: 1)" },
-        prefix: { type: "string", description: "OUI prefix to use (e.g., '00:50:56' for VMware)" },
-        format: {
-          type: "string",
-          enum: ["colon", "hyphen", "dot", "none"],
-          description: "Output format (default: colon)",
-        },
-        unicast: { type: "boolean", description: "Ensure unicast bit is set (default: true)" },
-        local: { type: "boolean", description: "Set locally-administered bit (default: true)" },
+        interface: { type: "string", description: "Specific interface" },
       },
     },
-    handler: ({ count = 1, prefix, format = "colon", unicast = true, local = true }) => {
-      const generateOne = (): string => {
-        let bytes: number[];
+    handler: async ({ interface: iface }) => {
+      let result = await runCommand("ip", ["-j", "addr", "show"]);
 
-        if (prefix) {
-          // Use provided OUI prefix
-          const prefixClean = (prefix as string).replace(/[:\-. ]/g, "").toUpperCase();
-          const prefixBytes = prefixClean.match(/.{2}/g)?.map((b) => parseInt(b, 16)) || [];
-          bytes = [...prefixBytes];
+      if (result.code === 0) {
+        try {
+          const data = JSON.parse(result.stdout);
+          const interfaces = data.map((i: { ifname: string; flags: string[]; addr_info: Array<{ family: string; local: string; prefixlen: number }> }) => ({
+            name: i.ifname,
+            flags: i.flags,
+            addresses: i.addr_info?.map((a: { family: string; local: string; prefixlen: number }) => ({
+              family: a.family,
+              address: a.local,
+              prefixlen: a.prefixlen,
+            })) || [],
+          }));
 
-          // Generate remaining bytes
-          while (bytes.length < 6) {
-            bytes.push(Math.floor(Math.random() * 256));
+          if (iface) {
+            const found = interfaces.find((i: { name: string }) => i.name === iface);
+            return found || { error: `Interface ${iface} not found` };
           }
-        } else {
-          // Generate all 6 bytes
-          bytes = Array.from({ length: 6 }, () => Math.floor(Math.random() * 256));
-
-          // Adjust first byte for unicast/multicast and local/global bits
-          if (unicast) {
-            bytes[0] = bytes[0] & 0xfe; // Clear multicast bit (bit 0)
-          }
-          if (local) {
-            bytes[0] = bytes[0] | 0x02; // Set locally-administered bit (bit 1)
-          }
-        }
-
-        const hex = bytes.map((b) => b.toString(16).padStart(2, "0").toUpperCase());
-
-        switch (format) {
-          case "hyphen":
-            return hex.join("-");
-          case "dot":
-            return `${hex[0]}${hex[1]}.${hex[2]}${hex[3]}.${hex[4]}${hex[5]}`;
-          case "none":
-            return hex.join("");
-          default:
-            return hex.join(":");
-        }
-      };
-
-      const n = Math.min(Math.max(1, count as number), 100);
-      const macs = Array.from({ length: n }, generateOne);
-
-      return n === 1 ? macs[0] : macs;
-    },
-  },
-  // IPv6 ULA generator - inspired by IT-Tools MCP
-  {
-    name: "network_generate_ipv6_ula",
-    description: "Generate random IPv6 Unique Local Address (ULA) prefix",
-    category: "network",
-    inputSchema: {
-      type: "object",
-      properties: {
-        count: { type: "number", description: "Number of ULA prefixes to generate (default: 1)" },
-        subnetId: { type: "string", description: "Subnet ID to use (hex, 0-ffff, default: random)" },
-      },
-    },
-    handler: ({ count = 1, subnetId }) => {
-      const generateOne = (): object => {
-        // Generate 40-bit Global ID (random)
-        const globalId = Array.from({ length: 5 }, () =>
-          Math.floor(Math.random() * 256)
-            .toString(16)
-            .padStart(2, "0")
-        ).join("");
-
-        // Subnet ID (16-bit)
-        const subnet = subnetId
-          ? (subnetId as string).padStart(4, "0")
-          : Math.floor(Math.random() * 65536)
-              .toString(16)
-              .padStart(4, "0");
-
-        // Format: fd + global ID (40 bits = 10 hex) + subnet ID (16 bits = 4 hex)
-        // Split into 4-char groups for IPv6 format
-        const prefix = `fd${globalId}`;
-        const formatted = `${prefix.slice(0, 4)}:${prefix.slice(4, 8)}:${prefix.slice(8, 12)}:${subnet}`;
-
-        return {
-          prefix: `${formatted}::/64`,
-          fullPrefix: `${formatted}:0000:0000:0000:0000`,
-          globalId: globalId,
-          subnetId: subnet,
-          firstAddress: `${formatted}::1`,
-          lastAddress: `${formatted}:ffff:ffff:ffff:ffff`,
-          addressCount: "18,446,744,073,709,551,616", // 2^64 addresses in /64
-        };
-      };
-
-      const n = Math.min(Math.max(1, count as number), 100);
-      const ulas = Array.from({ length: n }, generateOne);
-
-      return n === 1 ? ulas[0] : ulas;
-    },
-  },
-  // Random port generator - inspired by IT-Tools MCP
-  {
-    name: "network_random_port",
-    description: "Generate random port number(s) in specified range",
-    category: "network",
-    inputSchema: {
-      type: "object",
-      properties: {
-        count: { type: "number", description: "Number of ports to generate (default: 1)" },
-        range: {
-          type: "string",
-          enum: ["all", "privileged", "registered", "dynamic", "user"],
-          description: "Port range: all (1-65535), privileged (1-1023), registered (1024-49151), dynamic/user (49152-65535)",
-        },
-        min: { type: "number", description: "Minimum port (overrides range)" },
-        max: { type: "number", description: "Maximum port (overrides range)" },
-        exclude: {
-          type: "array",
-          items: { type: "number" },
-          description: "Ports to exclude from selection",
-        },
-      },
-    },
-    handler: ({ count = 1, range = "dynamic", min, max, exclude = [] }) => {
-      // Determine range bounds
-      let minPort = 1;
-      let maxPort = 65535;
-
-      if (min !== undefined && max !== undefined) {
-        minPort = min as number;
-        maxPort = max as number;
-      } else {
-        switch (range) {
-          case "privileged":
-            minPort = 1;
-            maxPort = 1023;
-            break;
-          case "registered":
-            minPort = 1024;
-            maxPort = 49151;
-            break;
-          case "dynamic":
-          case "user":
-            minPort = 49152;
-            maxPort = 65535;
-            break;
-          case "all":
-          default:
-            minPort = 1;
-            maxPort = 65535;
+          return { interfaces };
+        } catch {
+          return { output: result.stdout };
         }
       }
 
-      // Validate bounds
-      minPort = Math.max(1, Math.min(65535, minPort));
-      maxPort = Math.max(1, Math.min(65535, maxPort));
-      if (minPort > maxPort) [minPort, maxPort] = [maxPort, minPort];
-
-      const excludeSet = new Set(exclude as number[]);
-
-      const generateOne = (): number => {
-        let port: number;
-        let attempts = 0;
-        do {
-          port = Math.floor(Math.random() * (maxPort - minPort + 1)) + minPort;
-          attempts++;
-        } while (excludeSet.has(port) && attempts < 1000);
-        return port;
-      };
-
-      const n = Math.min(Math.max(1, count as number), 100);
-      const ports = Array.from({ length: n }, generateOne);
-
-      // Provide port info for single result
-      if (n === 1) {
-        const port = ports[0];
-        let type = "Dynamic/Private";
-        if (port <= 1023) type = "Well-Known/Privileged";
-        else if (port <= 49151) type = "Registered";
-
-        return {
-          port,
-          type,
-          range: `${minPort}-${maxPort}`,
-        };
-      }
-
-      return ports;
+      const ifArgs = iface ? [iface as string] : [];
+      result = await runCommand("ifconfig", ifArgs);
+      return { output: result.stdout };
     },
   },
 ];

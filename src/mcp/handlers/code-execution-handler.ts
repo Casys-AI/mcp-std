@@ -39,6 +39,7 @@ import type { Task } from "../../graphrag/types.ts";
 import type { TaskResult } from "../../dag/types.ts";
 import type { PGliteClient } from "../../db/client.ts";
 import type { ToolDefinition } from "../../sandbox/types.ts";
+import { type DagScoringConfig, DEFAULT_DAG_SCORING_CONFIG } from "../../graphrag/dag-scoring-config.ts";
 
 /**
  * Dependencies required for code execution handler
@@ -54,6 +55,8 @@ export interface CodeExecutionDependencies {
   toolSchemaCache: Map<string, string>;
   /** PGlite client for DAG checkpoints (Story 10.5) */
   db?: PGliteClient;
+  /** Scoring config for search thresholds */
+  scoringConfig?: DagScoringConfig;
 }
 
 /**
@@ -449,7 +452,9 @@ async function executeSandboxMode(
       // 1. Search for existing capabilities (Story 8.3: capability reuse)
       if (deps.capabilityStore) {
         try {
-          matchedCapabilities = await deps.capabilityStore.searchByIntent(request.intent, 3, 0.7);
+          const intentSearchThreshold = deps.scoringConfig?.thresholds.intentSearch
+            ?? DEFAULT_DAG_SCORING_CONFIG.thresholds.intentSearch;
+          matchedCapabilities = await deps.capabilityStore.searchByIntent(request.intent, 3, intentSearchThreshold);
           if (matchedCapabilities.length > 0) {
             log.info(`Found ${matchedCapabilities.length} matching capabilities for intent`, {
               topMatch: matchedCapabilities[0].capability.name,

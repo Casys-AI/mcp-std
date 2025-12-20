@@ -57,9 +57,12 @@ Deno.test({
 Deno.test({
   name: "Memory - exceed custom memory limit (128MB)",
   fn: async () => {
+    // Memory limits only work with subprocess mode.
+    // Worker mode doesn't support per-Worker memory limits.
     const sandbox = new DenoSandboxExecutor({
       memoryLimit: 128,
       timeout: 10000, // Longer timeout to allow OOM to trigger
+      useWorkerForExecute: false, // Subprocess mode for memory limits
     });
     const code = `
       // Try to allocate 200MB (exceeds 128MB limit)
@@ -89,8 +92,10 @@ Deno.test({
 Deno.test({
   name: "Memory - exceed default memory limit (512MB)",
   fn: async () => {
+    // Memory limits only work with subprocess mode
     const sandbox = new DenoSandboxExecutor({
       timeout: 15000, // Longer timeout for large allocation
+      useWorkerForExecute: false, // Subprocess mode for memory limits
     });
     const code = `
       // Try to allocate 600MB (exceeds 512MB limit)
@@ -120,9 +125,11 @@ Deno.test({
 Deno.test({
   name: "Memory - very small limit (64MB)",
   fn: async () => {
+    // Memory limits only work with subprocess mode
     const sandbox = new DenoSandboxExecutor({
       memoryLimit: 64,
       timeout: 10000,
+      useWorkerForExecute: false, // Subprocess mode for memory limits
     });
     const code = `
       // Try to allocate 100MB (exceeds 64MB limit)

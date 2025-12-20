@@ -166,6 +166,32 @@ async function writeMessage(response: JsonRpcResponse): Promise<void> {
 }
 
 // ============================================================================
+// Concurrent Request Processing
+// ============================================================================
+
+const MAX_CONCURRENT = 10;
+let inFlight = 0;
+const writeQueue: JsonRpcResponse[] = [];
+let writing = false;
+
+/**
+ * Flush pending responses to stdout
+ * Uses a flag to ensure atomic writes (no interleaving)
+ */
+async function flushWriteQueue(): Promise<void> {
+  if (writing) return;
+  writing = true;
+  try {
+    while (writeQueue.length > 0) {
+      const response = writeQueue.shift()!;
+      await writeMessage(response);
+    }
+  } finally {
+    writing = false;
+  }
+}
+
+// ============================================================================
 // Main Entry Point
 // ============================================================================
 
@@ -183,15 +209,34 @@ async function main() {
   const reader = Deno.stdin.readable.getReader();
 
   // Log to stderr (stdout is for MCP protocol)
-  console.error(`[mcp-std] Server started${categories ? ` with categories: ${categories.join(", ")}` : " with all categories"}`);
+  console.error(`[mcp-std] Server started (concurrent, max=${MAX_CONCURRENT})${categories ? ` with categories: ${categories.join(", ")}` : " with all categories"}`);
 
   while (true) {
     const request = await readMessage(reader);
     if (!request) break;
 
-    const response = await server.handleRequest(request);
-    await writeMessage(response);
+    // Fire and forget - concurrent processing
+    (async () => {
+      // Backpressure: wait for a slot if at max concurrency
+      while (inFlight >= MAX_CONCURRENT) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      inFlight++;
+      try {
+        const response = await server.handleRequest(request);
+        writeQueue.push(response);
+        await flushWriteQueue();
+      } finally {
+        inFlight--;
+      }
+    })();
   }
+
+  // Wait for in-flight requests to complete before stopping
+  while (inFlight > 0) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  await flushWriteQueue();
 
   console.error("[mcp-std] Server stopped");
 }

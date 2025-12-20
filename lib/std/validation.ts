@@ -13,7 +13,7 @@ import type { MiniTool } from "./types.ts";
 export const validationTools: MiniTool[] = [
   {
     name: "validate_email",
-    description: "Validate email address format",
+    description: "Validate email address format and normalize. Check if email follows RFC standards, normalize domain case and gmail dots. Use for form validation, user registration, or data cleaning. Keywords: validate email, email format, check email, email validator, email regex, normalize email.",
     category: "validation",
     inputSchema: {
       type: "object",
@@ -29,7 +29,7 @@ export const validationTools: MiniTool[] = [
   },
   {
     name: "validate_url",
-    description: "Validate URL format",
+    description: "Validate URL format with configurable protocol requirements. Check if string is a valid URL, specify allowed protocols (http, https, ftp). Use for link validation, form inputs, or security checks. Keywords: validate URL, URL format, check URL, URL validator, valid link, protocol check.",
     category: "validation",
     inputSchema: {
       type: "object",
@@ -53,7 +53,7 @@ export const validationTools: MiniTool[] = [
   },
   {
     name: "validate_uuid",
-    description: "Validate UUID format",
+    description: "Validate UUID format with optional version check (v1-v5). Verify UUIDs from databases, APIs, or user input. Use for ID validation, data integrity, or input sanitization. Keywords: validate UUID, UUID format, check UUID, GUID validate, UUID version, unique identifier.",
     category: "validation",
     inputSchema: {
       type: "object",
@@ -69,7 +69,7 @@ export const validationTools: MiniTool[] = [
   },
   {
     name: "validate_credit_card",
-    description: "Validate credit card number (Luhn algorithm)",
+    description: "Validate credit card number using Luhn algorithm. Check if card number has valid checksum without knowing the issuer. Use for payment form validation or data verification. Keywords: credit card validate, Luhn algorithm, card number check, payment validation, checksum verify.",
     category: "validation",
     inputSchema: {
       type: "object",
@@ -84,7 +84,7 @@ export const validationTools: MiniTool[] = [
   },
   {
     name: "validate_ip",
-    description: "Validate IP address (v4 or v6)",
+    description: "Validate IP address format for IPv4 or IPv6. Check if string is valid IP address, detect version automatically. Use for network configuration, firewall rules, or access control. Keywords: validate IP, IP address, IPv4 IPv6, IP format, check IP, network address.",
     category: "validation",
     inputSchema: {
       type: "object",
@@ -102,7 +102,7 @@ export const validationTools: MiniTool[] = [
   },
   {
     name: "validate_json",
-    description: "Validate JSON string and optionally check against schema",
+    description: "Validate JSON string syntax and parse. Check if string is valid JSON, returns parsed object on success or error details on failure. Use for API input validation, config file checking, or data import. Keywords: validate JSON, parse JSON, JSON syntax, check JSON, valid JSON, JSON error.",
     category: "validation",
     inputSchema: {
       type: "object",
@@ -122,7 +122,7 @@ export const validationTools: MiniTool[] = [
   },
   {
     name: "validate_schema",
-    description: "Validate data against a Zod-compatible schema definition",
+    description: "Validate data against a Zod-compatible schema definition. Define expected types, constraints (min/max, patterns), and required fields. Get detailed error messages with paths. Use for API validation, form validation, or data contracts. Keywords: schema validation, Zod validate, type checking, data validation, contract validation, input schema.",
     category: "validation",
     inputSchema: {
       type: "object",
@@ -204,7 +204,7 @@ export const validationTools: MiniTool[] = [
   },
   {
     name: "validate_phone",
-    description: "Validate phone number format",
+    description: "Validate mobile phone number format with locale support. Check if number matches expected format for specific countries or any locale. Use for contact form validation or international phone numbers. Keywords: validate phone, phone number, mobile number, phone format, international phone, locale phone.",
     category: "validation",
     inputSchema: {
       type: "object",
@@ -223,7 +223,7 @@ export const validationTools: MiniTool[] = [
   },
   {
     name: "validate_date",
-    description: "Validate date string format",
+    description: "Validate date string format against ISO8601 or custom format. Check if date string is properly formatted and represents valid date. Use for form validation, data import, or date parsing. Keywords: validate date, date format, ISO8601, check date, date string, parse date.",
     category: "validation",
     inputSchema: {
       type: "object",
@@ -243,7 +243,7 @@ export const validationTools: MiniTool[] = [
   // IBAN validation - inspired by IT-Tools MCP
   {
     name: "validate_iban",
-    description: "Validate IBAN (International Bank Account Number)",
+    description: "Validate IBAN (International Bank Account Number) with checksum verification. Supports 90+ countries, validates length, format, and mod-97 checksum. Returns country code, BBAN, and formatted display. Use for banking, payments, or financial forms. Keywords: IBAN validate, bank account, checksum, international bank, BBAN, payment validation.",
     category: "validation",
     inputSchema: {
       type: "object",
@@ -323,7 +323,7 @@ export const validationTools: MiniTool[] = [
   },
   {
     name: "validate_credit_card_info",
-    description: "Validate credit card number and detect card type (Visa, Mastercard, etc.)",
+    description: "Validate credit card with Luhn algorithm and detect card type (Visa, Mastercard, Amex, Discover, Diners, JCB). Returns card type, last 4 digits, and masked number. Use for payment forms, card identification, or checkout flows. Keywords: credit card type, Visa Mastercard, card detect, payment card, card validation, card brand.",
     category: "validation",
     inputSchema: {
       type: "object",

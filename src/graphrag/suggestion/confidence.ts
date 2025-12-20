@@ -174,12 +174,14 @@ export function calculateCommunityConfidence(
 
   // Boost if direct edge exists (historical pattern)
   if (edgeWeight !== null) {
-    confidence += Math.min(edgeWeight * 0.25, edgeWeightBoostCap);
+    const edgeWeightMultiplier = config.community.edgeWeightMultiplier;
+    confidence += Math.min(edgeWeight * edgeWeightMultiplier, edgeWeightBoostCap);
   }
 
   // Boost by Adamic-Adar similarity (indirect patterns)
   if (adamicAdarScore > 0) {
-    confidence += Math.min(adamicAdarScore * 0.1, adamicAdarBoostCap);
+    const adamicAdarMultiplier = config.community.adamicAdarMultiplier;
+    confidence += Math.min(adamicAdarScore * adamicAdarMultiplier, adamicAdarBoostCap);
   }
 
   return Math.min(confidence, config.caps.maxConfidence);

@@ -69,6 +69,19 @@ export interface SandboxConfig {
    * When provided, enables graph updates from execution traces.
    */
   graphRAG?: import("../graphrag/graph-engine.ts").GraphRAGEngine;
+
+  /**
+   * Use Worker for execute() instead of subprocess (Story 10.5 AC13)
+   *
+   * When true, execute() uses WorkerBridge internally instead of spawning
+   * a Deno subprocess. This provides:
+   * - Faster execution (~5ms vs ~50ms for subprocess spawn)
+   * - 100% traceability (all execution through RPC bridge)
+   * - Unified execution path (same as executeWithTools)
+   *
+   * @default true (Worker is the default path)
+   */
+  useWorkerForExecute?: boolean;
 }
 
 /**

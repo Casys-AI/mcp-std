@@ -134,78 +134,196 @@ fetch:
   isReadOnly: true
 
 # =============================================================================
-# STD (lib/std/) - Standard library tools, 94 tools across 15 categories
+# STD (lib/std/) - Standard library tools, 305 tools across 28 categories
+# =============================================================================
+#
+# CURRENT STATE (self-hosted):
+#   These tools run DIRECTLY in the main process with --allow-all.
+#   The scope levels are metadata only - real security is approvalMode: hil.
+#
+# FUTURE STATE (SaaS):
+#   Scope levels will map to Deno Worker permissions per tenant:
+#   - minimal    → permissions: "none" (pure computation)
+#   - readonly   → permissions: { read: [tenant_dir] }
+#   - filesystem → permissions: { read: [tenant_dir], write: [tenant_dir] }
+#   - network-api→ permissions: { net: [allowed_hosts] }
+#   - mcp-standard → full MCP proxy (no direct Deno permissions)
+#
+#   Plans: free=minimal, pro=filesystem, enterprise=all
+#   Each tenant isolated in its own Worker with scoped permissions.
+#
 # =============================================================================
 
-# Text manipulation - pure computation
-text:
-  permissionSet: minimal
-  isReadOnly: true
+# -----------------------------------------------------------------------------
+# SYSTEM TOOLS - Execute shell commands, require elevated permissions
+# -----------------------------------------------------------------------------
 
-# JSON operations - pure computation
+# Git - repository operations (git status, log, diff, commit, push, etc.)
+git:
+  scope: filesystem
+  approvalMode: auto
+
+# Network - HTTP requests, DNS, connectivity checks
+network:
+  scope: network-api
+  approvalMode: auto
+
+# Process - process listing, killing, resource monitoring
+process:
+  scope: mcp-standard
+  approvalMode: hil
+
+# Archive - tar, zip, gzip compression/extraction
+archive:
+  scope: filesystem
+  approvalMode: auto
+
+# SSH - remote command execution
+ssh:
+  scope: mcp-standard
+  approvalMode: hil
+
+# Database - SQL/NoSQL queries (postgres, mysql, sqlite, mongo, redis)
+database:
+  scope: network-api
+  approvalMode: hil
+
+# Media - ffmpeg, imagemagick, audio/video/image processing
+media:
+  scope: filesystem
+  approvalMode: auto
+
+# Cloud - AWS CLI, GCP, systemd service management
+cloud:
+  scope: mcp-standard
+  approvalMode: hil
+
+# Sysinfo - system information (uname, df, uptime, etc.)
+sysinfo:
+  scope: filesystem
+  approvalMode: auto
+
+# Packages - npm, pip, apt, brew package management
+packages:
+  scope: mcp-standard
+  approvalMode: hil
+
+# Text CLI - sed, awk, jq, sort, uniq (shell text processing)
+text:
+  scope: filesystem
+  approvalMode: auto
+
+# -----------------------------------------------------------------------------
+# DATA TOOLS - Pure computation, no I/O (minimal permissions)
+# -----------------------------------------------------------------------------
+
+# JSON operations - parse, stringify, query, transform
 json:
   permissionSet: minimal
   isReadOnly: true
 
-# Math operations - pure computation
+# Math operations - arithmetic, statistics, trigonometry
 math:
   permissionSet: minimal
   isReadOnly: true
 
-# DateTime operations - pure computation
+# DateTime operations - parse, format, diff, timezone
 datetime:
   permissionSet: minimal
   isReadOnly: true
 
-# Crypto operations (hash, uuid, base64) - pure computation
+# Crypto operations (hash, uuid, base64, hmac)
 crypto:
   permissionSet: minimal
   isReadOnly: true
 
-# Collection operations (map, filter, sort) - pure computation
+# Collection operations (map, filter, sort, group)
 collections:
   permissionSet: minimal
   isReadOnly: true
 
-# Data generation (fake_name, lorem) - pure computation
-data:
-  permissionSet: minimal
-  isReadOnly: true
-
-# Validation (email, url, pattern) - pure computation
+# Validation (email, url, pattern, schema)
 validation:
   permissionSet: minimal
   isReadOnly: true
 
-# Format (number, bytes, duration) - pure computation
+# Format (number, bytes, duration, currency)
 format:
   permissionSet: minimal
   isReadOnly: true
 
-# Transform (csv_parse, xml) - pure computation
+# Transform (csv_parse, xml, yaml)
 transform:
   permissionSet: minimal
   isReadOnly: true
 
-# Compare (diff, levenshtein, similarity) - pure computation
-compare:
-  permissionSet: minimal
-  isReadOnly: true
-
-# Algo (binary_search, group_aggregate, top_n) - pure computation
+# Algo (binary_search, group_aggregate, top_n, sorting)
 algo:
   permissionSet: minimal
   isReadOnly: true
-
-# State (KV store with TTL) - in-memory, no persistence
-state:
-  permissionSet: minimal
-  isReadOnly: false
 
 # HTTP helpers (build_url, parse_url, headers) - pure computation (no actual network)
 http:
   permissionSet: minimal
   isReadOnly: true
+
+# -----------------------------------------------------------------------------
+# NEW DATA TOOLS - Pure computation additions
+# -----------------------------------------------------------------------------
+
+# String manipulation (slugify, camelCase, similarity, truncate)
+string:
+  permissionSet: minimal
+  isReadOnly: true
+
+# Path utilities (join, dirname, basename, extension)
+path:
+  permissionSet: minimal
+  isReadOnly: true
+
+# Faker - mock data generation (names, emails, addresses, etc.)
+faker:
+  permissionSet: minimal
+  isReadOnly: true
+
+# Color manipulation (hex, rgb, hsl, contrast, palette)
+color:
+  permissionSet: minimal
+  isReadOnly: true
+
+# Geographic calculations (distance, bearing, bbox)
+geo:
+  permissionSet: minimal
+  isReadOnly: true
+
+# QR/barcode generation (text-based, no image output)
+qrcode:
+  permissionSet: minimal
+  isReadOnly: true
+
+# Resilience patterns (retry logic, rate limiting, circuit breaker)
+resilience:
+  permissionSet: minimal
+  isReadOnly: true
+
+# Schema inference (detect types from data)
+schema:
+  permissionSet: minimal
+  isReadOnly: true
+
+# Diff - text comparison (line diff, word diff, unified)
+diff:
+  permissionSet: minimal
+  isReadOnly: true
+
+# -----------------------------------------------------------------------------
+# STATEFUL TOOLS - In-memory state, no persistence
+# -----------------------------------------------------------------------------
+
+# State (KV store with TTL) - in-memory, no persistence
+state:
+  permissionSet: minimal
+  isReadOnly: false
 
 # Virtual filesystem (in-memory Map, no real disk access)
 vfs:

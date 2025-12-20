@@ -36,6 +36,8 @@ async function benchmarkSubprocess(code: string, iterations: number): Promise<nu
     allowedReadPaths: [],
     // Disable cache for fair comparison
     cacheConfig: { enabled: false },
+    // AC13: Force subprocess mode for this benchmark
+    useWorkerForExecute: false,
   });
 
   const times: number[] = [];

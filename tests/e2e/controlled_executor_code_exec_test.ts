@@ -175,7 +175,6 @@ Deno.test({
           `,
           arguments: {},
           dependsOn: ["fetch_value"],
-          sideEffects: true, // NOT safe-to-fail → should fail immediately
         },
       ],
     };

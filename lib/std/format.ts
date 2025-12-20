@@ -16,7 +16,7 @@ import type { MiniTool } from "./types.ts";
 export const formatTools: MiniTool[] = [
   {
     name: "format_number",
-    description: "Format number with locale and options",
+    description: "Format numbers with locale-aware formatting. Display as currency ($1,234.56), percentage, or with units. Control decimal places and grouping. Keywords: number format, currency format, locale number, decimal places, thousand separator.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -48,7 +48,7 @@ export const formatTools: MiniTool[] = [
   },
   {
     name: "format_bytes",
-    description: "Format bytes to human readable size",
+    description: "Convert bytes to human-readable file sizes (KB, MB, GB, TB). Support binary (KiB, MiB) or decimal (KB, MB) units. Use for displaying file sizes, storage capacity, or bandwidth. Keywords: file size format, bytes to MB GB, human readable size, storage size.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -75,7 +75,7 @@ export const formatTools: MiniTool[] = [
   },
   {
     name: "format_duration",
-    description: "Format duration in milliseconds to human readable",
+    description: "Convert milliseconds to human-readable duration. Output as short (5m 30s), long (5 minutes, 30 seconds), or clock format (5:30). Use for elapsed time, countdowns, or time tracking. Keywords: duration format, time format, milliseconds to time, elapsed time, countdown.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -123,7 +123,7 @@ export const formatTools: MiniTool[] = [
   },
   {
     name: "format_percent",
-    description: "Format number as percentage",
+    description: "Format decimal number as percentage with locale formatting. Input 0.5 outputs '50%'. Control decimal precision. Use for displaying ratios, completion rates, or statistics. Keywords: percent format, percentage display, ratio to percent, decimal to percent.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -143,7 +143,7 @@ export const formatTools: MiniTool[] = [
   },
   {
     name: "format_ordinal",
-    description: "Format number as ordinal (1st, 2nd, 3rd, etc.)",
+    description: "Convert number to ordinal format (1st, 2nd, 3rd, 4th). Handles special cases correctly. Use for rankings, positions, or ordered lists. Keywords: ordinal number, 1st 2nd 3rd, number suffix, position format.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -166,7 +166,7 @@ export const formatTools: MiniTool[] = [
   },
   {
     name: "format_list",
-    description: "Format array as localized list (e.g., 'a, b, and c')",
+    description: "Format array as grammatically correct list string. Support 'and' (conjunction), 'or' (disjunction), or unit formatting. Locale-aware for international use. Keywords: list format, array to string, comma separated, and or list, join with commas.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -194,7 +194,7 @@ export const formatTools: MiniTool[] = [
   },
   {
     name: "format_relative_time",
-    description: "Format relative time (e.g., '2 days ago')",
+    description: "Format relative time in human terms (e.g., '2 days ago', 'in 3 hours'). Locale-aware formatting for internationalization. Use for activity feeds, timestamps, or schedules. Keywords: relative time, time ago, days ago, in hours, human readable time.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -221,7 +221,7 @@ export const formatTools: MiniTool[] = [
   },
   {
     name: "format_plural",
-    description: "Select plural form based on count",
+    description: "Select correct plural form based on count. Handles complex pluralization rules for different locales. Use for dynamic text like '1 item' vs '3 items'. Keywords: plural form, pluralize, singular plural, count based text, i18n plural.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -244,7 +244,7 @@ export const formatTools: MiniTool[] = [
   },
   {
     name: "format_truncate",
-    description: "Truncate text with ellipsis",
+    description: "Truncate long text with ellipsis. Option to break at word boundaries. Customize ending string. Use for previews, excerpts, or UI text limits. Keywords: truncate text, ellipsis, shorten text, text preview, max length.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -279,7 +279,7 @@ export const formatTools: MiniTool[] = [
   // Inspired by IT-Tools MCP: https://github.com/wrenchpilot/it-tools-mcp
   {
     name: "format_yaml_to_json",
-    description: "Convert YAML to JSON",
+    description: "Convert YAML configuration to JSON format. Parse YAML syntax and output valid JSON. Use for config transformation or data interchange. Keywords: YAML to JSON, convert yaml, yaml parse, config convert.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -296,7 +296,7 @@ export const formatTools: MiniTool[] = [
   },
   {
     name: "format_json_to_yaml",
-    description: "Convert JSON to YAML",
+    description: "Convert JSON to YAML configuration format. Output human-readable YAML with configurable indentation. Use for config files or readable data. Keywords: JSON to YAML, convert json, yaml output, config format.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -313,7 +313,7 @@ export const formatTools: MiniTool[] = [
   },
   {
     name: "format_markdown_to_html",
-    description: "Convert Markdown to HTML (basic conversion)",
+    description: "Convert Markdown text to HTML. Supports headers, bold, italic, code blocks, links, images, lists. Use for rendering markdown content in web pages. Keywords: markdown to HTML, md convert, render markdown, markdown parse.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -369,7 +369,7 @@ export const formatTools: MiniTool[] = [
   },
   {
     name: "format_html_to_markdown",
-    description: "Convert HTML to Markdown (basic conversion)",
+    description: "Convert HTML back to Markdown format. Transform tags to markdown syntax. Use for content extraction or documentation. Keywords: HTML to markdown, convert html, extract text, html parse.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -428,7 +428,7 @@ export const formatTools: MiniTool[] = [
   },
   {
     name: "format_json_pretty",
-    description: "Pretty print or minify JSON",
+    description: "Pretty print JSON with indentation or minify to single line. Make JSON readable or compact for storage. Configurable indent size. Keywords: pretty JSON, format JSON, minify JSON, JSON beautify, json indent.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -446,7 +446,7 @@ export const formatTools: MiniTool[] = [
   },
   {
     name: "format_json_to_csv",
-    description: "Convert JSON array to CSV format",
+    description: "Convert JSON array to CSV spreadsheet format. Auto-generate headers from object keys. Handle escaping for special characters. Use for data export. Keywords: JSON to CSV, export CSV, convert to spreadsheet, data export.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -489,7 +489,7 @@ export const formatTools: MiniTool[] = [
   },
   {
     name: "format_sql",
-    description: "Format SQL query for readability",
+    description: "Format SQL queries for readability. Add newlines, indentation, and uppercase keywords. Make complex queries readable. Keywords: SQL format, beautify SQL, SQL pretty print, format query, SQL indent.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -565,7 +565,7 @@ export const formatTools: MiniTool[] = [
   },
   {
     name: "format_phone",
-    description: "Format phone number to standard format",
+    description: "Format phone numbers to standard formats. Output international (+1 xxx), national ((xxx) xxx-xxxx), or E.164 format. Handle various input formats. Keywords: phone format, format telephone, E.164, international phone, phone number.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -628,7 +628,7 @@ export const formatTools: MiniTool[] = [
   // TOML conversion tools - inspired by IT-Tools MCP
   {
     name: "format_toml_to_json",
-    description: "Convert TOML to JSON",
+    description: "Convert TOML configuration to JSON. Parse Cargo.toml, pyproject.toml, or other TOML files. Use for config processing or migration. Keywords: TOML to JSON, parse toml, convert toml, config convert.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -645,7 +645,7 @@ export const formatTools: MiniTool[] = [
   },
   {
     name: "format_json_to_toml",
-    description: "Convert JSON to TOML",
+    description: "Convert JSON to TOML configuration format. Generate valid TOML from JSON objects. Use for creating config files. Keywords: JSON to TOML, generate toml, create config, toml output.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -661,7 +661,7 @@ export const formatTools: MiniTool[] = [
   },
   {
     name: "format_xml_escape",
-    description: "Escape or unescape XML entities",
+    description: "Escape or unescape XML special characters. Convert < > & \" ' to XML entities. Essential for XML safety. Keywords: XML escape, XML entities, escape xml, sanitize xml, xml encode.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -701,7 +701,7 @@ export const formatTools: MiniTool[] = [
   },
   {
     name: "format_properties",
-    description: "Parse or stringify Java-style .properties format",
+    description: "Parse or create Java-style .properties files. Convert between properties format and JSON. Use for Java config files or i18n. Keywords: properties file, java properties, config parse, key value file.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -751,7 +751,7 @@ export const formatTools: MiniTool[] = [
   // Code formatters - inspired by IT-Tools MCP
   {
     name: "format_html",
-    description: "Format or minify HTML code",
+    description: "Beautify or minify HTML code. Add proper indentation and formatting or compress for production. Keywords: HTML beautify, format HTML, minify HTML, HTML indent, pretty HTML.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -828,7 +828,7 @@ export const formatTools: MiniTool[] = [
   },
   {
     name: "format_javascript",
-    description: "Format or minify JavaScript code (basic)",
+    description: "Beautify or minify JavaScript code. Add indentation and structure or compress for production. Basic formatting without AST parsing. Keywords: JS beautify, format JavaScript, minify JS, JS indent, prettify code.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -920,7 +920,7 @@ export const formatTools: MiniTool[] = [
   },
   {
     name: "format_xml",
-    description: "Format or minify XML code",
+    description: "Beautify or minify XML documents. Add proper indentation or compress. Use for config files, data exchange, or SOAP messages. Keywords: XML beautify, format XML, minify XML, XML indent, pretty XML.",
     category: "format",
     inputSchema: {
       type: "object",
@@ -986,7 +986,7 @@ export const formatTools: MiniTool[] = [
   },
   {
     name: "format_yaml",
-    description: "Format or validate YAML",
+    description: "Format, validate, or reformat YAML documents. Check syntax validity and normalize indentation. Use for config file validation. Keywords: YAML format, validate YAML, YAML lint, format config, check yaml.",
     category: "format",
     inputSchema: {
       type: "object",

@@ -303,9 +303,10 @@ export class GraphRAGEngine {
 
   // === Hybrid Search ===
 
-  async searchToolsHybrid(vectorSearch: VectorSearch, query: string, limit = 10, contextTools: string[] = [], includeRelated = false): Promise<HybridSearchResult[]> {
+  async searchToolsHybrid(vectorSearch: VectorSearch, query: string, limit = 10, contextTools: string[] = [], includeRelated = false, minScore?: number): Promise<HybridSearchResult[]> {
     return hybridSearch(vectorSearch, this.graph, this.pageRanks, query, {
       limit,
+      minScore,
       contextTools,
       includeRelated,
       localAlphaCalculator: this.localAlphaCalculator,

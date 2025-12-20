@@ -41,7 +41,28 @@ export type ToolCategory =
   | "color"
   | "network"
   | "util"
-  | "system";
+  | "system"
+  // New categories from expanded std lib
+  | "string"
+  | "path"
+  | "faker"
+  | "geo"
+  | "qrcode"
+  | "resilience"
+  | "schema"
+  | "diff"
+  // System tool categories
+  | "docker"
+  | "git"
+  | "process"
+  | "archive"
+  | "ssh"
+  | "kubernetes"
+  | "database"
+  | "media"
+  | "cloud"
+  | "sysinfo"
+  | "packages";
 
 /** Mini tool handler function type */
 export type MiniToolHandler = (args: Record<string, unknown>) => Promise<unknown> | unknown;

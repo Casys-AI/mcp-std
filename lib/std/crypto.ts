@@ -63,7 +63,7 @@ const BIP39_WORDLIST = [
 export const cryptoTools: MiniTool[] = [
   {
     name: "crypto_hash",
-    description: "Generate hash of text (SHA-256, SHA-1, SHA-384, SHA-512)",
+    description: "Generate cryptographic hash of text using SHA algorithms. Support SHA-256 (default), SHA-1, SHA-384, SHA-512. Use for checksums, data integrity, or content addressing. Keywords: SHA hash, SHA-256, hash text, cryptographic digest, checksum, content hash.",
     category: "crypto",
     inputSchema: {
       type: "object",
@@ -87,7 +87,7 @@ export const cryptoTools: MiniTool[] = [
   },
   {
     name: "crypto_uuid",
-    description: "Generate UUID(s)",
+    description: "Generate cryptographically random UUID v4 identifiers. Create unique IDs for records, sessions, or tracking. Generate multiple UUIDs at once. Keywords: UUID, unique ID, GUID, random identifier, generate UUID, v4 UUID.",
     category: "crypto",
     inputSchema: {
       type: "object",
@@ -103,7 +103,7 @@ export const cryptoTools: MiniTool[] = [
   },
   {
     name: "crypto_base64",
-    description: "Encode or decode Base64",
+    description: "Encode text to Base64 or decode Base64 back to text. Use for data URLs, embedding binary in JSON, or API payload encoding. Keywords: base64 encode, base64 decode, btoa atob, binary to text, data URI encoding.",
     category: "crypto",
     inputSchema: {
       type: "object",
@@ -122,7 +122,7 @@ export const cryptoTools: MiniTool[] = [
   },
   {
     name: "crypto_hex",
-    description: "Encode or decode hexadecimal",
+    description: "Convert text to hexadecimal representation or decode hex back to text. Useful for viewing raw bytes, encoding binary data, or protocol debugging. Keywords: hex encode, hex decode, hexadecimal, text to hex, bytes to hex.",
     category: "crypto",
     inputSchema: {
       type: "object",
@@ -148,7 +148,7 @@ export const cryptoTools: MiniTool[] = [
   },
   {
     name: "crypto_random_bytes",
-    description: "Generate random bytes as hex string",
+    description: "Generate cryptographically secure random bytes as hex string. Use for tokens, keys, nonces, or salts. Specify number of bytes needed. Keywords: random bytes, secure random, crypto random, generate nonce, random hex.",
     category: "crypto",
     inputSchema: {
       type: "object",
@@ -166,7 +166,7 @@ export const cryptoTools: MiniTool[] = [
   // Inspired by IT-Tools MCP: https://github.com/wrenchpilot/it-tools-mcp
   {
     name: "crypto_url",
-    description: "Encode or decode URL (percent encoding)",
+    description: "URL encode or decode text (percent encoding). Handle special characters for URLs safely. Use component mode for query params or full URI mode. Keywords: URL encode, URL decode, percent encoding, encodeURIComponent, query string escape.",
     category: "crypto",
     inputSchema: {
       type: "object",
@@ -189,7 +189,7 @@ export const cryptoTools: MiniTool[] = [
   },
   {
     name: "crypto_html",
-    description: "Encode or decode HTML entities",
+    description: "Encode or decode HTML entities for XSS prevention and safe display. Convert < > & \" ' to HTML entities. Essential for sanitizing user input in HTML. Keywords: HTML encode, HTML entities, escape HTML, XSS prevention, sanitize HTML.",
     category: "crypto",
     inputSchema: {
       type: "object",
@@ -227,7 +227,7 @@ export const cryptoTools: MiniTool[] = [
   },
   {
     name: "crypto_password",
-    description: "Generate a strong random password",
+    description: "Generate strong random passwords with customizable options. Include/exclude uppercase, lowercase, numbers, symbols. Option to exclude similar characters (0O, 1lI). Keywords: password generator, random password, strong password, secure password, generate credentials.",
     category: "crypto",
     inputSchema: {
       type: "object",
@@ -271,7 +271,7 @@ export const cryptoTools: MiniTool[] = [
   },
   {
     name: "crypto_jwt_decode",
-    description: "Decode a JWT token (without verification) to inspect its contents",
+    description: "Decode JWT tokens to inspect header, payload, and check expiration. Does NOT verify signature - for inspection only. See claims, expiry time, issuer. Keywords: JWT decode, decode token, inspect JWT, JWT payload, token contents, check expiry.",
     category: "crypto",
     inputSchema: {
       type: "object",
@@ -321,7 +321,7 @@ export const cryptoTools: MiniTool[] = [
   },
   {
     name: "crypto_ulid",
-    description: "Generate ULID(s) - Universally Unique Lexicographically Sortable Identifier",
+    description: "Generate ULIDs - time-sortable unique identifiers. Better than UUID for databases as they sort chronologically. Combines timestamp with randomness. Keywords: ULID, sortable ID, time-based ID, lexicographic sort, unique identifier.",
     category: "crypto",
     inputSchema: {
       type: "object",
@@ -364,7 +364,7 @@ export const cryptoTools: MiniTool[] = [
   },
   {
     name: "crypto_hmac",
-    description: "Generate HMAC (Hash-based Message Authentication Code)",
+    description: "Generate HMAC for message authentication. Combine message with secret key for tamper-proof signatures. Use for webhooks, API signing, or data integrity. Keywords: HMAC, message authentication, webhook signature, API signing, keyed hash.",
     category: "crypto",
     inputSchema: {
       type: "object",
@@ -399,7 +399,7 @@ export const cryptoTools: MiniTool[] = [
   },
   {
     name: "crypto_totp",
-    description: "Generate TOTP (Time-based One-Time Password) code",
+    description: "Generate TOTP codes for two-factor authentication. Compatible with Google Authenticator, Authy. Returns current code and time remaining. Keywords: TOTP, 2FA code, authenticator code, two-factor, OTP generator, Google Authenticator.",
     category: "crypto",
     inputSchema: {
       type: "object",
@@ -486,7 +486,7 @@ export const cryptoTools: MiniTool[] = [
   },
   {
     name: "crypto_text_to_binary",
-    description: "Convert text to binary representation",
+    description: "Convert text to binary (0s and 1s) representation. Each character becomes 8-bit binary code. Use for visualizing data or educational purposes. Keywords: text to binary, binary conversion, bits representation, ASCII binary.",
     category: "crypto",
     inputSchema: {
       type: "object",
@@ -505,7 +505,7 @@ export const cryptoTools: MiniTool[] = [
   },
   {
     name: "crypto_binary_to_text",
-    description: "Convert binary representation back to text",
+    description: "Convert binary (0s and 1s) string back to text. Decode binary representation to readable characters. Handles space-separated or continuous binary. Keywords: binary to text, decode binary, binary string, bits to text.",
     category: "crypto",
     inputSchema: {
       type: "object",
@@ -528,7 +528,7 @@ export const cryptoTools: MiniTool[] = [
   },
   {
     name: "crypto_text_to_unicode",
-    description: "Convert text to Unicode code points",
+    description: "Convert text to Unicode code points. Show U+XXXX format, decimal values, or escaped sequences. Useful for debugging unicode, emoji analysis, or character inspection. Keywords: unicode code points, text to unicode, U+ format, character codes, emoji codes.",
     category: "crypto",
     inputSchema: {
       type: "object",
@@ -557,7 +557,7 @@ export const cryptoTools: MiniTool[] = [
   },
   {
     name: "crypto_generate_token",
-    description: "Generate a secure random token",
+    description: "Generate secure random tokens in hex, base64, or base64url format. Use for API keys, session tokens, or security tokens. Specify length in bytes. Keywords: generate token, API key, session token, secure token, random token, bearer token.",
     category: "crypto",
     inputSchema: {
       type: "object",
@@ -591,7 +591,7 @@ export const cryptoTools: MiniTool[] = [
   },
   {
     name: "crypto_basic_auth",
-    description: "Generate or decode HTTP Basic Auth header",
+    description: "Generate or decode HTTP Basic Authentication headers. Encode username:password to 'Basic xxx' header or decode to extract credentials. Keywords: basic auth, HTTP authentication, authorization header, decode basic, encode credentials.",
     category: "crypto",
     inputSchema: {
       type: "object",
@@ -633,7 +633,7 @@ export const cryptoTools: MiniTool[] = [
   },
   {
     name: "crypto_bcrypt",
-    description: "Hash or verify password using bcrypt",
+    description: "Hash passwords with bcrypt or verify hashed passwords. Industry-standard password hashing with configurable cost factor. Never store plain passwords! Keywords: bcrypt, password hash, verify password, secure password, hash compare.",
     category: "crypto",
     inputSchema: {
       type: "object",
@@ -669,7 +669,7 @@ export const cryptoTools: MiniTool[] = [
   },
   {
     name: "crypto_bip39",
-    description: "Generate BIP39 mnemonic phrase for crypto wallets",
+    description: "Generate BIP39 mnemonic seed phrases for cryptocurrency wallets. Create 12, 15, 18, 21, or 24 word recovery phrases. For wallet backups and key derivation. Keywords: BIP39, mnemonic phrase, seed phrase, wallet recovery, crypto wallet, word list.",
     category: "crypto",
     inputSchema: {
       type: "object",
@@ -721,7 +721,7 @@ export const cryptoTools: MiniTool[] = [
   },
   {
     name: "crypto_md5",
-    description: "Generate MD5 hash (legacy, not for security)",
+    description: "Generate MD5 hash of text. Legacy algorithm - NOT secure for passwords or cryptographic use. Still useful for checksums, cache keys, or non-security hashing. Keywords: MD5, md5 hash, legacy hash, checksum, non-secure hash.",
     category: "crypto",
     inputSchema: {
       type: "object",

@@ -125,7 +125,11 @@ export class DAGSuggester {
 
   setCapabilityMatcher(matcher: CapabilityMatcher): void {
     this.capabilityMatcher = matcher;
-    log.debug("[DAGSuggester] Capability matching enabled");
+    // Pass scoring config to matcher for intentSearch threshold
+    matcher.setScoringConfig(this.scoringConfig);
+    log.debug("[DAGSuggester] Capability matching enabled", {
+      intentSearchThreshold: this.scoringConfig.thresholds.intentSearch,
+    });
   }
 
   setAlgorithmTracer(tracer: AlgorithmTracer): void {
@@ -167,6 +171,7 @@ export class DAGSuggester {
         this.scoringConfig.limits.hybridSearchCandidates,
         contextTools,
         false,
+        this.scoringConfig.thresholds.toolSearch,
       );
 
       if (hybridCandidates.length === 0) {

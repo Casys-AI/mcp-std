@@ -42,7 +42,7 @@ import type { MiniTool } from "./types.ts";
 export const datetimeTools: MiniTool[] = [
   {
     name: "datetime_now",
-    description: "Get current date/time in various formats",
+    description: "Get current date and time in various formats. Returns ISO, Unix timestamp, date-only, time-only, or custom pattern. Essential for timestamps, logging, or time-based operations. Keywords: current time, now, today date, timestamp, current datetime.",
     category: "datetime",
     inputSchema: {
       type: "object",
@@ -79,8 +79,7 @@ export const datetimeTools: MiniTool[] = [
   },
   {
     name: "datetime_format",
-    description:
-      "Format a date using date-fns pattern (yyyy, MM, dd, HH, mm, ss, etc.)",
+    description: "Format a date using date-fns patterns. Use yyyy for year, MM for month, dd for day, HH for hours, mm for minutes. Create custom date displays like 'EEEE, MMMM do yyyy'. Keywords: format date, date pattern, date display, custom date format, date-fns.",
     category: "datetime",
     inputSchema: {
       type: "object",
@@ -100,7 +99,7 @@ export const datetimeTools: MiniTool[] = [
   },
   {
     name: "datetime_diff",
-    description: "Calculate difference between two dates",
+    description: "Calculate time difference between two dates in any unit. Get difference in seconds, minutes, hours, days, weeks, months, or years. Use for age calculation, duration, or elapsed time. Keywords: date difference, time between, days since, duration, elapsed time, age calculation.",
     category: "datetime",
     inputSchema: {
       type: "object",
@@ -141,7 +140,7 @@ export const datetimeTools: MiniTool[] = [
   },
   {
     name: "datetime_add",
-    description: "Add/subtract time from a date",
+    description: "Add or subtract time from a date. Add days, hours, months, or any unit to calculate future/past dates. Use negative values to subtract. Essential for scheduling and date calculations. Keywords: add days, add months, subtract time, date arithmetic, future date, past date.",
     category: "datetime",
     inputSchema: {
       type: "object",
@@ -191,7 +190,7 @@ export const datetimeTools: MiniTool[] = [
   },
   {
     name: "datetime_parse",
-    description: "Parse a date string and return components",
+    description: "Parse a date string and extract all components. Returns year, month, day, hour, minute, second, day of week, and both ISO and Unix formats. Use for date validation or component extraction. Keywords: parse date, extract date parts, date components, validate date, date breakdown.",
     category: "datetime",
     inputSchema: {
       type: "object",
@@ -239,7 +238,7 @@ export const datetimeTools: MiniTool[] = [
   // Inspired by IT-Tools MCP: https://github.com/wrenchpilot/it-tools-mcp
   {
     name: "datetime_cron_parse",
-    description: "Parse a cron expression and explain what it means",
+    description: "Parse cron expressions and explain their schedule in human-readable form. Understand what minute, hour, day, month, weekday fields mean. Use for validating and documenting cron jobs. Keywords: cron parse, cron expression, cron schedule, cron explain, scheduled tasks.",
     category: "datetime",
     inputSchema: {
       type: "object",
@@ -308,7 +307,7 @@ export const datetimeTools: MiniTool[] = [
   },
   {
     name: "datetime_unix",
-    description: "Convert between Unix timestamp and ISO date",
+    description: "Convert between Unix timestamp (seconds since 1970) and ISO date string. Handle both seconds and milliseconds. Essential for API timestamps and epoch time. Keywords: unix timestamp, epoch time, timestamp convert, from unix, to unix, seconds since 1970.",
     category: "datetime",
     inputSchema: {
       type: "object",

@@ -1,87 +1,191 @@
 /**
- * Std (Standard Library) Tools
+ * Standard library tools - aggregated exports
  *
- * A collection of lightweight, sandboxed tools for AI agents.
- * Organized by category for modular use.
+ * System tools:
+ * - docker.ts     - Container/image management
+ * - git.ts        - Repository operations
+ * - network.ts    - HTTP, DNS, connectivity
+ * - process.ts    - Process management
+ * - archive.ts    - Compression (tar, zip)
+ * - ssh.ts        - Remote execution
+ * - kubernetes.ts - K8s cluster management
+ * - database.ts   - SQL/NoSQL access
+ * - media.ts      - Audio/video/image
+ * - cloud.ts      - AWS, GCP, systemd
+ * - sysinfo.ts    - System information
+ * - packages.ts   - npm, pip, apt, brew
+ * - text.ts       - sed, awk, jq, sort
  *
- * @module lib/std
+ * Data tools:
+ * - algo.ts       - Sorting, searching algorithms
+ * - collections.ts- Array/set/map operations
+ * - crypto.ts     - Hashing, encoding, encryption
+ * - datetime.ts   - Date/time manipulation
+ * - format.ts     - Formatting (numbers, bytes, etc)
+ * - http.ts       - HTTP client operations
+ * - json.ts       - JSON manipulation
+ * - math.ts       - Mathematical operations
+ * - transform.ts  - Data transformations (CSV, XML)
+ * - validation.ts - Data validation
+ * - vfs.ts        - Virtual filesystem
+ *
+ * New tools:
+ * - string.ts     - String manipulation
+ * - path.ts       - Path utilities
+ * - faker.ts      - Mock data generation
+ * - color.ts      - Color manipulation
+ * - geo.ts        - Geographic calculations
+ * - qrcode.ts     - QR/barcode generation
+ * - resilience.ts - Retry/rate limiting
+ * - schema.ts     - Schema inference
+ * - diff.ts       - Text diff/comparison
+ *
+ * @module lib/std/mod
  */
 
-// Re-export all tool modules
+export { runCommand, type MiniTool } from "./common.ts";
+export type { ToolCategory, MiniToolHandler, MiniToolResult } from "./types.ts";
+
+// System tools
+export { dockerTools } from "./docker.ts";
+export { gitTools } from "./git.ts";
+export { networkTools } from "./network.ts";
+export { processTools } from "./process.ts";
+export { archiveTools } from "./archive.ts";
+export { sshTools } from "./ssh.ts";
+export { kubernetesTools } from "./kubernetes.ts";
+export { databaseTools } from "./database.ts";
+export { mediaTools } from "./media.ts";
+export { cloudTools } from "./cloud.ts";
+export { sysinfoTools } from "./sysinfo.ts";
+export { packagesTools } from "./packages.ts";
 export { textTools } from "./text.ts";
+
+// Data tools
+export { algoTools } from "./algo.ts";
+export { collectionsTools } from "./collections.ts";
+export { cryptoTools } from "./crypto.ts";
+export { datetimeTools } from "./datetime.ts";
+export { formatTools } from "./format.ts";
+export { httpTools } from "./http.ts";
 export { jsonTools } from "./json.ts";
 export { mathTools } from "./math.ts";
-export { datetimeTools } from "./datetime.ts";
-export { cryptoTools } from "./crypto.ts";
-export { collectionsTools } from "./collections.ts";
-export { vfsTools } from "./vfs.ts";
-export { dataTools } from "./data.ts";
-export { httpTools } from "./http.ts";
-export { validationTools } from "./validation.ts";
-export { formatTools } from "./format.ts";
 export { transformTools } from "./transform.ts";
+export { validationTools } from "./validation.ts";
+export { vfsTools } from "./vfs.ts";
+
+// New tools
+export { stringTools } from "./string.ts";
+export { pathTools } from "./path.ts";
+export { fakerTools } from "./faker.ts";
+export { colorTools } from "./color.ts";
+export { geoTools } from "./geo.ts";
+export { qrcodeTools } from "./qrcode.ts";
+export { resilienceTools } from "./resilience.ts";
+export { schemaTools } from "./schema.ts";
+export { diffTools } from "./diff.ts";
+
+// Legacy tools (backward compat)
+export { dataTools } from "./data.ts";
 export { stateTools } from "./state.ts";
 export { compareTools } from "./compare.ts";
-export { algoTools } from "./algo.ts";
-export { colorTools } from "./color.ts";
-export { networkTools } from "./network.ts";
+
+// Utility tools
 export { utilTools } from "./util.ts";
-export { systemTools } from "./system.ts";
 
-// Re-export types
-export type { MiniTool, MiniToolHandler, MiniToolResult } from "./types.ts";
-
-// Import all tools for aggregation
+// Imports for combined export
+import { dockerTools } from "./docker.ts";
+import { gitTools } from "./git.ts";
+import { networkTools } from "./network.ts";
+import { processTools } from "./process.ts";
+import { archiveTools } from "./archive.ts";
+import { sshTools } from "./ssh.ts";
+import { kubernetesTools } from "./kubernetes.ts";
+import { databaseTools } from "./database.ts";
+import { mediaTools } from "./media.ts";
+import { cloudTools } from "./cloud.ts";
+import { sysinfoTools } from "./sysinfo.ts";
+import { packagesTools } from "./packages.ts";
 import { textTools } from "./text.ts";
+import { algoTools } from "./algo.ts";
+import { collectionsTools } from "./collections.ts";
+import { cryptoTools } from "./crypto.ts";
+import { datetimeTools } from "./datetime.ts";
+import { formatTools } from "./format.ts";
+import { httpTools } from "./http.ts";
 import { jsonTools } from "./json.ts";
 import { mathTools } from "./math.ts";
-import { datetimeTools } from "./datetime.ts";
-import { cryptoTools } from "./crypto.ts";
-import { collectionsTools } from "./collections.ts";
-import { vfsTools } from "./vfs.ts";
-import { dataTools } from "./data.ts";
-import { httpTools } from "./http.ts";
-import { validationTools } from "./validation.ts";
-import { formatTools } from "./format.ts";
 import { transformTools } from "./transform.ts";
+import { validationTools } from "./validation.ts";
+import { vfsTools } from "./vfs.ts";
+import { stringTools } from "./string.ts";
+import { pathTools } from "./path.ts";
+import { fakerTools } from "./faker.ts";
+import { colorTools } from "./color.ts";
+import { geoTools } from "./geo.ts";
+import { qrcodeTools } from "./qrcode.ts";
+import { resilienceTools } from "./resilience.ts";
+import { schemaTools } from "./schema.ts";
+import { diffTools } from "./diff.ts";
+// Legacy imports
+import { dataTools } from "./data.ts";
 import { stateTools } from "./state.ts";
 import { compareTools } from "./compare.ts";
-import { algoTools } from "./algo.ts";
-import { colorTools } from "./color.ts";
-import { networkTools } from "./network.ts";
+// Utility imports
 import { utilTools } from "./util.ts";
-import { systemTools } from "./system.ts";
-import type { MiniTool, MiniToolResult } from "./types.ts";
+import type { MiniTool as MiniToolType } from "./types.ts";
 
-/**
- * All available mini tools combined
- */
-export const allTools: MiniTool[] = [
+/** All system tools combined */
+export const systemTools = [
+  // System tools
+  ...dockerTools,
+  ...gitTools,
+  ...networkTools,
+  ...processTools,
+  ...archiveTools,
+  ...sshTools,
+  ...kubernetesTools,
+  ...databaseTools,
+  ...mediaTools,
+  ...cloudTools,
+  ...sysinfoTools,
+  ...packagesTools,
   ...textTools,
+  // Data tools
+  ...algoTools,
+  ...collectionsTools,
+  ...cryptoTools,
+  ...datetimeTools,
+  ...formatTools,
+  ...httpTools,
   ...jsonTools,
   ...mathTools,
-  ...datetimeTools,
-  ...cryptoTools,
-  ...collectionsTools,
-  ...vfsTools,
-  ...dataTools,
-  ...httpTools,
-  ...validationTools,
-  ...formatTools,
   ...transformTools,
+  ...validationTools,
+  ...vfsTools,
+  // New tools
+  ...stringTools,
+  ...pathTools,
+  ...fakerTools,
+  ...colorTools,
+  ...geoTools,
+  ...qrcodeTools,
+  ...resilienceTools,
+  ...schemaTools,
+  ...diffTools,
+  // Legacy tools
+  ...dataTools,
   ...stateTools,
   ...compareTools,
-  ...algoTools,
-  ...colorTools,
-  ...networkTools,
+  // Utility tools
   ...utilTools,
-  ...systemTools,
 ];
 
-/**
- * Tool categories and their tools
- */
-export const toolsByCategory: Record<string, MiniTool[]> = {
+/** Alias for backward compatibility */
+export const allTools = systemTools;
+
+/** Tools organized by category */
+export const toolsByCategory: Record<string, MiniToolType[]> = {
   text: textTools,
   json: jsonTools,
   math: mathTools,
@@ -99,200 +203,113 @@ export const toolsByCategory: Record<string, MiniTool[]> = {
   algo: algoTools,
   color: colorTools,
   network: networkTools,
+  string: stringTools,
+  path: pathTools,
+  faker: fakerTools,
+  geo: geoTools,
+  qrcode: qrcodeTools,
+  resilience: resilienceTools,
+  schema: schemaTools,
+  diff: diffTools,
+  // System tools
+  docker: dockerTools,
+  git: gitTools,
+  process: processTools,
+  archive: archiveTools,
+  ssh: sshTools,
+  kubernetes: kubernetesTools,
+  database: databaseTools,
+  media: mediaTools,
+  cloud: cloudTools,
+  sysinfo: sysinfoTools,
+  packages: packagesTools,
+  // Utility tools
   util: utilTools,
-  system: systemTools,
 };
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
 
 /**
  * Get tools by category
  */
-export function getToolsByCategory(category: string): MiniTool[] {
+export function getToolsByCategory(category: string): MiniToolType[] {
   return toolsByCategory[category] || [];
 }
 
 /**
- * Get tool by name
+ * Get a specific tool by name
  */
-export function getToolByName(name: string): MiniTool | undefined {
+export function getToolByName(name: string): MiniToolType | undefined {
   return allTools.find((t) => t.name === name);
 }
 
 /**
- * List all available categories
+ * Get all available categories
  */
 export function getCategories(): string[] {
   return Object.keys(toolsByCategory);
 }
 
+// ============================================================================
+// MiniToolsClient Class
+// ============================================================================
+
+export interface MiniToolsClientOptions {
+  categories?: string[];
+}
+
 /**
- * MiniToolsClient - A simple client for executing mini tools
- *
- * @example
- * ```typescript
- * const client = new MiniToolsClient();
- *
- * // Execute a tool
- * const result = await client.execute("text_upper", { text: "hello" });
- * console.log(result); // "HELLO"
- *
- * // List available tools
- * const tools = client.listTools();
- *
- * // Get tools by category
- * const textTools = client.getToolsByCategory("text");
- * ```
+ * Client for executing mini-tools
  */
 export class MiniToolsClient {
-  private tools: Map<string, MiniTool>;
-  private enabledCategories: Set<string> | null;
+  private tools: MiniToolType[];
+
+  constructor(options?: MiniToolsClientOptions) {
+    if (options?.categories) {
+      this.tools = options.categories.flatMap((cat) => getToolsByCategory(cat));
+    } else {
+      this.tools = allTools;
+    }
+  }
 
   /**
-   * Create a new MiniToolsClient
-   *
-   * @param options - Configuration options
-   * @param options.categories - Limit to specific categories (null = all)
-   * @param options.customTools - Additional custom tools to include
+   * List available tools
    */
-  constructor(options?: {
-    categories?: string[];
-    customTools?: MiniTool[];
-  }) {
-    this.tools = new Map();
-    this.enabledCategories = options?.categories ? new Set(options.categories) : null;
+  listTools(): MiniToolType[] {
+    return this.tools;
+  }
 
-    // Load all tools, optionally filtered by category
-    for (const tool of allTools) {
-      if (!this.enabledCategories || this.enabledCategories.has(tool.category)) {
-        this.tools.set(tool.name, tool);
-      }
-    }
-
-    // Add custom tools if provided
-    if (options?.customTools) {
-      for (const tool of options.customTools) {
-        this.tools.set(tool.name, tool);
-      }
-    }
+  /**
+   * Convert tools to MCP format
+   */
+  toMCPFormat(): Array<{ name: string; description: string; inputSchema: Record<string, unknown> }> {
+    return this.tools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: t.inputSchema,
+    }));
   }
 
   /**
    * Execute a tool by name
-   *
-   * @param name - Tool name
-   * @param input - Tool input parameters
-   * @returns Tool execution result
    */
-  async execute(name: string, input: Record<string, unknown> = {}): Promise<MiniToolResult> {
-    const tool = this.tools.get(name);
+  async execute(name: string, args: Record<string, unknown>): Promise<unknown> {
+    const tool = this.tools.find((t) => t.name === name);
     if (!tool) {
-      return { error: `Tool not found: ${name}` };
+      throw new Error(`Tool not found: ${name}`);
     }
-
-    try {
-      const result = await tool.handler(input);
-      return result;
-    } catch (error) {
-      return { error: (error as Error).message };
-    }
-  }
-
-  /**
-   * List all available tools
-   *
-   * @returns Array of tool definitions (without handlers)
-   */
-  listTools(): Array<Omit<MiniTool, "handler">> {
-    return Array.from(this.tools.values()).map(({ handler: _, ...tool }) => tool);
-  }
-
-  /**
-   * Get tool definition by name
-   *
-   * @param name - Tool name
-   * @returns Tool definition or undefined
-   */
-  getTool(name: string): MiniTool | undefined {
-    return this.tools.get(name);
-  }
-
-  /**
-   * Get all tools in a category
-   *
-   * @param category - Category name
-   * @returns Array of tools in the category
-   */
-  getToolsByCategory(category: string): MiniTool[] {
-    return Array.from(this.tools.values()).filter((t) => t.category === category);
-  }
-
-  /**
-   * Get available categories
-   *
-   * @returns Array of category names
-   */
-  getCategories(): string[] {
-    const categories = new Set<string>();
-    for (const tool of this.tools.values()) {
-      categories.add(tool.category);
-    }
-    return Array.from(categories);
-  }
-
-  /**
-   * Check if a tool exists
-   *
-   * @param name - Tool name
-   * @returns true if tool exists
-   */
-  hasTool(name: string): boolean {
-    return this.tools.has(name);
-  }
-
-  /**
-   * Add a custom tool at runtime
-   *
-   * @param tool - Tool to add
-   */
-  addTool(tool: MiniTool): void {
-    this.tools.set(tool.name, tool);
-  }
-
-  /**
-   * Remove a tool by name
-   *
-   * @param name - Tool name to remove
-   * @returns true if tool was removed
-   */
-  removeTool(name: string): boolean {
-    return this.tools.delete(name);
+    return await tool.handler(args);
   }
 
   /**
    * Get tool count
    */
-  get size(): number {
-    return this.tools.size;
-  }
-
-  /**
-   * Convert tools to MCP-compatible format
-   *
-   * @returns Array of MCP tool definitions
-   */
-  toMCPFormat(): Array<{
-    name: string;
-    description: string;
-    inputSchema: Record<string, unknown>;
-  }> {
-    return Array.from(this.tools.values()).map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: tool.inputSchema,
-    }));
+  get count(): number {
+    return this.tools.length;
   }
 }
 
-/**
- * Default client instance with all tools enabled
- */
+/** Default client instance with all tools */
 export const defaultClient = new MiniToolsClient();

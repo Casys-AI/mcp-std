@@ -27,6 +27,7 @@ import { getLogger } from "../telemetry/logger.ts";
 import { eventBus } from "../events/mod.ts";
 // Story 7.6: Algorithm tracing (ADR-039)
 import type { AlgorithmTracer, DecisionType } from "../telemetry/algorithm-tracer.ts";
+import type { DagScoringConfig } from "../graphrag/dag-scoring-config.ts";
 
 const logger = getLogger("default");
 
@@ -37,6 +38,7 @@ export class CapabilityMatcher {
   /** Cache TTL in milliseconds (1 minute) */
   private static readonly CACHE_TTL_MS = 60_000;
   private cacheTimestamp = 0;
+  private scoringConfig: DagScoringConfig | null = null;
 
   constructor(
     private capabilityStore: CapabilityStore,
@@ -44,6 +46,18 @@ export class CapabilityMatcher {
     algorithmTracer?: AlgorithmTracer,
   ) {
     this.algorithmTracer = algorithmTracer || null;
+  }
+
+  /**
+   * Set scoring config for intent search threshold
+   *
+   * @param config - DagScoringConfig instance
+   */
+  setScoringConfig(config: DagScoringConfig): void {
+    this.scoringConfig = config;
+    logger.debug("Scoring config set for CapabilityMatcher", {
+      intentSearchThreshold: config.thresholds.intentSearch,
+    });
   }
 
   /**
@@ -140,7 +154,9 @@ export class CapabilityMatcher {
 
     // 2. Semantic Search (Vector Similarity)
     // We fetch top 5 candidates to filter them
-    const candidates = await this.capabilityStore.searchByIntent(intent, 5);
+    // Use config threshold or fallback to 0.65
+    const minSemanticScore = this.scoringConfig?.thresholds.intentSearch ?? 0.65;
+    const candidates = await this.capabilityStore.searchByIntent(intent, 5, minSemanticScore);
 
     if (candidates.length === 0) {
       return null;
@@ -148,13 +164,22 @@ export class CapabilityMatcher {
 
     let bestMatch: CapabilityMatch | null = null;
 
+    // Get reliability thresholds from config (ADR-038 §3.1)
+    const reliability = this.scoringConfig?.reliability ?? {
+      penaltyThreshold: 0.50,
+      penaltyFactor: 0.10,
+      boostThreshold: 0.90,
+      boostFactor: 1.20,
+      filterThreshold: 0.20,
+    };
+
     for (const candidate of candidates) {
       // 3. Calculate Reliability Factor (ADR-038)
       let baseReliabilityFactor = 1.0;
-      if (candidate.capability.successRate < 0.5) {
-        baseReliabilityFactor = 0.1; // Penalize unreliable
-      } else if (candidate.capability.successRate > 0.9) {
-        baseReliabilityFactor = 1.2; // Boost highly reliable
+      if (candidate.capability.successRate < reliability.penaltyThreshold) {
+        baseReliabilityFactor = reliability.penaltyFactor; // Penalize unreliable
+      } else if (candidate.capability.successRate > reliability.boostThreshold) {
+        baseReliabilityFactor = reliability.boostFactor; // Boost highly reliable
       }
 
       // ADR-042 §3: Apply transitive reliability
@@ -170,7 +195,7 @@ export class CapabilityMatcher {
 
       // 5. Determine decision for tracing
       let decision: DecisionType;
-      if (reliabilityFactor < 0.2 && score < threshold) {
+      if (reliabilityFactor < reliability.filterThreshold && score < threshold) {
         decision = "filtered_by_reliability";
       } else if (score >= threshold) {
         decision = "accepted";

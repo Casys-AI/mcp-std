@@ -17,8 +17,7 @@ import type { MiniTool } from "./types.ts";
 export const mathTools: MiniTool[] = [
   {
     name: "math_eval",
-    description:
-      "Evaluate a math expression safely (supports +, -, *, /, %, ^, sqrt, sin, cos, log, etc.)",
+    description: "Evaluate mathematical expressions safely using mathjs. Supports arithmetic (+, -, *, /, %, ^), functions (sqrt, sin, cos, tan, log, exp), and constants (pi, e). Use for calculations, formula evaluation, or scientific computing. Keywords: math eval, calculate expression, mathjs, formula, scientific calculator, arithmetic.",
     category: "math",
     inputSchema: {
       type: "object",
@@ -40,8 +39,7 @@ export const mathTools: MiniTool[] = [
   },
   {
     name: "math_stats",
-    description:
-      "Calculate statistics (min, max, sum, mean, median, stddev, variance) for an array of numbers",
+    description: "Calculate comprehensive statistics for an array of numbers: min, max, sum, mean, median, standard deviation, and variance. Get count and all major statistical measures in one call. Use for data analysis, reporting, or understanding distributions. Keywords: statistics, mean average, median, stddev, variance, descriptive stats, data analysis.",
     category: "math",
     inputSchema: {
       type: "object",
@@ -69,7 +67,7 @@ export const mathTools: MiniTool[] = [
   },
   {
     name: "math_round",
-    description: "Round a number to specified decimal places",
+    description: "Round a number to specified decimal places with configurable rounding mode (round, floor, ceil). Control precision for currency, measurements, or display formatting. Use for financial calculations, formatting output, or precision control. Keywords: round number, decimal places, floor ceiling, truncate, precision, format number.",
     category: "math",
     inputSchema: {
       type: "object",
@@ -99,7 +97,7 @@ export const mathTools: MiniTool[] = [
   },
   {
     name: "math_random",
-    description: "Generate random number(s) within a range",
+    description: "Generate random numbers within a specified range. Create single or multiple random values, choose integer or decimal output. Use for testing, simulations, games, or sampling. Keywords: random number, generate random, random range, integer random, random generator, dice roll.",
     category: "math",
     inputSchema: {
       type: "object",
@@ -121,7 +119,7 @@ export const mathTools: MiniTool[] = [
   },
   {
     name: "math_percentage",
-    description: "Calculate percentage (value/total * 100) or value from percentage",
+    description: "Calculate percentage from value and total (value/total × 100) or calculate value from percentage and total. Bidirectional percentage calculations. Use for discounts, proportions, or statistical ratios. Keywords: percentage, percent of, calculate %, ratio, proportion, percent calculation.",
     category: "math",
     inputSchema: {
       type: "object",
@@ -143,7 +141,7 @@ export const mathTools: MiniTool[] = [
   },
   {
     name: "math_linear_regression",
-    description: "Calculate linear regression (y = mx + b) for data points",
+    description: "Calculate linear regression (y = mx + b) from data points. Get slope, intercept, R² correlation, and prediction function. Analyze trends, fit lines to data, or make predictions. Use for trend analysis, forecasting, or data science. Keywords: linear regression, slope intercept, R squared, trend line, fit line, predict, correlation.",
     category: "math",
     inputSchema: {
       type: "object",
@@ -171,7 +169,7 @@ export const mathTools: MiniTool[] = [
   },
   {
     name: "math_mode",
-    description: "Find the most frequent value(s) in an array of numbers",
+    description: "Find the most frequent value(s) in an array of numbers. Identify the statistical mode for frequency analysis or categorical data. Use for finding common values, frequency analysis, or statistics. Keywords: mode, most frequent, frequency, common value, statistical mode, occurrence.",
     category: "math",
     inputSchema: {
       type: "object",
@@ -188,7 +186,7 @@ export const mathTools: MiniTool[] = [
   },
   {
     name: "math_convert",
-    description: "Convert between angle units (radians/degrees) or other common conversions",
+    description: "Convert between common unit pairs: radians/degrees, Celsius/Fahrenheit, kilometers/miles. Quick conversion for everyday unit transformations. Use for unit conversion in calculations or display. Keywords: unit convert, radians degrees, celsius fahrenheit, km miles, temperature convert, angle convert.",
     category: "math",
     inputSchema: {
       type: "object",
@@ -243,7 +241,7 @@ export const mathTools: MiniTool[] = [
   // Inspired by IT-Tools MCP: https://github.com/wrenchpilot/it-tools-mcp
   {
     name: "math_base_convert",
-    description: "Convert number between bases (binary, octal, decimal, hex)",
+    description: "Convert numbers between numeral bases: binary (2), octal (8), decimal (10), hexadecimal (16). Translate numbers between different representations. Use for programming, debugging, or educational purposes. Keywords: base convert, binary hex, decimal to hex, number base, radix, octal, hexadecimal.",
     category: "math",
     inputSchema: {
       type: "object",
@@ -270,7 +268,7 @@ export const mathTools: MiniTool[] = [
   },
   {
     name: "math_roman",
-    description: "Convert between Roman numerals and Arabic numbers",
+    description: "Convert between Roman numerals and Arabic numbers (1-3999). Translate MCMXCIV to 1994 or vice versa. Use for document formatting, historical dates, or educational purposes. Keywords: Roman numeral, arabic number, numeral convert, MCMXCIV, Roman to number, number to Roman.",
     category: "math",
     inputSchema: {
       type: "object",
@@ -322,7 +320,7 @@ export const mathTools: MiniTool[] = [
   },
   {
     name: "math_convert_angle",
-    description: "Convert between angle units (degrees, radians, gradians, turns, arcminutes, arcseconds)",
+    description: "Convert between all angle units: degrees, radians, gradians, turns, arcminutes, arcseconds. Comprehensive angle unit conversion for trigonometry or navigation. Use for scientific calculations, CAD, or astronomy. Keywords: angle convert, degrees radians, gradians, turns, arcminutes, arcseconds, trigonometry.",
     category: "math",
     inputSchema: {
       type: "object",
@@ -370,7 +368,7 @@ export const mathTools: MiniTool[] = [
   },
   {
     name: "math_convert_energy",
-    description: "Convert between energy units (joules, calories, kWh, BTU, eV, etc.)",
+    description: "Convert between energy units: joules, calories, kilocalories, kWh, BTU, electron volts, watt-hours, foot-pounds. Essential for physics, nutrition, or engineering calculations. Use for energy calculations or unit comparison. Keywords: energy convert, joules calories, kWh BTU, electron volt, watt hours, calorie joule.",
     category: "math",
     inputSchema: {
       type: "object",
@@ -409,7 +407,7 @@ export const mathTools: MiniTool[] = [
   },
   {
     name: "math_convert_power",
-    description: "Convert between power units (watts, horsepower, BTU/h, etc.)",
+    description: "Convert between power units: watts, kilowatts, megawatts, horsepower, BTU/hour, foot-pounds/second. Essential for engineering, automotive, or HVAC calculations. Use for power ratings or equipment specs. Keywords: power convert, watts horsepower, kilowatt, megawatt, BTU per hour, power units.",
     category: "math",
     inputSchema: {
       type: "object",
@@ -447,7 +445,7 @@ export const mathTools: MiniTool[] = [
   // Temperature conversion - inspired by IT-Tools MCP
   {
     name: "math_convert_temperature",
-    description: "Convert between temperature units (Celsius, Fahrenheit, Kelvin, Rankine)",
+    description: "Convert between all temperature scales: Celsius, Fahrenheit, Kelvin, Rankine. Get precise temperature conversions for weather, science, or cooking. Use for international communication or scientific work. Keywords: temperature convert, Celsius Fahrenheit, Kelvin, Rankine, degrees convert, thermometer.",
     category: "math",
     inputSchema: {
       type: "object",
@@ -515,7 +513,7 @@ export const mathTools: MiniTool[] = [
   },
   {
     name: "math_percentage_calc",
-    description: "Calculate percentage operations (of, change, increase, decrease)",
+    description: "Calculate various percentage operations: X% of Y, percentage change between values, increase/decrease by %, what percent is X of Y. Complete percentage calculator for business or analysis. Keywords: percentage calculator, percent change, increase decrease, percent of, markup markdown, growth rate.",
     category: "math",
     inputSchema: {
       type: "object",
@@ -594,7 +592,7 @@ export const mathTools: MiniTool[] = [
   // Comprehensive unit conversion - inspired by calculator-server
   {
     name: "math_convert_units",
-    description: "Convert between units (length, weight, volume, area, speed, data)",
+    description: "Universal unit converter for length, weight, volume, area, speed, and data storage. Convert meters to feet, kg to lbs, liters to gallons, GB to MB, and more. Auto-detects unit category. Use for any measurement conversion. Keywords: unit converter, metric imperial, length weight volume, convert units, measurement, meters feet.",
     category: "math",
     inputSchema: {
       type: "object",
@@ -720,7 +718,7 @@ export const mathTools: MiniTool[] = [
   // Financial calculations - inspired by calculator-server
   {
     name: "math_financial",
-    description: "Financial calculations (compound interest, loan payment, present/future value, NPV, IRR)",
+    description: "Financial calculator for compound/simple interest, loan payments, present/future value, NPV, and ROI. Calculate mortgage payments, investment growth, or project profitability. Use for financial planning, loans, or investment analysis. Keywords: compound interest, loan payment, NPV, ROI, mortgage calculator, future value, amortization.",
     category: "math",
     inputSchema: {
       type: "object",

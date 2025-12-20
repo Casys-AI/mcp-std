@@ -227,7 +227,9 @@ Deno.test({
 Deno.test({
   name: "Serialization - functions are not serializable (should be omitted)",
   fn: async () => {
-    const sandbox = new DenoSandboxExecutor();
+    // JSON serialization behavior (subprocess mode)
+    // Worker uses structured clone which throws on functions
+    const sandbox = new DenoSandboxExecutor({ useWorkerForExecute: false });
     const code = `
       return {
         name: "test",
@@ -272,7 +274,9 @@ Deno.test({
 Deno.test({
   name: "Serialization - Date objects become ISO strings",
   fn: async () => {
-    const sandbox = new DenoSandboxExecutor();
+    // JSON serialization behavior (subprocess mode)
+    // Worker uses structured clone which preserves Date objects
+    const sandbox = new DenoSandboxExecutor({ useWorkerForExecute: false });
     const code = `
       return {
         date: new Date("2024-01-01T00:00:00.000Z")
@@ -290,7 +294,8 @@ Deno.test({
 Deno.test({
   name: "Serialization - RegExp becomes empty object",
   fn: async () => {
-    const sandbox = new DenoSandboxExecutor();
+    // JSON serialization behavior (subprocess mode)
+    const sandbox = new DenoSandboxExecutor({ useWorkerForExecute: false });
     const code = `
       return {
         pattern: /test/gi,
@@ -310,7 +315,8 @@ Deno.test({
 Deno.test({
   name: "Serialization - NaN and Infinity become null",
   fn: async () => {
-    const sandbox = new DenoSandboxExecutor();
+    // JSON serialization behavior (subprocess mode)
+    const sandbox = new DenoSandboxExecutor({ useWorkerForExecute: false });
     const code = `
       return {
         nan: NaN,
@@ -334,7 +340,8 @@ Deno.test({
 Deno.test({
   name: "Serialization - array with undefined elements",
   fn: async () => {
-    const sandbox = new DenoSandboxExecutor();
+    // JSON serialization behavior (subprocess mode)
+    const sandbox = new DenoSandboxExecutor({ useWorkerForExecute: false });
     const code = `
       return [1, undefined, 3, null, 5];
     `;
@@ -349,7 +356,9 @@ Deno.test({
 Deno.test({
   name: "Serialization - circular reference should fail gracefully",
   fn: async () => {
-    const sandbox = new DenoSandboxExecutor();
+    // JSON serialization behavior (subprocess mode)
+    // Worker uses structured clone which handles circular refs differently
+    const sandbox = new DenoSandboxExecutor({ useWorkerForExecute: false });
     const code = `
       const obj = { name: "test" };
       obj.self = obj; // Circular reference
