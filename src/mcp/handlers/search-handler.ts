@@ -30,6 +30,9 @@ export async function handleSearchTools(
   graphEngine: GraphRAGEngine,
   vectorSearch: VectorSearch,
 ): Promise<MCPToolResponse> {
+  // Deprecation warning (Story 10.6)
+  log.warn("[DEPRECATED] pml:search_tools is deprecated. Use pml:discover instead for unified search.");
+
   const params = args as SearchToolsArgs;
 
   // Validate query
@@ -132,6 +135,9 @@ export async function handleSearchCapabilities(
   args: unknown,
   dagSuggester: DAGSuggester,
 ): Promise<MCPToolResponse | MCPErrorResponse> {
+  // Deprecation warning (Story 10.6)
+  log.warn("[DEPRECATED] pml:search_capabilities is deprecated. Use pml:discover instead for unified search.");
+
   const transaction = startTransaction("mcp.capabilities.search", "mcp");
   try {
     const params = args as SearchCapabilitiesArgs;

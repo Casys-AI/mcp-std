@@ -64,6 +64,7 @@ import { getMetaTools } from "./tools/mod.ts";
 import {
   handleSearchTools,
   handleSearchCapabilities,
+  handleDiscover,
   handleExecuteCode,
   handleWorkflowExecution,
   handleContinue,
@@ -306,6 +307,11 @@ export class PMLGatewayServer {
 
     if (name === "pml:search_capabilities") {
       return await handleSearchCapabilities(args, this.dagSuggester);
+    }
+
+    // Unified discover (Story 10.6)
+    if (name === "pml:discover") {
+      return await handleDiscover(args, this.vectorSearch, this.graphEngine, this.dagSuggester);
     }
 
     // Single tool execution (proxy to underlying MCP server)

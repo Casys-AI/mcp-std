@@ -163,6 +163,20 @@ capability:
   score_scaling: 0.30             # confidence = floor + discoveryScore * scaling
 
 # =============================================================================
+# RELIABILITY SCORING (ADR-038 §3.1)
+# =============================================================================
+# How capability success rate affects matching score.
+# Formula: matchScore = semanticScore × reliabilityFactor
+# Used by CapabilityMatcher.findMatch() for Active Search mode.
+
+reliability:
+  penalty_threshold: 0.50       # Success rate below this → apply penalty
+  penalty_factor: 0.10          # Multiply score by this when penalized
+  boost_threshold: 0.90         # Success rate above this → apply boost
+  boost_factor: 1.20            # Multiply score by this when boosted
+  filter_threshold: 0.20        # Reliability below this → mark as filtered
+
+# =============================================================================
 # FALLBACK / DEFAULT VALUES
 # =============================================================================
 # Used when specific data is unavailable.

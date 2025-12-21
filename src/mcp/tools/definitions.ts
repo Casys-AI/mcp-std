@@ -45,10 +45,14 @@ The system has access to ALL MCP tools (filesystem, github, fetch, databases, et
  * Search tools tool (pml:search_tools)
  *
  * Tool discovery via semantic search + graph relationships.
+ *
+ * @deprecated Use pml:discover instead (Story 10.6)
  */
 export const searchToolsTool: MCPTool = {
   name: "pml:search_tools",
-  description: `Discover available MCP tools via semantic search. Use this to explore what's possible before using execute_dag.
+  description: `[DEPRECATED - Use pml:discover instead] Discover available MCP tools via semantic search.
+
+⚠️ This tool is deprecated. Use pml:discover for unified search across tools AND capabilities.
 
 Returns tool names, descriptions, and input schemas. Useful for:
 - "What tools can read files?" → filesystem:read_file, filesystem:read_multiple_files...
@@ -85,10 +89,14 @@ Tip: Set include_related=true to see tools often used together (from learned pat
  * Search capabilities tool (pml:search_capabilities)
  *
  * Find proven code patterns from past executions.
+ *
+ * @deprecated Use pml:discover instead (Story 10.6)
  */
 export const searchCapabilitiesTool: MCPTool = {
   name: "pml:search_capabilities",
-  description: `Search for PROVEN code patterns that worked before. Capabilities are learned from successful executions.
+  description: `[DEPRECATED - Use pml:discover instead] Search for PROVEN code patterns that worked before.
+
+⚠️ This tool is deprecated. Use pml:discover for unified search across tools AND capabilities.
 
 Returns reusable code snippets with success rates. Example:
 - intent="create GitHub issue from file" → Returns code that reads file + creates issue (95% success rate)
@@ -286,6 +294,60 @@ export const approvalResponseTool: MCPTool = {
 };
 
 /**
+ * Discover tool (pml:discover) - Story 10.6
+ *
+ * Unified discovery API for tools and capabilities.
+ * Replaces pml:search_tools and pml:search_capabilities.
+ */
+export const discoverTool: MCPTool = {
+  name: "pml:discover",
+  description: `Unified discovery API for MCP tools AND learned capabilities. RECOMMENDED over search_tools/search_capabilities.
+
+Returns a merged, ranked list of:
+- **Tools**: Available MCP tools (filesystem, github, fetch, etc.)
+- **Capabilities**: Proven code patterns from past successful executions
+
+Examples:
+- intent="read a file" → Returns filesystem:read_file (tool) + any learned file-reading patterns (capability)
+- intent="create GitHub issue" → Returns github:create_issue (tool) + learned issue creation code (capability)
+
+Filter by type if you only want tools or capabilities. Results are sorted by score (best match first).`,
+  inputSchema: {
+    type: "object",
+    properties: {
+      intent: {
+        type: "string",
+        description: "What do you want to accomplish? Natural language description of your goal.",
+      },
+      filter: {
+        type: "object",
+        description: "Optional filters for results",
+        properties: {
+          type: {
+            type: "string",
+            enum: ["tool", "capability", "all"],
+            description: "Filter by result type. Default: 'all' (both tools and capabilities)",
+          },
+          minScore: {
+            type: "number",
+            description: "Minimum score threshold (0-1). Default: 0.0",
+          },
+        },
+      },
+      limit: {
+        type: "number",
+        description: "Maximum results to return (default: 10, max: 50)",
+      },
+      include_related: {
+        type: "boolean",
+        description: "Include related tools for each tool result (from usage patterns). Default: false",
+      },
+    },
+    required: ["intent"],
+  },
+};
+
+/**
  * Get all meta-tools to expose via tools/list
  *
  * @returns Array of tool definitions formatted for MCP response
@@ -297,8 +359,9 @@ export function getMetaTools(): Array<{
 }> {
   const tools = [
     executeDagTool,
-    searchToolsTool,
-    searchCapabilitiesTool,
+    discoverTool,
+    // searchToolsTool and searchCapabilitiesTool removed from MCP exposure (Story 10.6)
+    // Handlers still work for backward compatibility if called directly
     executeCodeTool,
     continueTool,
     abortTool,
