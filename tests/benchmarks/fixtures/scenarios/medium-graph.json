@@ -1,0 +1,100 @@
+{
+  "name": "medium-graph",
+  "description": "Medium graph for realistic benchmarks (50 tools, 10 capabilities, 3 meta-capabilities)",
+  "nodes": {
+    "tools": [
+      { "id": "fs__read", "pageRank": 0.05, "community": 0 },
+      { "id": "fs__write", "pageRank": 0.04, "community": 0 },
+      { "id": "fs__list", "pageRank": 0.03, "community": 0 },
+      { "id": "fs__delete", "pageRank": 0.02, "community": 0 },
+      { "id": "fs__copy", "pageRank": 0.02, "community": 0 },
+      { "id": "db__query", "pageRank": 0.06, "community": 1 },
+      { "id": "db__insert", "pageRank": 0.04, "community": 1 },
+      { "id": "db__update", "pageRank": 0.03, "community": 1 },
+      { "id": "db__delete", "pageRank": 0.02, "community": 1 },
+      { "id": "db__transaction", "pageRank": 0.03, "community": 1 },
+      { "id": "http__get", "pageRank": 0.05, "community": 2 },
+      { "id": "http__post", "pageRank": 0.04, "community": 2 },
+      { "id": "http__put", "pageRank": 0.02, "community": 2 },
+      { "id": "http__delete", "pageRank": 0.02, "community": 2 },
+      { "id": "http__patch", "pageRank": 0.01, "community": 2 },
+      { "id": "json__parse", "pageRank": 0.04, "community": 3 },
+      { "id": "json__stringify", "pageRank": 0.03, "community": 3 },
+      { "id": "json__validate", "pageRank": 0.02, "community": 3 },
+      { "id": "xml__parse", "pageRank": 0.02, "community": 3 },
+      { "id": "xml__stringify", "pageRank": 0.01, "community": 3 },
+      { "id": "auth__login", "pageRank": 0.03, "community": 4 },
+      { "id": "auth__logout", "pageRank": 0.02, "community": 4 },
+      { "id": "auth__refresh", "pageRank": 0.02, "community": 4 },
+      { "id": "auth__validate", "pageRank": 0.02, "community": 4 },
+      { "id": "cache__get", "pageRank": 0.03, "community": 5 },
+      { "id": "cache__set", "pageRank": 0.03, "community": 5 },
+      { "id": "cache__delete", "pageRank": 0.02, "community": 5 },
+      { "id": "cache__clear", "pageRank": 0.01, "community": 5 },
+      { "id": "log__info", "pageRank": 0.02, "community": 6 },
+      { "id": "log__error", "pageRank": 0.02, "community": 6 },
+      { "id": "log__debug", "pageRank": 0.01, "community": 6 },
+      { "id": "log__warn", "pageRank": 0.01, "community": 6 },
+      { "id": "metrics__record", "pageRank": 0.02, "community": 6 },
+      { "id": "metrics__query", "pageRank": 0.01, "community": 6 },
+      { "id": "email__send", "pageRank": 0.02, "community": 7 },
+      { "id": "email__template", "pageRank": 0.01, "community": 7 },
+      { "id": "sms__send", "pageRank": 0.01, "community": 7 },
+      { "id": "push__send", "pageRank": 0.01, "community": 7 },
+      { "id": "crypto__encrypt", "pageRank": 0.02, "community": 8 },
+      { "id": "crypto__decrypt", "pageRank": 0.02, "community": 8 },
+      { "id": "crypto__hash", "pageRank": 0.02, "community": 8 },
+      { "id": "crypto__sign", "pageRank": 0.01, "community": 8 },
+      { "id": "crypto__verify", "pageRank": 0.01, "community": 8 },
+      { "id": "queue__publish", "pageRank": 0.02, "community": 9 },
+      { "id": "queue__subscribe", "pageRank": 0.02, "community": 9 },
+      { "id": "queue__ack", "pageRank": 0.01, "community": 9 },
+      { "id": "storage__upload", "pageRank": 0.02, "community": 10 },
+      { "id": "storage__download", "pageRank": 0.02, "community": 10 },
+      { "id": "storage__delete", "pageRank": 0.01, "community": 10 },
+      { "id": "storage__list", "pageRank": 0.01, "community": 10 }
+    ],
+    "capabilities": [
+      { "id": "cap__file_ops", "toolsUsed": ["fs__read", "fs__write", "fs__list", "fs__delete", "fs__copy"], "successRate": 0.92 },
+      { "id": "cap__db_crud", "toolsUsed": ["db__query", "db__insert", "db__update", "db__delete", "db__transaction"], "successRate": 0.88 },
+      { "id": "cap__rest_api", "toolsUsed": ["http__get", "http__post", "http__put", "http__delete", "json__parse", "json__stringify"], "successRate": 0.90 },
+      { "id": "cap__auth_flow", "toolsUsed": ["auth__login", "auth__validate", "auth__refresh", "auth__logout"], "successRate": 0.95 },
+      { "id": "cap__caching", "toolsUsed": ["cache__get", "cache__set", "cache__delete"], "successRate": 0.98 },
+      { "id": "cap__logging", "toolsUsed": ["log__info", "log__error", "log__debug", "log__warn", "metrics__record"], "successRate": 0.99 },
+      { "id": "cap__notifications", "toolsUsed": ["email__send", "email__template", "sms__send", "push__send"], "successRate": 0.85 },
+      { "id": "cap__security", "toolsUsed": ["crypto__encrypt", "crypto__decrypt", "crypto__hash", "crypto__sign", "crypto__verify"], "successRate": 0.97 },
+      { "id": "cap__messaging", "toolsUsed": ["queue__publish", "queue__subscribe", "queue__ack"], "successRate": 0.94 },
+      { "id": "cap__storage", "toolsUsed": ["storage__upload", "storage__download", "storage__delete", "storage__list"], "successRate": 0.91 }
+    ],
+    "metaCapabilities": [
+      { "id": "meta__data_pipeline", "contains": ["cap__file_ops", "cap__db_crud", "cap__caching"], "description": "End-to-end data processing" },
+      { "id": "meta__secure_api", "contains": ["cap__rest_api", "cap__auth_flow", "cap__security"], "description": "Authenticated API operations" },
+      { "id": "meta__observability", "contains": ["cap__logging", "cap__notifications", "cap__messaging"], "description": "Monitoring and alerting" }
+    ]
+  },
+  "edges": [
+    { "source": "http__get", "target": "json__parse", "type": "dependency", "source_type": "observed", "weight": 0.95, "count": 150 },
+    { "source": "json__parse", "target": "db__insert", "type": "sequence", "source_type": "observed", "weight": 0.80, "count": 80 },
+    { "source": "auth__login", "target": "http__get", "type": "dependency", "source_type": "observed", "weight": 0.90, "count": 100 },
+    { "source": "db__query", "target": "cache__set", "type": "sequence", "source_type": "observed", "weight": 0.75, "count": 60 },
+    { "source": "cache__get", "target": "db__query", "type": "sequence", "source_type": "observed", "weight": 0.70, "count": 50 },
+    { "source": "fs__read", "target": "json__parse", "type": "dependency", "source_type": "observed", "weight": 0.85, "count": 70 },
+    { "source": "json__stringify", "target": "fs__write", "type": "dependency", "source_type": "observed", "weight": 0.85, "count": 65 },
+    { "source": "db__insert", "target": "log__info", "type": "sequence", "source_type": "inferred", "weight": 0.50, "count": 30 },
+    { "source": "crypto__encrypt", "target": "storage__upload", "type": "sequence", "source_type": "observed", "weight": 0.80, "count": 40 },
+    { "source": "storage__download", "target": "crypto__decrypt", "type": "sequence", "source_type": "observed", "weight": 0.80, "count": 35 },
+    { "source": "queue__subscribe", "target": "json__parse", "type": "dependency", "source_type": "observed", "weight": 0.90, "count": 90 },
+    { "source": "json__stringify", "target": "queue__publish", "type": "dependency", "source_type": "observed", "weight": 0.85, "count": 75 },
+    { "source": "auth__validate", "target": "cache__get", "type": "sequence", "source_type": "observed", "weight": 0.70, "count": 45 },
+    { "source": "log__error", "target": "email__send", "type": "sequence", "source_type": "inferred", "weight": 0.40, "count": 15 }
+  ],
+  "expectedResults": {
+    "louvain": {
+      "communityCount": { "min": 8, "max": 12 },
+      "modularity": { "min": 0.4, "max": 0.7 }
+    },
+    "spectral": {
+      "clusterCount": { "min": 3, "max": 5 }
+    }
+  }
+}
