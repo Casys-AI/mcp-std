@@ -396,6 +396,30 @@ export class ControlledExecutor extends ParallelExecutor {
       const checkpointEvent = await this.saveCheckpoint(workflowId, layerIdx);
       if (checkpointEvent) yield checkpointEvent;
 
+      // Story 10.7c fix: Per-layer validation pause
+      // When perLayerValidation is enabled, pause after checkpoint and wait for "continue" command
+      // Skip pause on the last layer (workflow will complete anyway)
+      if (this.config.perLayerValidation && layerIdx < layers.length - 1) {
+        log.debug(`[perLayerValidation] Waiting for continue command after layer ${layerIdx}`);
+        const cmd = await waitForDecisionCommand(this.commandQueue, "HIL", this.getTimeout("hil"));
+        if (!cmd || cmd.type !== "continue") {
+          log.warn(`[perLayerValidation] Unexpected command: ${cmd?.type}, treating as abort`);
+          const abortEvent: ExecutionEvent = {
+            type: "workflow_complete",
+            timestamp: Date.now(),
+            workflowId,
+            totalTimeMs: performance.now() - startTime,
+            successfulTasks,
+            failedTasks,
+          };
+          await this.eventStream.emit(abortEvent);
+          yield abortEvent;
+          await this.eventStream.close();
+          return this.state!;
+        }
+        log.debug(`[perLayerValidation] Continue command received, proceeding to layer ${layerIdx + 1}`);
+      }
+
       // AIL Decision Point (Deferred Pattern: yield event BEFORE waiting for response)
       const ailPrep = await this.prepareAILDecision(workflowId, layerIdx, failedTasks > 0);
       if (ailPrep.event) yield ailPrep.event;

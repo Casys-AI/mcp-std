@@ -10,6 +10,12 @@ import * as log from "@std/log";
 import type { RouteContext } from "../types.ts";
 import { jsonResponse, errorResponse } from "../types.ts";
 
+// Rate limiting for metrics endpoint
+let lastMetricsCall = 0;
+let metricsCallCount = 0;
+const METRICS_RATE_LIMIT_WINDOW = 1000; // 1 second
+const METRICS_MAX_CALLS_PER_WINDOW = 3;
+
 /**
  * GET /api/metrics
  *
@@ -19,13 +25,27 @@ import { jsonResponse, errorResponse } from "../types.ts";
  * - range: Time range (1h, 24h, 7d) (default: 24h)
  */
 export async function handleMetrics(
-  _req: Request,
+  req: Request,
   url: URL,
   ctx: RouteContext,
   corsHeaders: Record<string, string>,
 ): Promise<Response> {
   try {
+    const now = Date.now();
     const range = url.searchParams.get("range") || "24h";
+
+    // Rate limiting: reset counter if window expired
+    if (now - lastMetricsCall > METRICS_RATE_LIMIT_WINDOW) {
+      metricsCallCount = 0;
+    }
+    metricsCallCount++;
+    lastMetricsCall = now;
+
+    // Log if called too frequently (helps diagnose rapid polling issues)
+    if (metricsCallCount > METRICS_MAX_CALLS_PER_WINDOW) {
+      const origin = req.headers.get("Origin") || "unknown";
+      log.warn(`[/api/metrics] Rate limit warning: ${metricsCallCount} calls in 1s (origin: ${origin}, range: ${range})`);
+    }
 
     // Validate range parameter
     if (range !== "1h" && range !== "24h" && range !== "7d") {

@@ -8,6 +8,11 @@
  * - Thresholds survive server restarts
  * - Context-based threshold lookup (per ADR-008)
  *
+ * Extended in Story 10.7c with Thompson Sampling integration (ADR-049):
+ * - Per-tool Bayesian thresholds via ThompsonSampler
+ * - Risk-based thresholds from mcp-permissions.yaml scope
+ * - Mode-specific thresholds (active_search, passive_suggestion)
+ *
  * @module mcp/adaptive-threshold
  */
 
@@ -15,6 +20,14 @@ import * as log from "@std/log";
 import type { ExecutionRecord, SpeculativeMetrics } from "../graphrag/types.ts";
 import type { PGliteClient } from "../db/client.ts";
 import type { StoredThreshold, ThresholdContext } from "../learning/types.ts";
+import {
+  ThompsonSampler,
+  type ThompsonConfig,
+  type RiskCategory,
+  type ThresholdMode,
+  type ThresholdResult,
+} from "../graphrag/algorithms/thompson.ts";
+import { getToolPermissionConfig, type PermissionConfig } from "../capabilities/permission-inferrer.ts";
 
 /**
  * Adaptive threshold configuration
@@ -26,7 +39,12 @@ export interface AdaptiveConfig {
   minThreshold: number;
   maxThreshold: number;
   windowSize: number; // Number of recent executions to consider
+  /** Thompson Sampling configuration (Story 10.7c) */
+  thompsonConfig?: Partial<ThompsonConfig>;
 }
+
+// Re-export Thompson types for external consumers
+export type { RiskCategory, ThresholdMode, ThresholdResult } from "../graphrag/algorithms/thompson.ts";
 
 /**
  * Threshold adjustment result
@@ -45,6 +63,7 @@ interface ThresholdAdjustment {
  * Decreases thresholds if too many false negatives (successful manual confirmations).
  *
  * Epic 4 Phase 1: Added PGlite persistence for thresholds.
+ * Story 10.7c: Added Thompson Sampling for per-tool Bayesian thresholds.
  */
 export class AdaptiveThresholdManager {
   private config: AdaptiveConfig;
@@ -59,6 +78,9 @@ export class AdaptiveThresholdManager {
   private thresholdCache: Map<string, StoredThreshold> = new Map();
   private currentContextHash: string = "default";
 
+  // Story 10.7c: Thompson Sampling integration
+  private thompsonSampler: ThompsonSampler;
+
   constructor(config?: Partial<AdaptiveConfig>, db?: PGliteClient) {
     this.config = {
       initialExplicitThreshold: 0.50,
@@ -70,6 +92,9 @@ export class AdaptiveThresholdManager {
       ...config,
     };
     this.db = db ?? null;
+
+    // Story 10.7c: Initialize Thompson Sampler
+    this.thompsonSampler = new ThompsonSampler(config?.thompsonConfig);
   }
 
   /**
@@ -242,10 +267,17 @@ export class AdaptiveThresholdManager {
   /**
    * Record execution result for adaptive learning
    *
+   * Story 10.7c: Also updates Thompson Sampler if toolId is provided.
+   *
    * @param record - Execution record with confidence, mode, and outcome
    */
   recordExecution(record: ExecutionRecord): void {
     this.executionHistory.push(record);
+
+    // Story 10.7c: Update Thompson Sampler if toolId provided
+    if (record.toolId) {
+      this.thompsonSampler.recordOutcome(record.toolId, record.success);
+    }
 
     // Keep only recent executions (sliding window)
     if (this.executionHistory.length > this.config.windowSize) {
@@ -389,5 +421,217 @@ export class AdaptiveThresholdManager {
   reset(): void {
     this.executionHistory = [];
     this.currentThresholds = {};
+    this.thompsonSampler.reset();
   }
+
+  // ===========================================================================
+  // Story 10.7c: Thompson Sampling Integration (AC #1, #3, #4)
+  // ===========================================================================
+
+  /**
+   * Get per-tool threshold using Thompson Sampling (Story 10.7c AC1)
+   *
+   * Delegates to ThompsonSampler for Bayesian per-tool thresholds.
+   * Falls back to risk-based base threshold if tool is unknown.
+   *
+   * @param toolId - Full tool ID (e.g., "github:create_issue" or "filesystem:read_file")
+   * @param mode - Threshold mode (active_search, passive_suggestion, speculation)
+   * @param localAlpha - Optional local alpha from ADR-048 (0.5-1.0)
+   * @returns Threshold result with breakdown
+   */
+  getThresholdForTool(
+    toolId: string,
+    mode: ThresholdMode = "passive_suggestion",
+    localAlpha: number = 0.75,
+  ): ThresholdResult {
+    const riskCategory = this.getToolRiskCategory(toolId);
+    return this.thompsonSampler.getThreshold(toolId, riskCategory, mode, localAlpha);
+  }
+
+  /**
+   * Get risk category for a tool based on mcp-permissions.yaml scope (Story 10.7c AC2)
+   *
+   * Maps scope → RiskCategory:
+   * - minimal, readonly → safe (threshold 0.55)
+   * - filesystem, network-api → moderate (threshold 0.70)
+   * - mcp-standard → dangerous (threshold 0.85)
+   *
+   * Tools with approvalMode: hil bypass Thompson entirely.
+   *
+   * @param toolId - Full tool ID (e.g., "github:create_issue")
+   * @returns Risk category for threshold calculation
+   */
+  getToolRiskCategory(toolId: string): RiskCategory {
+    // Extract server prefix (e.g., "github" from "github:create_issue")
+    const serverPrefix = toolId.split(":")[0];
+    const permConfig = getToolPermissionConfig(serverPrefix);
+
+    if (!permConfig) {
+      // Unknown tool → conservative moderate (requires context for decision)
+      log.debug(`[Thompson] Unknown tool ${toolId} - using moderate risk`);
+      return "moderate";
+    }
+
+    // Map scope → risk category
+    return getRiskFromScope(permConfig);
+  }
+
+  /**
+   * Check if a tool requires HIL (bypasses Thompson)
+   *
+   * Tools with approvalMode: hil or unknown tools bypass Thompson
+   * and go directly to human-in-the-loop approval.
+   *
+   * @param toolId - Full tool ID
+   * @returns true if tool should bypass Thompson for HIL
+   */
+  requiresHIL(toolId: string): boolean {
+    const serverPrefix = toolId.split(":")[0];
+    const permConfig = getToolPermissionConfig(serverPrefix);
+
+    // Unknown tool → HIL required
+    if (!permConfig) {
+      log.debug(`[Thompson] Unknown tool ${toolId} - HIL required`);
+      return true;
+    }
+
+    // Explicit HIL mode → HIL required
+    if (permConfig.approvalMode === "hil") {
+      log.debug(`[Thompson] Tool ${toolId} has approvalMode:hil - HIL required`);
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Record execution outcome for Thompson learning (Story 10.7c AC1)
+   *
+   * Updates Beta(α, β) distribution for the tool based on success/failure.
+   * Called after each tool execution completes.
+   *
+   * @param toolId - Full tool ID
+   * @param success - Whether the execution succeeded
+   */
+  recordToolOutcome(toolId: string, success: boolean): void {
+    this.thompsonSampler.recordOutcome(toolId, success);
+    log.debug(`[Thompson] Recorded outcome for ${toolId}: ${success ? "success" : "failure"}`);
+  }
+
+  /**
+   * Get Thompson Sampler instance (for advanced usage/testing)
+   */
+  getThompsonSampler(): ThompsonSampler {
+    return this.thompsonSampler;
+  }
+
+  /**
+   * Get Thompson statistics for a tool
+   *
+   * @param toolId - Full tool ID
+   * @returns Mean success rate, variance, confidence interval
+   */
+  getToolStats(toolId: string): {
+    mean: number;
+    variance: number;
+    confidenceInterval: [number, number];
+    ucbBonus: number;
+  } {
+    return {
+      mean: this.thompsonSampler.getMean(toolId),
+      variance: this.thompsonSampler.getVariance(toolId),
+      confidenceInterval: this.thompsonSampler.getConfidenceInterval(toolId),
+      ucbBonus: this.thompsonSampler.getUCBBonus(toolId),
+    };
+  }
+}
+
+// ===========================================================================
+// Story 10.7c: Risk Classification from Scope (AC #2)
+// ===========================================================================
+
+/**
+ * Map scope → RiskCategory (Story 10.7c AC2)
+ *
+ * Scope is defined in mcp-permissions.yaml:
+ * - minimal: Pure computation, no I/O
+ * - readonly: Read files only
+ * - filesystem: Read + write files
+ * - network-api: Network access
+ * - mcp-standard: Full MCP capabilities
+ *
+ * Legacy format uses permissionSet + isReadOnly.
+ *
+ * @param config - Tool permission config from mcp-permissions.yaml
+ * @returns Risk category for Thompson threshold
+ */
+export function getRiskFromScope(config: PermissionConfig): RiskCategory {
+  const scope = config.scope;
+
+  switch (scope) {
+    case "minimal":
+    case "readonly":
+      return "safe"; // threshold ~0.55
+
+    case "filesystem":
+    case "network-api":
+      return "moderate"; // threshold ~0.70
+
+    case "mcp-standard":
+      return "dangerous"; // threshold ~0.85
+
+    default:
+      // Unknown scope → conservative moderate
+      return "moderate";
+  }
+}
+
+// Risk priority for max() calculation
+const RISK_PRIORITY: Record<RiskCategory, number> = {
+  safe: 0,
+  moderate: 1,
+  dangerous: 2,
+};
+
+/**
+ * Calculate the aggregate risk category for a capability (Story 10.7c AC6b)
+ *
+ * Capabilities inherit the MAX risk of all their tools.
+ * This ensures that a capability using any dangerous tool
+ * is treated as dangerous for Thompson threshold calculation.
+ *
+ * @param toolsUsed - Array of tool IDs used by the capability
+ * @returns Max risk category, or "safe" if no tools
+ */
+export function calculateCapabilityRisk(toolsUsed: string[]): RiskCategory {
+  if (!toolsUsed || toolsUsed.length === 0) {
+    return "safe";
+  }
+
+  let maxRisk: RiskCategory = "safe";
+  let maxPriority = 0;
+
+  for (const toolId of toolsUsed) {
+    const serverPrefix = toolId.split(":")[0];
+    const permConfig = getToolPermissionConfig(serverPrefix);
+
+    // Unknown tool → treat as moderate (conservative but not blocking)
+    const risk = permConfig ? getRiskFromScope(permConfig) : "moderate";
+    const priority = RISK_PRIORITY[risk];
+
+    if (priority > maxPriority) {
+      maxPriority = priority;
+      maxRisk = risk;
+
+      // Short-circuit: dangerous is max, no need to continue
+      if (maxRisk === "dangerous") break;
+    }
+  }
+
+  log.debug(`[Thompson] Capability risk calculated: ${maxRisk}`, {
+    toolsUsed,
+    maxRisk,
+  });
+
+  return maxRisk;
 }

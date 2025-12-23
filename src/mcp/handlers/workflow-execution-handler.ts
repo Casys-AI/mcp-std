@@ -30,6 +30,8 @@ import type { WorkflowHandlerDependencies } from "./workflow-handler-types.ts";
 import { getTaskType } from "../../dag/execution/task-router.ts";
 import type { CapabilityStore } from "../../capabilities/capability-store.ts";
 import { getToolPermissionConfig } from "../../capabilities/permission-inferrer.ts";
+import type { AdaptiveThresholdManager, ThresholdMode } from "../adaptive-threshold.ts";
+import { updateThompsonSampling } from "./execute-handler.ts";
 // Story 10.5 AC10: WorkerBridge-based executor for 100% traceability
 import {
   createToolExecutorViaWorker,
@@ -53,7 +55,7 @@ import { buildToolDefinitionsFromDAG } from "./shared/tool-definitions.ts";
  * - code_execution with minimal permissions (errors are clear, suggest primitives)
  * - mcp_tool with minimal scope and auto approval (safe by default)
  */
-async function requiresValidation(
+export async function requiresValidation(
   dag: DAGStructure,
   capabilityStore?: CapabilityStore,
 ): Promise<boolean> {
@@ -103,6 +105,104 @@ async function requiresValidation(
 
   // Known tools with auto approval → no validation needed
   return false;
+}
+
+/**
+ * Smart HIL: Determine if a DAG requires HIL using Thompson Sampling (Story 10.7c AC5)
+ *
+ * Checks each tool against Thompson thresholds:
+ * 1. If tool requires HIL via approvalMode:hil → always HIL
+ * 2. If tool is unknown → always HIL (security)
+ * 3. Otherwise, check if Thompson threshold > current confidence → HIL
+ *
+ * @param dag - DAG structure with tasks
+ * @param thresholdManager - AdaptiveThresholdManager with Thompson Sampling
+ * @param confidence - Current confidence score (from SHGAT/DR-DSP)
+ * @param mode - Threshold mode (active_search, passive_suggestion, speculation)
+ * @returns Object with HIL required flag and details
+ */
+export function smartHILCheck(
+  dag: DAGStructure,
+  thresholdManager: AdaptiveThresholdManager,
+  confidence: number,
+  mode: ThresholdMode = "passive_suggestion",
+): {
+  requiresHIL: boolean;
+  reason?: string;
+  toolsRequiringHIL: string[];
+  thresholdBreakdown: Array<{
+    toolId: string;
+    thompsonThreshold: number;
+    confidence: number;
+    requiresHIL: boolean;
+    reason: string;
+  }>;
+} {
+  const toolsRequiringHIL: string[] = [];
+  const thresholdBreakdown: Array<{
+    toolId: string;
+    thompsonThreshold: number;
+    confidence: number;
+    requiresHIL: boolean;
+    reason: string;
+  }> = [];
+
+  for (const task of dag.tasks) {
+    const taskType = getTaskType(task);
+
+    // Only check MCP tools for Thompson thresholds
+    if (taskType === "mcp_tool" && task.tool) {
+      // Check if tool explicitly requires HIL
+      if (thresholdManager.requiresHIL(task.tool)) {
+        toolsRequiringHIL.push(task.tool);
+        thresholdBreakdown.push({
+          toolId: task.tool,
+          thompsonThreshold: 1.0, // Always HIL
+          confidence,
+          requiresHIL: true,
+          reason: "approvalMode:hil or unknown tool",
+        });
+        continue;
+      }
+
+      // Get Thompson threshold for this tool
+      const thresholdResult = thresholdManager.getThresholdForTool(task.tool, mode);
+      const requiresHIL = confidence < thresholdResult.threshold;
+
+      if (requiresHIL) {
+        toolsRequiringHIL.push(task.tool);
+      }
+
+      thresholdBreakdown.push({
+        toolId: task.tool,
+        thompsonThreshold: thresholdResult.threshold,
+        confidence,
+        requiresHIL,
+        reason: requiresHIL
+          ? `confidence ${confidence.toFixed(3)} < threshold ${thresholdResult.threshold.toFixed(3)}`
+          : `confidence ${confidence.toFixed(3)} >= threshold ${thresholdResult.threshold.toFixed(3)}`,
+      });
+    }
+  }
+
+  const requiresHIL = toolsRequiringHIL.length > 0;
+  const reason = requiresHIL
+    ? `${toolsRequiringHIL.length} tool(s) require HIL: ${toolsRequiringHIL.join(", ")}`
+    : undefined;
+
+  log.debug("[SmartHIL] Check complete", {
+    requiresHIL,
+    toolsRequiringHIL,
+    confidence,
+    mode,
+  });
+
+  return {
+    requiresHIL,
+    reason,
+    toolsRequiringHIL,
+    thresholdBreakdown,
+  };
 }
 
 /**
@@ -300,6 +400,20 @@ async function executeStandardWorkflow(
       userId: userId ?? "local",
     });
 
+    // Story 10.7c: Update Thompson Sampling with execution outcomes
+    const thompsonResults = result.results.map((r) => {
+      const task = dag.tasks.find((t) => t.id === r.taskId);
+      return {
+        taskId: r.taskId,
+        tool: task?.tool ?? "unknown",
+        args: {} as Record<string, import("../../capabilities/types.ts").JsonValue>,
+        result: (r.output ?? null) as import("../../capabilities/types.ts").JsonValue,
+        success: r.status === "success",
+        durationMs: r.executionTimeMs ?? 0,
+      };
+    });
+    updateThompsonSampling(deps.adaptiveThresholdManager, thompsonResults);
+
     log.info(`[Story 10.5] Workflow executed via WorkerBridge`, {
       tracesCount: context.traces.length,
       tasksCount: dag.tasks.length,
@@ -341,9 +455,11 @@ async function executeWithPerLayerValidation(
   const { executor, context } = createToolExecutorWithTracing(deps, toolDefs);
 
   // Create ControlledExecutor for this workflow
+  // Story 10.7c fix: Enable perLayerValidation so generator pauses after checkpoints
   const controlledExecutor = new ControlledExecutor(executor, {
     taskTimeout: ServerDefaults.taskTimeout,
     userId: userId ?? "local",
+    perLayerValidation: true,
   });
 
   // Configure checkpointing

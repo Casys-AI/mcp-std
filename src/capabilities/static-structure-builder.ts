@@ -16,6 +16,7 @@ import type { PGliteClient } from "../db/client.ts";
 import type {
   ArgumentsStructure,
   ArgumentValue,
+  BranchDecision,
   JsonValue,
   ProvidesCoverage,
   StaticStructure,
@@ -1394,5 +1395,90 @@ export class StaticStructureBuilder {
     }
 
     return null;
+  }
+
+  /**
+   * Infer branch decisions from executed path by matching against static structure
+   *
+   * Story 11.2: Compares the tools that were actually executed with the
+   * conditional edges in the static structure to determine which branches
+   * were taken at runtime.
+   *
+   * @param structure - Static structure with nodes and conditional edges
+   * @param executedPath - Array of tool IDs that were actually executed
+   * @returns Array of BranchDecision indicating which branches were taken
+   *
+   * @example
+   * ```typescript
+   * const structure = await builder.buildStaticStructure(`
+   *   if (file.exists) {
+   *     await mcp.fs.read({ path });
+   *   } else {
+   *     await mcp.fs.create({ path });
+   *   }
+   * `);
+   *
+   * // If read was executed but not create:
+   * const decisions = StaticStructureBuilder.inferDecisions(
+   *   structure,
+   *   ["filesystem:read_file"]
+   * );
+   * // Returns: [{ nodeId: "d1", outcome: "true", condition: "file.exists" }]
+   * ```
+   */
+  static inferDecisions(
+    structure: StaticStructure,
+    executedPath: string[],
+  ): BranchDecision[] {
+    const decisions: BranchDecision[] = [];
+
+    if (!structure?.nodes || !structure?.edges || executedPath.length === 0) {
+      return decisions;
+    }
+
+    // Build map: nodeId -> tool for task nodes
+    const nodeToTool = new Map<string, string>();
+    for (const node of structure.nodes) {
+      if (node.type === "task") {
+        nodeToTool.set(node.id, node.tool);
+      }
+    }
+
+    // Build map: decisionNodeId -> condition for decision nodes
+    const decisionConditions = new Map<string, string>();
+    for (const node of structure.nodes) {
+      if (node.type === "decision") {
+        decisionConditions.set(node.id, node.condition);
+      }
+    }
+
+    const executedSet = new Set(executedPath);
+
+    // Track which decisions we've already recorded (avoid duplicates)
+    const recordedDecisions = new Set<string>();
+
+    // For each conditional edge, check if the target tool was executed
+    for (const edge of structure.edges) {
+      if (edge.type === "conditional" && edge.outcome) {
+        const tool = nodeToTool.get(edge.to);
+
+        // If this tool was executed and we haven't recorded this decision yet
+        if (tool && executedSet.has(tool) && !recordedDecisions.has(edge.from)) {
+          decisions.push({
+            nodeId: edge.from,
+            outcome: edge.outcome,
+            condition: decisionConditions.get(edge.from),
+          });
+          recordedDecisions.add(edge.from);
+        }
+      }
+    }
+
+    logger.debug("Inferred branch decisions from executed path", {
+      executedPathLength: executedPath.length,
+      decisionsInferred: decisions.length,
+    });
+
+    return decisions;
   }
 }

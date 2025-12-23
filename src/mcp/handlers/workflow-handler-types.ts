@@ -14,6 +14,7 @@ import type { MCPClientBase } from "../types.ts";
 import type { ActiveWorkflow } from "../server/types.ts";
 import type { GatewayHandler } from "../gateway-handler.ts";
 import type { CheckpointManager } from "../../dag/checkpoint-manager.ts";
+import type { AdaptiveThresholdManager } from "../adaptive-threshold.ts";
 
 /**
  * Dependencies required for workflow handler
@@ -27,4 +28,6 @@ export interface WorkflowHandlerDependencies {
   gatewayHandler: GatewayHandler;
   checkpointManager: CheckpointManager | null;
   activeWorkflows: Map<string, ActiveWorkflow>;
+  /** Story 10.7c: Thompson Sampling threshold manager (optional) */
+  adaptiveThresholdManager?: AdaptiveThresholdManager;
 }

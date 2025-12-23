@@ -58,6 +58,8 @@ export class ParallelExecutor {
       hil: config.hil ?? { enabled: false, approval_required: "never" },
       userId: config.userId ?? "local", // Story 9.5: Multi-tenant isolation
       timeouts: config.timeouts ?? { hil: 300000, ail: 60000, pollInterval: 100 },
+      // Story 10.7c fix: Per-layer validation pause (disabled by default)
+      perLayerValidation: config.perLayerValidation ?? false,
     };
     // Initialize rate limiter: 10 requests per second per server
     this.rateLimiter = new RateLimiter(10, 1000);

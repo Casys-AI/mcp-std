@@ -142,6 +142,15 @@ export interface ExecutorConfig {
     /** Poll interval for legacy polling mode in ms (default: 100) */
     pollInterval?: number;
   };
+
+  /**
+   * Per-layer validation mode (Story 10.7c fix)
+   *
+   * When enabled, the executor pauses after each layer's checkpoint
+   * and waits for a "continue" command before proceeding to the next layer.
+   * This is the primary pause mechanism for per_layer_validation workflows.
+   */
+  perLayerValidation?: boolean;
 }
 
 /**

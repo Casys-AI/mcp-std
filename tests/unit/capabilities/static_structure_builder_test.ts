@@ -684,3 +684,193 @@ Deno.test("StaticStructureBuilder - handle spread operator gracefully (skip or w
 
   await db.close();
 });
+
+// =============================================================================
+// Story 11.2: inferDecisions Tests - Infer branch decisions from executed path
+// =============================================================================
+
+Deno.test("inferDecisions - infers true branch when true branch tool executed", async () => {
+  const db = await setupTestDb();
+  const builder = new StaticStructureBuilder(db);
+
+  const code = `
+    if (file.exists) {
+      await mcp.filesystem.read_file({ path });
+    } else {
+      await mcp.filesystem.create_file({ path });
+    }
+  `;
+
+  const structure = await builder.buildStaticStructure(code);
+
+  // Simulate executing the true branch (read_file)
+  const executedPath = ["filesystem:read_file"];
+  const decisions = StaticStructureBuilder.inferDecisions(structure, executedPath);
+
+  assertEquals(decisions.length, 1);
+  assertEquals(decisions[0].outcome, "true");
+  assertEquals(decisions[0].nodeId.startsWith("d"), true);
+  assertExists(decisions[0].condition);
+
+  await db.close();
+});
+
+Deno.test("inferDecisions - infers false branch when false branch tool executed", async () => {
+  const db = await setupTestDb();
+  const builder = new StaticStructureBuilder(db);
+
+  const code = `
+    if (file.exists) {
+      await mcp.filesystem.read_file({ path });
+    } else {
+      await mcp.filesystem.create_file({ path });
+    }
+  `;
+
+  const structure = await builder.buildStaticStructure(code);
+
+  // Simulate executing the false branch (create_file)
+  const executedPath = ["filesystem:create_file"];
+  const decisions = StaticStructureBuilder.inferDecisions(structure, executedPath);
+
+  assertEquals(decisions.length, 1);
+  assertEquals(decisions[0].outcome, "false");
+
+  await db.close();
+});
+
+Deno.test("inferDecisions - returns empty array when no conditional edges", async () => {
+  const db = await setupTestDb();
+  const builder = new StaticStructureBuilder(db);
+
+  const code = `
+    await mcp.filesystem.read_file({ path: "/a.txt" });
+    await mcp.filesystem.read_file({ path: "/b.txt" });
+  `;
+
+  const structure = await builder.buildStaticStructure(code);
+
+  const executedPath = ["filesystem:read_file"];
+  const decisions = StaticStructureBuilder.inferDecisions(structure, executedPath);
+
+  assertEquals(decisions.length, 0);
+
+  await db.close();
+});
+
+Deno.test("inferDecisions - returns empty array for empty executedPath", async () => {
+  const db = await setupTestDb();
+  const builder = new StaticStructureBuilder(db);
+
+  const code = `
+    if (condition) {
+      await mcp.api.success();
+    }
+  `;
+
+  const structure = await builder.buildStaticStructure(code);
+
+  const decisions = StaticStructureBuilder.inferDecisions(structure, []);
+
+  assertEquals(decisions.length, 0);
+
+  await db.close();
+});
+
+Deno.test("inferDecisions - handles multiple decision nodes", async () => {
+  const db = await setupTestDb();
+  const builder = new StaticStructureBuilder(db);
+
+  const code = `
+    if (conditionA) {
+      await mcp.api.actionA();
+    } else {
+      await mcp.api.actionAFallback();
+    }
+    if (conditionB) {
+      await mcp.api.actionB();
+    }
+  `;
+
+  const structure = await builder.buildStaticStructure(code);
+
+  // Execute true branch of first if, true branch of second if
+  const executedPath = ["api:actionA", "api:actionB"];
+  const decisions = StaticStructureBuilder.inferDecisions(structure, executedPath);
+
+  assertEquals(decisions.length, 2);
+  assertEquals(decisions.every(d => d.outcome === "true"), true);
+
+  await db.close();
+});
+
+Deno.test("inferDecisions - handles switch case decisions", async () => {
+  const db = await setupTestDb();
+  const builder = new StaticStructureBuilder(db);
+
+  const code = `
+    switch (action) {
+      case "read":
+        await mcp.filesystem.read_file({ path });
+        break;
+      case "write":
+        await mcp.filesystem.write_file({ path, content });
+        break;
+      case "delete":
+        await mcp.filesystem.delete_file({ path });
+        break;
+    }
+  `;
+
+  const structure = await builder.buildStaticStructure(code);
+
+  // Execute the write case
+  const executedPath = ["filesystem:write_file"];
+  const decisions = StaticStructureBuilder.inferDecisions(structure, executedPath);
+
+  assertEquals(decisions.length, 1);
+  assertEquals(decisions[0].outcome?.includes("case:"), true);
+
+  await db.close();
+});
+
+Deno.test("inferDecisions - does not duplicate decisions for same node", async () => {
+  const db = await setupTestDb();
+  const builder = new StaticStructureBuilder(db);
+
+  // If statement with multiple tools in same branch
+  const code = `
+    if (condition) {
+      await mcp.api.step1();
+      await mcp.api.step2();
+    }
+  `;
+
+  const structure = await builder.buildStaticStructure(code);
+
+  // Both tools in true branch executed
+  const executedPath = ["api:step1", "api:step2"];
+  const decisions = StaticStructureBuilder.inferDecisions(structure, executedPath);
+
+  // Should only have 1 decision, not 2
+  assertEquals(decisions.length, 1);
+  assertEquals(decisions[0].outcome, "true");
+
+  await db.close();
+});
+
+Deno.test("inferDecisions - handles null/undefined structure gracefully", () => {
+  // Test with null structure
+  const decisions1 = StaticStructureBuilder.inferDecisions(
+    null as unknown as Parameters<typeof StaticStructureBuilder.inferDecisions>[0],
+    ["some:tool"],
+  );
+  assertEquals(decisions1.length, 0);
+
+  // Test with empty structure
+  const decisions2 = StaticStructureBuilder.inferDecisions(
+    { nodes: [], edges: [] },
+    ["some:tool"],
+  );
+  assertEquals(decisions2.length, 0);
+});

@@ -7,7 +7,12 @@
  * @module tests/benchmarks/fixtures/scenario-loader
  */
 
-import Graph from "graphology";
+// @ts-ignore: NPM module resolution
+import graphologyPkg from "graphology";
+// deno-lint-ignore no-explicit-any
+const { Graph } = graphologyPkg as any;
+// deno-lint-ignore no-explicit-any
+type Graph = any;
 
 // ============================================================================
 // Types

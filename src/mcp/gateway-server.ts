@@ -109,6 +109,7 @@ export class PMLGatewayServer {
   private shgat: SHGAT | null = null;
   private drdsp: DRDSP | null = null;
   private embeddingModel: EmbeddingModelInterface | null = null;
+  private shgatSaveInterval: number | null = null; // Story 10.7b: periodic save timer
 
   constructor(
     // @ts-ignore: db kept for future use (direct queries)
@@ -386,6 +387,7 @@ export class PMLGatewayServer {
       gatewayHandler: this.gatewayHandler,
       checkpointManager: this.checkpointManager,
       activeWorkflows: this.activeWorkflows,
+      adaptiveThresholdManager: this.adaptiveThresholdManager, // Story 10.7c
     };
   }
 
@@ -526,6 +528,12 @@ export class PMLGatewayServer {
         log.info(
           `[Gateway] SHGAT initialized with ${capabilitiesWithEmbeddings.length} capabilities`,
         );
+
+        // Story 10.7b: Load persisted SHGAT params if available
+        await this.loadSHGATParams();
+
+        // Story 10.7b: Start periodic save (every 10 minutes)
+        this.startPeriodicSHGATSave();
 
         // Story 10.7: Populate tool features for multi-head attention
         await this.populateToolFeaturesForSHGAT();
@@ -859,6 +867,10 @@ export class PMLGatewayServer {
    * Graceful shutdown
    */
   async stop(): Promise<void> {
+    // Story 10.7b: Stop periodic save and do final save
+    this.stopPeriodicSHGATSave();
+    await this.saveSHGATParams();
+
     // Class-specific cleanup
     this.healthChecker.stopPeriodicChecks();
 
@@ -870,5 +882,95 @@ export class PMLGatewayServer {
     // Delegate core shutdown to lifecycle module
     await stopServer(this.server, this.mcpClients, this.httpServer);
     this.httpServer = null;
+  }
+
+  // ==========================================================================
+  // SHGAT Persistence (Story 10.7b)
+  // ==========================================================================
+
+  /**
+   * Load persisted SHGAT params from database
+   * Called at startup after SHGAT structure is initialized
+   */
+  private async loadSHGATParams(): Promise<void> {
+    if (!this.shgat) return;
+
+    try {
+      interface ParamsRow {
+        params: Record<string, unknown>;
+        updated_at: string;
+      }
+
+      const rows = await this.db.query(
+        `SELECT params, updated_at FROM shgat_params WHERE user_id = $1 LIMIT 1`,
+        ["local"],
+      ) as unknown as ParamsRow[];
+
+      if (rows.length > 0 && rows[0].params) {
+        this.shgat.importParams(rows[0].params);
+        log.info(
+          `[Gateway] SHGAT params loaded from DB (saved: ${rows[0].updated_at})`,
+        );
+      } else {
+        log.info("[Gateway] No persisted SHGAT params found - using fresh weights");
+      }
+    } catch (error) {
+      // Table might not exist yet (migration not run)
+      log.debug(`[Gateway] Could not load SHGAT params: ${error}`);
+    }
+  }
+
+  /**
+   * Save SHGAT params to database
+   * Called at shutdown and periodically
+   */
+  private async saveSHGATParams(): Promise<void> {
+    if (!this.shgat) return;
+
+    try {
+      const params = this.shgat.exportParams();
+
+      await this.db.query(
+        `INSERT INTO shgat_params (user_id, params, updated_at)
+         VALUES ($1, $2, NOW())
+         ON CONFLICT (user_id) DO UPDATE SET
+           params = EXCLUDED.params,
+           updated_at = NOW()`,
+        ["local", JSON.stringify(params)],
+      );
+
+      log.info("[Gateway] SHGAT params saved to DB");
+    } catch (error) {
+      // Table might not exist yet (migration not run)
+      log.warn(`[Gateway] Could not save SHGAT params: ${error}`);
+    }
+  }
+
+  /**
+   * Start periodic SHGAT save (every 10 minutes)
+   * Prevents losing learned weights on crash
+   */
+  private startPeriodicSHGATSave(): void {
+    if (this.shgatSaveInterval) return; // Already running
+
+    const TEN_MINUTES_MS = 10 * 60 * 1000;
+    this.shgatSaveInterval = setInterval(() => {
+      this.saveSHGATParams().catch((error) => {
+        log.warn(`[Gateway] Periodic SHGAT save failed: ${error}`);
+      });
+    }, TEN_MINUTES_MS);
+
+    log.info("[Gateway] SHGAT periodic save started (every 10 min)");
+  }
+
+  /**
+   * Stop periodic SHGAT save
+   */
+  private stopPeriodicSHGATSave(): void {
+    if (this.shgatSaveInterval) {
+      clearInterval(this.shgatSaveInterval);
+      this.shgatSaveInterval = null;
+      log.info("[Gateway] SHGAT periodic save stopped");
+    }
   }
 }

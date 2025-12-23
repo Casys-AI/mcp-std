@@ -11,7 +11,8 @@
  *   - Head 3: Temporal (co-occurrence, recency)
  *
  * Training:
- * - Supervised on episodic_events outcomes (success/failure)
+ * - Online: trainOnExample() after each execution (via updateSHGAT in execute-handler)
+ * - Batch: trainBatch() with PER sampling from execution_trace (Story 11.6)
  * - Proper backpropagation through both phases
  *
  * @module graphrag/algorithms/shgat
@@ -24,6 +25,50 @@ const log = getLogger("default");
 // ============================================================================
 // Types
 // ============================================================================
+
+/**
+ * Head-specific weight configuration for tuning
+ *
+ * Each head can have its internal feature weights adjusted:
+ * - Structure head (2): pageRank, spectral, adamicAdar
+ * - Temporal head (3): cooccurrence, recency, heatDiffusion
+ */
+export interface HeadWeightConfig {
+  /**
+   * Weights for structure head (Head 2) features
+   * Default: { pageRank: 0.4, spectral: 0.3, adamicAdar: 0.3 }
+   */
+  structure: {
+    pageRank: number;
+    spectral: number;
+    adamicAdar: number;
+  };
+  /**
+   * Weights for temporal head (Head 3) features
+   * Default: { cooccurrence: 0.4, recency: 0.4, heatDiffusion: 0.2 }
+   */
+  temporal: {
+    cooccurrence: number;
+    recency: number;
+    heatDiffusion: number;
+  };
+}
+
+/**
+ * Default head weight configuration
+ */
+export const DEFAULT_HEAD_WEIGHTS: HeadWeightConfig = {
+  structure: {
+    pageRank: 0.4,
+    spectral: 0.3,
+    adamicAdar: 0.3,
+  },
+  temporal: {
+    cooccurrence: 0.4,
+    recency: 0.4,
+    heatDiffusion: 0.2,
+  },
+};
 
 /**
  * Configuration for SHGAT
@@ -47,6 +92,44 @@ export interface SHGATConfig {
   l2Lambda: number;
   /** Dropout rate (0 = no dropout) */
   dropout: number;
+
+  // =========================================================================
+  // Head Tuning Parameters (for ablation studies and domain adaptation)
+  // =========================================================================
+
+  /**
+   * Which heads are active for scoring. Default: [0,1,2,3] (all heads)
+   *
+   * Head assignments:
+   * - 0: Semantic (cosine similarity with intent)
+   * - 1: Semantic (duplicate for weight balance)
+   * - 2: Structure (pageRank + spectralCluster + adamicAdar)
+   * - 3: Temporal (cooccurrence + recency + heatDiffusion)
+   *
+   * Examples:
+   * - [0,1]: Semantic only (cosine baseline)
+   * - [2]: Structure only
+   * - [3]: Temporal only
+   * - [0,1,2]: No temporal
+   * - [0,1,3]: No structure
+   */
+  activeHeads?: number[];
+
+  /**
+   * Fixed weights for head fusion. If provided, uses these instead of softmax.
+   * Must sum to 1.0 and have length = numHeads.
+   *
+   * Default: undefined (use softmax of head scores)
+   *
+   * Example: [0.4, 0.4, 0.1, 0.1] = 80% semantic, 10% structure, 10% temporal
+   */
+  headFusionWeights?: number[];
+
+  /**
+   * Per-feature weights within each head.
+   * Allows fine-tuning the contribution of individual features.
+   */
+  headWeights?: Partial<HeadWeightConfig>;
 }
 
 /**
@@ -386,6 +469,20 @@ export class SHGAT {
    */
   hasCapabilityNode(capabilityId: string): boolean {
     return this.capabilityNodes.has(capabilityId);
+  }
+
+  /**
+   * Get the number of registered tools (Story 11.3 - cold start detection)
+   */
+  getToolCount(): number {
+    return this.toolNodes.size;
+  }
+
+  /**
+   * Get the number of registered capabilities (Story 11.3 - cold start detection)
+   */
+  getCapabilityCount(): number {
+    return this.capabilityNodes.size;
   }
 
   /**
@@ -799,39 +896,60 @@ export class SHGAT {
       // Compute head scores (NO context boost - per original paper)
       const features = cap.hypergraphFeatures || DEFAULT_HYPERGRAPH_FEATURES;
 
+      // Get tunable weights (with defaults)
+      const hw = {
+        structure: { ...DEFAULT_HEAD_WEIGHTS.structure, ...this.config.headWeights?.structure },
+        temporal: { ...DEFAULT_HEAD_WEIGHTS.temporal, ...this.config.headWeights?.temporal },
+      };
+
       // Head 2: Structure score combines graph topology features
       // Normalized to ~0-1 range to balance with semantic heads
-      // - PageRank: global importance (already 0-1)
-      // - SpectralCluster: cluster centrality (1/(1+c) gives 0.5-1)
-      // - AdamicAdar: similarity with neighbors (0-1)
       const spectralBonus = 1 / (1 + features.spectralCluster);
       const adamicAdar = features.adamicAdar ?? 0;
-      const structureScore = 0.4 * features.hypergraphPageRank +
-        0.3 * spectralBonus +
-        0.3 * adamicAdar;
+      const structureScore = hw.structure.pageRank * features.hypergraphPageRank +
+        hw.structure.spectral * spectralBonus +
+        hw.structure.adamicAdar * adamicAdar;
 
       // Head 3: Temporal score combines usage patterns
       // Normalized to ~0-1 range
-      // - Cooccurrence: frequently used together (0-1)
-      // - Recency: recently used (0-1)
-      // - HeatDiffusion: influence from active context (0-1)
       const heatDiffusion = features.heatDiffusion ?? 0;
-      const temporalScore = 0.4 * features.cooccurrence +
-        0.4 * features.recency +
-        0.2 * heatDiffusion;
+      const temporalScore = hw.temporal.cooccurrence * features.cooccurrence +
+        hw.temporal.recency * features.recency +
+        hw.temporal.heatDiffusion * heatDiffusion;
 
-      const headScores = [
+      const allHeadScores = [
         intentSim, // Head 0: semantic
         intentSim, // Head 1: semantic
         structureScore, // Head 2: structure (pageRank + spectral + adamicAdar)
         temporalScore, // Head 3: temporal (cooccurrence + recency + heatDiffusion)
       ];
 
-      const headWeights = this.softmax(headScores);
+      // Apply activeHeads filter (ablation study support)
+      const activeHeads = this.config.activeHeads ?? [0, 1, 2, 3];
+      const activeScores = activeHeads.map((h) => allHeadScores[h]);
+
+      // Compute fusion weights
+      let headWeights: number[];
+      if (this.config.headFusionWeights && this.config.headFusionWeights.length === this.config.numHeads) {
+        // Use fixed fusion weights (filtered to active heads)
+        const activeWeights = activeHeads.map((h) => this.config.headFusionWeights![h]);
+        const sumWeights = activeWeights.reduce((a, b) => a + b, 0);
+        headWeights = activeWeights.map((w) => w / sumWeights); // Renormalize
+      } else {
+        // Use softmax of active head scores
+        headWeights = this.softmax(activeScores);
+      }
 
       let baseScore = 0;
-      for (let h = 0; h < this.config.numHeads; h++) {
-        baseScore += headWeights[h] * headScores[h];
+      for (let i = 0; i < activeHeads.length; i++) {
+        baseScore += headWeights[i] * activeScores[i];
+      }
+
+      // Store full head scores/weights for interpretability (pad inactive heads with 0)
+      const fullHeadWeights = [0, 0, 0, 0];
+      const fullHeadScores = allHeadScores;
+      for (let i = 0; i < activeHeads.length; i++) {
+        fullHeadWeights[activeHeads[i]] = headWeights[i];
       }
 
       const score = this.sigmoid(baseScore * reliabilityMult);
@@ -842,13 +960,13 @@ export class SHGAT {
       results.push({
         capabilityId: capId,
         score,
-        headWeights,
-        headScores,
+        headWeights: fullHeadWeights,
+        headScores: fullHeadScores,
         recursiveContribution: 0,
         featureContributions: {
-          semantic: (headScores[0] + headScores[1]) / 2,
-          structure: headScores[2],
-          temporal: headScores[3],
+          semantic: (fullHeadScores[0] + fullHeadScores[1]) / 2,
+          structure: fullHeadScores[2],
+          temporal: fullHeadScores[3],
           reliability: reliabilityMult,
         },
         toolAttention,
@@ -897,34 +1015,60 @@ export class SHGAT {
         continue;
       }
 
+      // Get tunable weights (with defaults)
+      const hw = {
+        structure: { ...DEFAULT_HEAD_WEIGHTS.structure, ...this.config.headWeights?.structure },
+        temporal: { ...DEFAULT_HEAD_WEIGHTS.temporal, ...this.config.headWeights?.temporal },
+      };
+
       // === HEAD 2: STRUCTURE (simple graph algos) ===
       // - pageRank: regular PageRank from Graphology
       // - louvainCommunity: Louvain community ID
       // - adamicAdar: similarity with neighboring tools
       const louvainBonus = 1 / (1 + features.louvainCommunity); // Lower community ID = more central
-      const structureScore = 0.4 * features.pageRank +
-        0.3 * louvainBonus +
-        0.3 * features.adamicAdar;
+      const structureScore = hw.structure.pageRank * features.pageRank +
+        hw.structure.spectral * louvainBonus +
+        hw.structure.adamicAdar * features.adamicAdar;
 
       // === HEAD 3: TEMPORAL (from execution_trace table) ===
       // - cooccurrence: how often this tool appears with other tools in traces
       // - recency: exponential decay since last use (1.0 = just used)
-      const temporalScore = 0.4 * features.cooccurrence +
-        0.6 * features.recency; // No heatDiffusion for tools
+      // For tools, no heatDiffusion so we redistribute weights
+      const tempTotalWeight = hw.temporal.cooccurrence + hw.temporal.recency;
+      const temporalScore = (hw.temporal.cooccurrence / tempTotalWeight) * features.cooccurrence +
+        (hw.temporal.recency / tempTotalWeight) * features.recency;
 
       // === MULTI-HEAD FUSION ===
-      const headScores = [
+      const allHeadScores = [
         intentSim, // Head 0: semantic
         intentSim, // Head 1: semantic
         structureScore, // Head 2: structure
         temporalScore, // Head 3: temporal
       ];
 
-      const headWeights = this.softmax(headScores);
+      // Apply activeHeads filter (ablation study support)
+      const activeHeads = this.config.activeHeads ?? [0, 1, 2, 3];
+      const activeScores = activeHeads.map((h) => allHeadScores[h]);
+
+      // Compute fusion weights
+      let headWeights: number[];
+      if (this.config.headFusionWeights && this.config.headFusionWeights.length === this.config.numHeads) {
+        const activeWeights = activeHeads.map((h) => this.config.headFusionWeights![h]);
+        const sumWeights = activeWeights.reduce((a, b) => a + b, 0);
+        headWeights = activeWeights.map((w) => w / sumWeights);
+      } else {
+        headWeights = this.softmax(activeScores);
+      }
 
       let baseScore = 0;
-      for (let h = 0; h < this.config.numHeads; h++) {
-        baseScore += headWeights[h] * headScores[h];
+      for (let i = 0; i < activeHeads.length; i++) {
+        baseScore += headWeights[i] * activeScores[i];
+      }
+
+      // Store full head weights for interpretability
+      const fullHeadWeights = [0, 0, 0, 0];
+      for (let i = 0; i < activeHeads.length; i++) {
+        fullHeadWeights[activeHeads[i]] = headWeights[i];
       }
 
       const score = this.sigmoid(baseScore);
@@ -932,12 +1076,95 @@ export class SHGAT {
       results.push({
         toolId,
         score: Math.max(0, Math.min(score, 0.95)), // Clamp to [0, 0.95]
-        headWeights,
+        headWeights: fullHeadWeights,
       });
     }
 
     results.sort((a, b) => b.score - a.score);
     return results;
+  }
+
+  /**
+   * Predict the success probability of an executed path (Story 11.3 - TD Learning)
+   *
+   * Uses the same multi-head architecture as scoreAllTools/scoreAllCapabilities
+   * to predict whether a path of tools/capabilities will succeed.
+   *
+   * Used for TD Error calculation: tdError = actual - predicted
+   * Where priority = |tdError| for PER sampling.
+   *
+   * @param intentEmbedding - The intent embedding (1024-dim BGE-M3)
+   * @param path - Array of tool/capability IDs that were executed
+   * @returns Probability of success [0, 1]
+   */
+  predictPathSuccess(intentEmbedding: number[], path: string[]): number {
+    // Cold start: no nodes registered yet
+    if (this.capabilityNodes.size === 0 && this.toolNodes.size === 0) {
+      return 0.5;
+    }
+
+    // Empty path: neutral prediction
+    if (!path || path.length === 0) {
+      return 0.5;
+    }
+
+    // Collect scores for each node in the path
+    const nodeScores: number[] = [];
+
+    // Cache the full scoring results (avoid recomputing for each node)
+    const toolScoresMap = new Map<string, number>();
+    const capScoresMap = new Map<string, number>();
+
+    // Only compute if we have nodes of that type in the path
+    const hasTools = path.some((id) => this.toolNodes.has(id));
+    const hasCaps = path.some((id) => this.capabilityNodes.has(id));
+
+    if (hasTools) {
+      const toolResults = this.scoreAllTools(intentEmbedding);
+      for (const r of toolResults) {
+        toolScoresMap.set(r.toolId, r.score);
+      }
+    }
+
+    if (hasCaps) {
+      const capResults = this.scoreAllCapabilities(intentEmbedding);
+      for (const r of capResults) {
+        capScoresMap.set(r.capabilityId, r.score);
+      }
+    }
+
+    // Get score for each node in path
+    for (const nodeId of path) {
+      if (toolScoresMap.has(nodeId)) {
+        nodeScores.push(toolScoresMap.get(nodeId)!);
+      } else if (capScoresMap.has(nodeId)) {
+        nodeScores.push(capScoresMap.get(nodeId)!);
+      } else {
+        // Unknown node: neutral score
+        nodeScores.push(0.5);
+      }
+    }
+
+    // Weighted average: later nodes in path are more critical for success
+    // Weight increases linearly: 1.0, 1.5, 2.0, 2.5, ...
+    let weightedSum = 0;
+    let weightTotal = 0;
+
+    for (let i = 0; i < nodeScores.length; i++) {
+      const weight = 1 + i * 0.5;
+      weightedSum += nodeScores[i] * weight;
+      weightTotal += weight;
+    }
+
+    const pathScore = weightedSum / weightTotal;
+
+    log.debug("[SHGAT] predictPathSuccess", {
+      pathLength: path.length,
+      nodeScores,
+      pathScore,
+    });
+
+    return pathScore;
   }
 
   /**

@@ -22,7 +22,7 @@ import type { MCPClientBase } from "../types.ts";
 import type { GraphRAGEngine } from "../../graphrag/graph-engine.ts";
 import type { VectorSearch } from "../../vector/search.ts";
 import type { CapabilityStore } from "../../capabilities/capability-store.ts";
-import type { AdaptiveThresholdManager } from "../adaptive-threshold.ts";
+import { type AdaptiveThresholdManager } from "../adaptive-threshold.ts";
 import type { PGliteClient } from "../../db/client.ts";
 import type { ContextBuilder } from "../../sandbox/context-builder.ts";
 import type { DRDSP } from "../../graphrag/algorithms/dr-dsp.ts";
@@ -46,7 +46,7 @@ import {
 } from "../../dag/mod.ts";
 import { ControlledExecutor } from "../../dag/controlled-executor.ts";
 import type { CheckpointManager } from "../../dag/checkpoint-manager.ts";
-import { handleWorkflowExecution } from "./workflow-execution-handler.ts";
+import { handleWorkflowExecution, requiresValidation } from "./workflow-execution-handler.ts";
 import type { WorkflowHandlerDependencies } from "./workflow-handler-types.ts";
 import { buildToolDefinitionsFromStaticStructure } from "./shared/tool-definitions.ts";
 
@@ -322,7 +322,30 @@ async function executeDirectMode(
           );
         }
 
-        // Execute full DAG via ControlledExecutor
+        // Check if any tool requires HIL approval (unknown or approvalMode: hil)
+        const needsApproval = await requiresValidation(dag, deps.capabilityStore);
+        if (needsApproval) {
+          log.info("[pml:execute] DAG contains tools requiring approval, delegating to HIL", {
+            tools: dag.tasks.map((t) => t.tool),
+          });
+
+          if (!deps.workflowDeps) {
+            return formatMCPToolError(
+              "DAG contains tools requiring human approval but workflowDeps not configured.",
+            );
+          }
+
+          return await handleWorkflowExecution(
+            {
+              workflow: dag,
+              intent,
+              config: { per_layer_validation: true },
+            },
+            deps.workflowDeps,
+          );
+        }
+
+        // Execute full DAG via ControlledExecutor (all tools auto-approved)
         const executionResult = await controlledExecutor.execute(dag);
         const executionTimeMs = performance.now() - startTime;
 
@@ -358,6 +381,12 @@ async function executeDirectMode(
         }
 
         // Create capability with trace data
+        // Story 11.2: Infer branch decisions from executed path vs static structure
+        const inferredDecisions = StaticStructureBuilder.inferDecisions(
+          staticStructure,
+          toolsCalled,
+        );
+
         const { capability, trace } = await deps.capabilityStore.saveCapability({
           code,
           intent,
@@ -367,7 +396,7 @@ async function executeDirectMode(
           traceData: {
             executedPath: toolsCalled,
             taskResults,
-            decisions: [],
+            decisions: inferredDecisions,
             initialContext: { intent },
           },
         });
@@ -378,6 +407,9 @@ async function executeDirectMode(
         // Update SHGAT with new capability (Story 10.7: live learning)
         const wasSuccessful = executionResult.failedTasks === 0;
         await updateSHGAT(deps.shgat, deps.embeddingModel, capability, toolsCalled, intent, wasSuccessful);
+
+        // Story 10.7c: Update Thompson Sampling with execution outcomes
+        updateThompsonSampling(deps.adaptiveThresholdManager, taskResults);
 
         // Build response
         const successOutputs = executionResult.results
@@ -574,9 +606,12 @@ async function executeSuggestionMode(
     intent: intent.substring(0, 50),
     hasSHGAT: !!deps.shgat,
     hasDRDSP: !!deps.drdsp,
+    hasThompson: !!deps.adaptiveThresholdManager,
   });
 
-  // Speculation thresholds - use adaptive threshold if available
+  // Story 10.7c: Use Thompson Sampling for per-tool thresholds
+  // Note: SPECULATION_SCORE_THRESHOLD is now used as global fallback only
+  // Per-tool thresholds are calculated by smartHILCheck using Thompson Sampling
   const adaptiveThresholds = deps.adaptiveThresholdManager?.getThresholds();
   const SPECULATION_SCORE_THRESHOLD = adaptiveThresholds?.suggestionThreshold ?? 0.7;
   const SPECULATION_SUCCESS_RATE_THRESHOLD = 0.8;
@@ -874,3 +909,35 @@ async function getSuggestions(
 // TODO(Epic-12): buildToolDefinitionsForCapability removed with executeCapability
 
 // extractToolFailures removed - ControlledExecutor provides errors directly via executionResult.errors
+
+/**
+ * Update Thompson Sampling with execution outcomes (Story 10.7c AC6)
+ *
+ * Records success/failure for each tool executed, updating the Beta distributions
+ * in the Thompson Sampler for future threshold calculations.
+ *
+ * @param thresholdManager - AdaptiveThresholdManager with Thompson Sampler
+ * @param taskResults - Task execution results with tool IDs and success status
+ */
+export function updateThompsonSampling(
+  thresholdManager: AdaptiveThresholdManager | undefined,
+  taskResults: TraceTaskResult[],
+): void {
+  if (!thresholdManager) {
+    log.debug("[pml:execute] Thompson update skipped - no threshold manager");
+    return;
+  }
+
+  let updated = 0;
+  for (const result of taskResults) {
+    if (result.tool && result.tool !== "unknown") {
+      thresholdManager.recordToolOutcome(result.tool, result.success);
+      updated++;
+    }
+  }
+
+  log.debug("[pml:execute] Thompson Sampling updated", {
+    toolsUpdated: updated,
+    totalResults: taskResults.length,
+  });
+}

@@ -335,7 +335,6 @@ Deno.test("DR-DSP Meta: capability vs meta-capability path selection", () => {
   if (withinCap.found) {
     // Should prefer cap__checkout over meta__transactions
     // (lower weight for specific capability)
-    const usesCapability = withinCap.path.includes("cap__checkout");
     // May or may not use capability depending on weights
     assertExists(withinCap.path);
   }

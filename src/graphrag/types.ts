@@ -178,6 +178,8 @@ export interface GraphStats {
 
 /**
  * Execution record for adaptive learning
+ *
+ * Story 10.7c: Added toolId for Thompson Sampling per-tool learning.
  */
 export interface ExecutionRecord {
   confidence: number;
@@ -186,6 +188,8 @@ export interface ExecutionRecord {
   userAccepted?: boolean;
   executionTime?: number;
   timestamp: number;
+  /** Story 10.7c: Tool ID for per-tool Thompson Sampling updates */
+  toolId?: string;
 }
 
 /**

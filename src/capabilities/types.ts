@@ -164,6 +164,15 @@ export interface Capability {
   permissionConfidence?: number;
   /** Static structure for DAG execution (Story 10.7) */
   staticStructure?: StaticStructure;
+  /**
+   * Risk category for Thompson Sampling thresholds (Story 10.7c)
+   *
+   * Derived from max(toolsUsed.riskCategory) via getRiskFromScope().
+   * - "safe": All tools are minimal/readonly (threshold ~0.55)
+   * - "moderate": Some tools have filesystem/network-api scope (threshold ~0.70)
+   * - "dangerous": Any tool has mcp-standard scope (threshold ~0.85)
+   */
+  riskCategory?: "safe" | "moderate" | "dangerous";
 }
 
 /**

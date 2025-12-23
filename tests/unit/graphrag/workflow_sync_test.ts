@@ -108,9 +108,9 @@ workflows:
   assertEquals(result.workflowsProcessed, 1);
   assertEquals(result.edgesCreated, 2); // (a→b), (b→c)
 
-  // Check edges were created with source='user'
+  // Check edges were created with edge_source='user'
   const edges = await db.query(
-    `SELECT from_tool_id, to_tool_id, source, confidence_score
+    `SELECT from_tool_id, to_tool_id, edge_source, confidence_score
      FROM tool_dependency
      ORDER BY from_tool_id`,
   );
@@ -118,12 +118,12 @@ workflows:
   assertEquals(edges.length, 2);
   assertEquals(edges[0].from_tool_id, "tool_a");
   assertEquals(edges[0].to_tool_id, "tool_b");
-  assertEquals(edges[0].source, "user");
+  assertEquals(edges[0].edge_source, "user");
   assertEquals(edges[0].confidence_score, 0.9);
 
   assertEquals(edges[1].from_tool_id, "tool_b");
   assertEquals(edges[1].to_tool_id, "tool_c");
-  assertEquals(edges[1].source, "user");
+  assertEquals(edges[1].edge_source, "user");
 
   await Deno.remove(yamlPath);
   await db.close();
@@ -143,7 +143,7 @@ Deno.test({
 
   // Pre-create an edge with observed_count = 100
   await db.query(
-    `INSERT INTO tool_dependency (from_tool_id, to_tool_id, observed_count, confidence_score, source)
+    `INSERT INTO tool_dependency (from_tool_id, to_tool_id, observed_count, confidence_score, edge_source)
      VALUES ('tool_a', 'tool_b', 100, 0.5, 'learned')`,
   );
 
@@ -161,14 +161,14 @@ workflows:
 
   // Check observed_count was preserved
   const edge = await db.queryOne(
-    `SELECT observed_count, source, confidence_score
+    `SELECT observed_count, edge_source, confidence_score
      FROM tool_dependency
      WHERE from_tool_id = 'tool_a' AND to_tool_id = 'tool_b'`,
   );
 
   assertExists(edge);
   assertEquals(edge.observed_count, 100); // Preserved
-  assertEquals(edge.source, "user"); // Updated
+  assertEquals(edge.edge_source, "user"); // Updated to 'user' on sync
   assertEquals(edge.confidence_score, 0.9); // Updated (GREATEST(0.5, 0.9))
 
   await Deno.remove(yamlPath);
@@ -466,13 +466,13 @@ Deno.test({
 
   // Add user edges
   await db.query(
-    `INSERT INTO tool_dependency (from_tool_id, to_tool_id, source)
+    `INSERT INTO tool_dependency (from_tool_id, to_tool_id, edge_source)
      VALUES ('user_a', 'user_b', 'user'), ('user_b', 'user_c', 'user')`,
   );
 
   // Add learned edges
   await db.query(
-    `INSERT INTO tool_dependency (from_tool_id, to_tool_id, source)
+    `INSERT INTO tool_dependency (from_tool_id, to_tool_id, edge_source)
      VALUES ('learned_a', 'learned_b', 'learned')`,
   );
 

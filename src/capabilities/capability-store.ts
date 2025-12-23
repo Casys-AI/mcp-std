@@ -33,6 +33,8 @@ import type { PermissionInferrer } from "./permission-inferrer.ts";
 import type { StaticStructureBuilder } from "./static-structure-builder.ts";
 // Story 6.5: EventBus integration (ADR-036)
 import { eventBus } from "../events/mod.ts";
+// Story 10.7c: Thompson Sampling risk classification
+import { calculateCapabilityRisk } from "../mcp/adaptive-threshold.ts";
 
 const logger = getLogger("default");
 
@@ -740,6 +742,8 @@ export class CapabilityStore {
       permissionConfidence: (row.permission_confidence as number) ?? 0.0,
       // Story 10.7: Static structure for DAG execution
       staticStructure,
+      // Story 10.7c: Risk category derived from max(toolsUsed.risk)
+      riskCategory: toolsUsed ? calculateCapabilityRisk(toolsUsed) : "safe",
     };
   }
 

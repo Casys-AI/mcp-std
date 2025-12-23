@@ -210,10 +210,10 @@ export class WorkflowSyncService {
         );
 
         if (existing) {
-          // Update existing edge - preserve observed_count, update source and confidence
+          // Update existing edge - preserve observed_count, update edge_source and confidence
           await this.db.query(
             `UPDATE tool_dependency
-             SET source = 'user',
+             SET edge_source = 'user',
                  confidence_score = GREATEST(confidence_score, 0.90),
                  last_observed = NOW()
              WHERE from_tool_id = $1 AND to_tool_id = $2`,
@@ -221,9 +221,9 @@ export class WorkflowSyncService {
           );
           updated++;
         } else {
-          // Create new edge with source='user' and confidence=0.90
+          // Create new edge with edge_source='user' and confidence=0.90
           await this.db.query(
-            `INSERT INTO tool_dependency (from_tool_id, to_tool_id, observed_count, confidence_score, source)
+            `INSERT INTO tool_dependency (from_tool_id, to_tool_id, observed_count, confidence_score, edge_source)
              VALUES ($1, $2, 1, 0.90, 'user')`,
             [edge.from, edge.to],
           );
@@ -449,14 +449,14 @@ export class WorkflowSyncService {
   async getEdgeStats(): Promise<{ user: number; learned: number; total: number }> {
     try {
       const result = await this.db.query(
-        `SELECT source, COUNT(*) as count FROM tool_dependency GROUP BY source`,
+        `SELECT edge_source, COUNT(*) as count FROM tool_dependency GROUP BY edge_source`,
       );
 
       let user = 0;
       let learned = 0;
 
       for (const row of result) {
-        if (row.source === "user") {
+        if (row.edge_source === "user") {
           user = row.count as number;
         } else {
           learned += row.count as number;
