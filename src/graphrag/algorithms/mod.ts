@@ -123,3 +123,10 @@ export {
   type ScoreBreakdown,
 } from "./unified-search.ts";
 
+// Trace Feature Extractor (Story 11.8 - SHGAT v2 Multi-Head Traces)
+export {
+  TraceFeatureExtractor,
+  DEFAULT_EXTRACTOR_CONFIG,
+  type TraceFeatureExtractorConfig,
+} from "./trace-feature-extractor.ts";
+

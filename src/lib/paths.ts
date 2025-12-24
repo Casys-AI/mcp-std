@@ -90,7 +90,7 @@ export function getProjectRoot(): string {
  *
  * @example
  * resolvePath("./drizzle") // /home/user/project/drizzle
- * resolvePath(".cai-dev.db") // /home/user/project/.cai-dev.db
+ * resolvePath(".pml-dev.db") // /home/user/project/.pml-dev.db
  * resolvePath("/absolute/path") // /absolute/path (unchanged)
  */
 export function resolvePath(relativePath: string): string {

@@ -11,7 +11,6 @@
 
 import { SpectralClusteringManager, type ClusterableCapability } from "../../../src/graphrag/spectral-clustering.ts";
 import {
-  buildGraphFromScenario,
   generateStressGraph,
   loadScenario,
 } from "../fixtures/scenario-loader.ts";
@@ -70,7 +69,7 @@ Deno.bench({
   fn: () => {
     const manager = createManager();
     manager.buildBipartiteMatrix(smallTools, smallCapabilities);
-    manager.performClustering(3);
+    manager.computeClusters(3);
   },
 });
 
@@ -80,7 +79,7 @@ Deno.bench({
   fn: () => {
     const manager = createManager();
     manager.buildBipartiteMatrix(mediumTools, mediumCapabilities);
-    manager.performClustering(5);
+    manager.computeClusters(5);
   },
 });
 
@@ -90,7 +89,7 @@ Deno.bench({
   fn: () => {
     const manager = createManager();
     manager.buildBipartiteMatrix(stressTools, stressCapabilities);
-    manager.performClustering(10);
+    manager.computeClusters(10);
   },
 });
 
@@ -137,7 +136,7 @@ Deno.bench({
   fn: () => {
     const manager = createManager();
     manager.buildBipartiteMatrix(mediumTools, mediumCapabilities);
-    manager.performClustering(3);
+    manager.computeClusters(3);
   },
 });
 
@@ -147,7 +146,7 @@ Deno.bench({
   fn: () => {
     const manager = createManager();
     manager.buildBipartiteMatrix(mediumTools, mediumCapabilities);
-    manager.performClustering(5);
+    manager.computeClusters(5);
   },
 });
 
@@ -157,7 +156,7 @@ Deno.bench({
   fn: () => {
     const manager = createManager();
     manager.buildBipartiteMatrix(mediumTools, mediumCapabilities);
-    manager.performClustering(10);
+    manager.computeClusters(10);
   },
 });
 
@@ -168,7 +167,7 @@ Deno.bench({
 // Pre-compute clusters for lookup tests
 const prebuiltManager = createManager();
 prebuiltManager.buildBipartiteMatrix(mediumTools, mediumCapabilities);
-prebuiltManager.performClustering(5);
+prebuiltManager.computeClusters(5);
 
 Deno.bench({
   name: "Spectral: get cluster boost (1 context tool)",
@@ -245,7 +244,7 @@ Deno.bench({
     // Clear cache by creating new manager
     const manager = createManager();
     manager.buildBipartiteMatrix(mediumTools, mediumCapabilities);
-    manager.performClustering(5);
+    manager.computeClusters(5);
   },
 });
 

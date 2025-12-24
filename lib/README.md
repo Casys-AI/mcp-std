@@ -24,7 +24,7 @@ lib/
 
 ### std (Standard Library)
 
-**~305 utility tools across 19 categories**, inspired by popular MCP tool servers:
+**~318 utility tools across 21 categories**, inspired by popular MCP tool servers:
 
 #### Sources & Credits
 
@@ -42,6 +42,8 @@ This library is inspired by and includes tools from the following open-source MC
 | Category | Count | Examples |
 |----------|-------|----------|
 | **system** | 71 | docker, git, curl, dig, ping, ps, tar, zip, ssh, rsync, kubectl, sqlite, psql, redis, ffmpeg, imagemagick, npm, pip, aws, gcloud, chmod, df, du, sed, awk, jq |
+| **agent** | 8 | delegate, decide, analyze, extract, classify, summarize, generate, compare (LLM-powered via MCP sampling) |
+| **python** | 5 | exec, eval, pip, script, version (Python execution in isolated subprocess) |
 | text | 26 | split, join, regex, case, template, slugify, nato, lorem, diff, stats, crontab, markdown_toc, ascii_art, numeronym, obfuscate, emoji_search, unicode_info, homoglyph, analyze_words, list_convert |
 | format | 25 | number, bytes, duration, truncate, yaml_to_json, json_to_yaml, toml_to_json, json_to_toml, markdown_to_html, html_to_markdown, json_to_csv, format_sql, format_phone, xml_escape, properties, format_html, format_javascript, format_xml, format_yaml |
 | crypto | 20 | hash, uuid, ulid, base64, hex, url, html, password, jwt_decode, hmac, totp, text_to_binary, generate_token, basic_auth, bcrypt, bip39, md5 |
@@ -245,6 +247,71 @@ echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | ...
 
 # Call a tool
 echo '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"text_split","arguments":{"text":"a,b,c","separator":","}}}' | ...
+```
+
+## Agent Tools & MCP Sampling
+
+The **agent** category provides LLM-powered tools using MCP Sampling (SEP-1577, Nov 2025).
+
+### How it works
+
+1. Agent tools call `samplingClient.createMessage()` with a prompt
+2. The MCP client (Claude Code, Gateway) receives `sampling/createMessage`
+3. The CLIENT handles the agentic loop and tool execution
+4. Results are returned to the server
+
+### Transport-specific setup
+
+| Mode | Sampling Handler | Status |
+|------|------------------|--------|
+| **Claude Code** (stdio) | Built into `mcp-tools-server.ts` | ✅ Ready |
+| **Cloud/Gateway** (HTTP) | TODO: Implement in Gateway | ⚠️ Not implemented |
+
+**Cloud mode TODO:** When implementing cloud deployment, the Gateway must:
+1. Handle `sampling/createMessage` requests from the MCP server
+2. Route to configured LLM API (Anthropic, OpenAI, etc.)
+3. Execute the agentic loop with tool filtering
+4. Return results to the MCP server
+
+See: `docs/tech-specs/tech-spec-mcp-agent-nodes.md` for architecture details.
+
+## Python Execution
+
+The **python** category enables running Python code in isolated subprocesses.
+
+### Tools
+
+| Tool | Description |
+|------|-------------|
+| `python_exec` | Execute Python code, return stdout/stderr |
+| `python_eval` | Evaluate expression, return JSON result |
+| `python_pip` | Install pip packages |
+| `python_script` | Run a Python script file |
+| `python_version` | Get Python installation info |
+
+### Requirements
+
+- **Python 3.8+** required (validated at runtime)
+- Override with `PYTHON_PATH` env var if needed
+
+### Security
+
+- Runs in **subprocess** (not FFI) - no access to parent process memory
+- Configurable **timeout** (default 30s)
+- No sandbox bypass - isolated from Deno runtime
+
+### Example
+
+```typescript
+// In generated code
+const result = await mcp.python.exec({
+  code: `
+import pandas as pd
+df = pd.read_csv('data.csv')
+print(df.describe().to_json())
+  `,
+  timeout: 60000
+});
 ```
 
 ## Future Libraries

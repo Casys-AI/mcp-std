@@ -49,7 +49,7 @@ export class MCPServerError extends PMLError {
       message,
       "MCP_SERVER_ERROR",
       true, // Recoverable - can continue with other servers
-      `Check server configuration for '${serverId}' or run 'cai status'`,
+      `Check server configuration for '${serverId}' or run 'pml status'`,
     );
   }
 }
@@ -129,7 +129,7 @@ export class ConfigurationError extends PMLError {
       message,
       "CONFIGURATION_ERROR",
       false, // Not recoverable - configuration is required
-      "Run 'cai init' to reconfigure",
+      "Run 'pml init' to reconfigure",
     );
   }
 }

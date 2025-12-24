@@ -21,7 +21,7 @@ import type { MCPClientBase, MCPServer } from "../../mcp/types.ts";
  * Default MCP config path
  */
 const DEFAULT_CONFIG_PATHS = [
-  `${Deno.env.get("HOME")}/.cai/config.yaml`,
+  `${Deno.env.get("HOME")}/.pml/config.yaml`,
   `${Deno.env.get("HOME")}/.config/Claude/claude_desktop_config.json`,
 ];
 
@@ -48,7 +48,7 @@ async function findConfigFile(customPath?: string): Promise<string> {
   }
 
   throw new Error(
-    "No config file found. Run 'cai init' to create one.",
+    "No config file found. Run 'pml init' to create one.",
   );
 }
 
@@ -111,7 +111,7 @@ function displayHealthStatus(
 
   if (summary.down > 0) {
     console.warn(
-      `⚠️  ${summary.down} server(s) are down. Run 'cai init' to reconfigure.`,
+      `⚠️  ${summary.down} server(s) are down. Run 'pml init' to reconfigure.`,
     );
   }
 }
@@ -149,10 +149,10 @@ function formatDate(date: Date): string {
  * Create status command
  *
  * Usage:
- *   cai status                    # One-time health check
- *   cai status --json             # JSON output
- *   cai status --watch            # Watch mode (refresh every 30s)
- *   cai status --config <path>    # Use custom config path
+ *   pml status                    # One-time health check
+ *   pml status --json             # JSON output
+ *   pml status --watch            # Watch mode (refresh every 30s)
+ *   pml status --config <path>    # Use custom config path
  */
 export function createStatusCommand() {
   return new Command()
@@ -173,7 +173,7 @@ export function createStatusCommand() {
 
         if (servers.length === 0) {
           console.log("No MCP servers configured.");
-          console.log("Run 'cai init' to configure servers.");
+          console.log("Run 'pml init' to configure servers.");
           return;
         }
 

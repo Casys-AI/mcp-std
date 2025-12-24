@@ -16,26 +16,24 @@ const STD_DIR = `${PROJECT_ROOT}lib/std/`;
 const BUNDLE_PATH = `${STD_DIR}bundle.js`;
 const BUILD_SCRIPT = `${STD_DIR}build.ts`;
 
-// Source files to watch
-const SOURCE_FILES = [
-  "mod.ts",
-  "types.ts",
-  "text.ts",
-  "json.ts",
-  "math.ts",
-  "datetime.ts",
-  "crypto.ts",
-  "collections.ts",
-  "vfs.ts",
-  "data.ts",
-  "http.ts",
-  "validation.ts",
-  "format.ts",
-  "transform.ts",
-  "state.ts",
-  "compare.ts",
-  "algo.ts",
-];
+/**
+ * Get all TypeScript source files in lib/std/ directory
+ * Automatically detects new files without manual list maintenance
+ */
+async function getSourceFiles(): Promise<string[]> {
+  const files: string[] = [];
+  try {
+    for await (const entry of Deno.readDir(STD_DIR)) {
+      // Include all .ts files except build.ts (the build script itself)
+      if (entry.isFile && entry.name.endsWith(".ts") && entry.name !== "build.ts") {
+        files.push(entry.name);
+      }
+    }
+  } catch (error) {
+    log.warn(`Could not scan ${STD_DIR}: ${error}`);
+  }
+  return files;
+}
 
 /**
  * Check if bundle needs rebuild by comparing mtimes
@@ -54,7 +52,8 @@ async function needsRebuild(): Promise<boolean> {
   const bundleMtime = bundleStat.mtime?.getTime() ?? 0;
 
   // Check if any source file is newer
-  for (const file of SOURCE_FILES) {
+  const sourceFiles = await getSourceFiles();
+  for (const file of sourceFiles) {
     try {
       const stat = await Deno.stat(`${STD_DIR}${file}`);
       const mtime = stat.mtime?.getTime() ?? 0;

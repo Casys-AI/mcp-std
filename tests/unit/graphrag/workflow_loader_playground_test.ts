@@ -3,7 +3,7 @@
  *
  * Validates playground/config/workflow-templates.yaml:
  * - AC #1: Contains 3+ workflows with required patterns
- * - AC #2: Format compatible with cai workflows sync
+ * - AC #2: Format compatible with pml workflows sync
  * - AC #3: Comments explaining each workflow
  *
  * NOTE: These tests are currently ignored as the playground config feature

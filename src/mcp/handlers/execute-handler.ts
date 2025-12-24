@@ -30,6 +30,8 @@ import type { SHGAT } from "../../graphrag/algorithms/shgat.ts";
 import type { JsonValue, TraceTaskResult } from "../../capabilities/types.ts";
 import type { DagScoringConfig } from "../../graphrag/dag-scoring-config.ts";
 import type { EmbeddingModelInterface } from "../../vector/embeddings.ts";
+import type { ExecutionTraceStore } from "../../capabilities/execution-trace-store.ts";
+import type { CapabilityRegistry, Scope } from "../../capabilities/capability-registry.ts";
 
 import { formatMCPToolError } from "../server/responses.ts";
 import { ServerDefaults } from "../server/constants.ts";
@@ -49,6 +51,11 @@ import type { CheckpointManager } from "../../dag/checkpoint-manager.ts";
 import { handleWorkflowExecution, requiresValidation } from "./workflow-execution-handler.ts";
 import type { WorkflowHandlerDependencies } from "./workflow-handler-types.ts";
 import { buildToolDefinitionsFromStaticStructure } from "./shared/tool-definitions.ts";
+
+// Story 11.6: PER Training imports
+import { trainSHGATOnPathTraces } from "../../graphrag/learning/mod.ts";
+// Story 11.10: TraceFeatureExtractor for SHGAT v2
+import type { TraceFeatureExtractor } from "../../graphrag/algorithms/trace-feature-extractor.ts";
 
 /**
  * Dependencies required for execute handler
@@ -74,16 +81,63 @@ export interface ExecuteDependencies {
   checkpointManager?: CheckpointManager;
   /** Workflow handler deps for per_layer_validation delegation (AC7) */
   workflowDeps?: WorkflowHandlerDependencies;
+  /** Execution trace store for PER training (Story 11.6) */
+  traceStore?: ExecutionTraceStore;
+  /** Capability registry for naming support (Story 13.2) */
+  capabilityRegistry?: CapabilityRegistry;
+  /** TraceFeatureExtractor for SHGAT v2 scoring (Story 11.10) */
+  traceFeatureExtractor?: TraceFeatureExtractor;
 }
 
 /**
  * Execute request arguments
+ *
+ * Three execution modes:
+ * 1. **Direct** (intent + code): Execute code → Create capability with trace
+ * 2. **Call-by-Name** (intent + capability): Execute existing named capability
+ * 3. **Suggestion** (intent only): DR-DSP search → Execute or return suggestions
+ *
+ * @example Direct mode (create new capability)
+ * ```typescript
+ * pml_execute({
+ *   intent: "read JSON config",
+ *   code: "const config = await mcp.filesystem.read_file({ path: 'config.json' });"
+ * })
+ * // Capability deduplicated by code_hash - same code = same capability
+ * // Naming done separately via cap:name API
+ * ```
+ *
+ * @example Call-by-Name mode (reuse existing)
+ * ```typescript
+ * pml_execute({
+ *   intent: "read JSON config",
+ *   capability: "my-config-reader",
+ *   args: { path: "other-config.json" }
+ * })
+ * ```
  */
 export interface ExecuteArgs {
   /** Natural language description of the intent (REQUIRED) */
   intent: string;
   /** TypeScript code to execute (OPTIONAL - triggers Mode Direct) */
   code?: string;
+  /**
+   * Name of existing capability to execute (triggers Mode Call-by-Name)
+   *
+   * When provided, looks up the capability by name and executes its code.
+   * Mutually exclusive with `code` parameter.
+   *
+   * Name format: MCP-compatible with double underscores
+   * @example "mcp__filesystem__read_json", "mcp__github__create_issue"
+   */
+  capability?: string;
+  /**
+   * Arguments for capability execution (Mode Call-by-Name only)
+   *
+   * These args are merged with the capability's default parameters.
+   * Args override defaults when both are present.
+   */
+  args?: Record<string, JsonValue>;
   /** Execution options */
   options?: {
     timeout?: number;
@@ -100,8 +154,20 @@ export interface ExecuteResponse {
   // Mode success
   result?: JsonValue;
   capabilityId?: string;
+  /**
+   * User-friendly capability name (Story 13.2 AC4)
+   * For named capabilities: the display_name
+   * For unnamed: "unnamed_<hash>" format
+   */
+  capabilityName?: string;
+  /**
+   * Full FQDN of the capability (Story 13.2 AC4)
+   * Format: <org>.<project>.<namespace>.<action>.<hash>
+   * Example: "local.default.fs.read_json.a7f3"
+   */
+  capabilityFqdn?: string;
   /** "direct" = code provided, "speculation" = capability reused (Epic-12, disabled) */
-  mode?: "direct" | "speculation";
+  mode?: "direct" | "speculation" | "call_by_name";
   executionTimeMs?: number;
 
   // Mode approval_required (per-layer validation)
@@ -143,13 +209,22 @@ export interface ExecuteResponse {
 }
 
 /**
- * Handle pml:execute request (Story 10.7)
+ * Default scope for local development (Story 13.2)
+ */
+const DEFAULT_SCOPE: Scope = {
+  org: "local",
+  project: "default",
+};
+
+/**
+ * Handle pml:execute request (Story 10.7 + Story 13.2)
  *
- * Unified execution API with two modes:
+ * Unified execution API with three modes:
  * - **Direct** (intent + code): Execute → Create capability with trace
+ * - **Call-by-Name** (intent + capability): Execute existing named capability
  * - **Suggestion** (intent only): DR-DSP → Execute or return suggestions
  *
- * @param args - Execute arguments (intent required, code optional)
+ * @param args - Execute arguments (intent required, code/capability optional)
  * @param deps - Handler dependencies
  * @returns Execution result or suggestions
  */
@@ -173,23 +248,56 @@ export async function handleExecute(
 
     const intent = params.intent.trim();
     const code = params.code?.trim();
+    const capabilityName = params.capability?.trim();
+    const providedArgs = params.args ?? {};
     const options = params.options ?? {};
 
+    // Determine execution mode
+    const mode = capabilityName ? "call_by_name" : code ? "direct" : "suggestion";
+
     transaction.setData("intent", intent.substring(0, 100));
-    transaction.setData("mode", code ? "direct" : "suggestion");
+    transaction.setData("mode", mode);
     addBreadcrumb("mcp", "Processing execute request", {
       intent: intent.substring(0, 50),
       hasCode: !!code,
+      hasCapability: !!capabilityName,
     });
 
     log.info(
-      `pml:execute: intent="${intent.substring(0, 50)}...", mode=${code ? "direct" : "suggestion"}`,
+      `pml:execute: intent="${intent.substring(0, 50)}...", mode=${mode}`,
     );
 
+    // Validate mutual exclusivity (capability and code cannot both be present)
+    if (capabilityName && code) {
+      transaction.finish();
+      return formatMCPToolError(
+        "Cannot use both 'code' and 'capability' parameters. " +
+          "Use 'code' for new execution or 'capability' to call existing.",
+      );
+    }
+
     // Route to appropriate mode
-    if (code) {
-      // Mode Direct: Execute code → Create capability
-      const result = await executeDirectMode(intent, code, options, deps, startTime);
+    if (capabilityName) {
+      // Mode Call-by-Name: Execute existing capability by name
+      const result = await executeByNameMode(
+        intent,
+        capabilityName,
+        providedArgs,
+        options,
+        deps,
+        startTime,
+      );
+      transaction.finish();
+      return result;
+    } else if (code) {
+      // Mode Direct: Execute code → Create capability (deduplicated by code_hash)
+      const result = await executeDirectMode(
+        intent,
+        code,
+        options,
+        deps,
+        startTime,
+      );
       transaction.finish();
       return result;
     } else {
@@ -208,13 +316,15 @@ export async function handleExecute(
 }
 
 /**
- * Mode Direct: Execute code and create capability
+ * Mode Direct: Execute code and create capability (Story 10.7 + Story 13.2)
  *
  * Flow:
  * 1. Validate code size
  * 2. Static analysis via StaticStructureBuilder
  * 3. Execute via WorkerBridge
  * 4. Create capability with traceData (Unit of Work pattern)
+ *    - Deduplicated by code_hash (same code = same capability)
+ *    - Naming done separately via cap:name API
  *
  * @param intent - Natural language description
  * @param code - TypeScript code to execute
@@ -364,6 +474,7 @@ async function executeDirectMode(
             result: r.output as JsonValue ?? null,
             success: r.status === "success",
             durationMs: r.executionTimeMs ?? 0,
+            layerIndex: r.layerIndex,
           };
         });
 
@@ -387,6 +498,18 @@ async function executeDirectMode(
           toolsCalled,
         );
 
+        // Generate intent embedding for trace (SHGAT v2 intentSimilarSuccessRate)
+        let intentEmbedding: number[] | undefined;
+        if (deps.embeddingModel) {
+          try {
+            intentEmbedding = await deps.embeddingModel.encode(intent);
+          } catch (embError) {
+            log.warn("[pml:execute] Failed to generate intent embedding for trace", {
+              error: String(embError),
+            });
+          }
+        }
+
         const { capability, trace } = await deps.capabilityStore.saveCapability({
           code,
           intent,
@@ -398,18 +521,71 @@ async function executeDirectMode(
             taskResults,
             decisions: inferredDecisions,
             initialContext: { intent },
+            intentEmbedding,
           },
         });
+
+        // Story 13.2: Register in CapabilityRegistry with auto-generated FQDN
+        // Naming (displayName) done separately via cap:name API (Story 13.3)
+        // Migration 023: Links to workflow_pattern via workflowPatternId FK
+        let capabilityFqdn: string | undefined;
+        let autoDisplayName: string | undefined;
+        if (deps.capabilityRegistry) {
+          try {
+            // Infer namespace from first tool's server (e.g., "filesystem:read" -> "filesystem")
+            const firstTool = toolsCalled[0] ?? "misc";
+            const namespace = firstTool.includes(":") ? firstTool.split(":")[0] : "code";
+            // Auto-generate action from code hash
+            const codeHash = capability.codeHash;
+            const action = `exec_${codeHash.substring(0, 8)}`;
+            // 4-char hash for FQDN
+            const hash = codeHash.substring(0, 4);
+            // Auto displayName until user names it via cap:name
+            autoDisplayName = `unnamed_${codeHash.substring(0, 8)}`;
+
+            const record = await deps.capabilityRegistry.create({
+              displayName: autoDisplayName,
+              org: DEFAULT_SCOPE.org,
+              project: DEFAULT_SCOPE.project,
+              namespace,
+              action,
+              workflowPatternId: capability.id,
+              hash,
+              createdBy: "pml_execute",
+            });
+
+            capabilityFqdn = record.id;
+
+            log.info("[pml:execute] Capability registered with auto FQDN", {
+              displayName: autoDisplayName,
+              fqdn: capabilityFqdn,
+            });
+          } catch (registryError) {
+            // Log but don't fail - capability was still created
+            log.warn("[pml:execute] Failed to register capability in registry", {
+              error: String(registryError),
+            });
+          }
+        }
 
         // Update DR-DSP with new capability
         updateDRDSP(deps.drdsp, capability, staticStructure);
 
-        // Update SHGAT with new capability (Story 10.7: live learning)
-        const wasSuccessful = executionResult.failedTasks === 0;
-        await updateSHGAT(deps.shgat, deps.embeddingModel, capability, toolsCalled, intent, wasSuccessful);
+        // Register capability in SHGAT graph (nodes only, training via PER)
+        await registerSHGATNodes(deps.shgat, deps.embeddingModel, capability, toolsCalled, intent);
 
         // Story 10.7c: Update Thompson Sampling with execution outcomes
         updateThompsonSampling(deps.adaptiveThresholdManager, taskResults);
+
+        // Story 11.6: PER batch training (every execution)
+        await runPERBatchTraining(deps);
+
+        // Story 11.4 AC11: Learn fan-in/fan-out edges from layerIndex
+        const tasksWithLayer = taskResults
+          .filter((t): t is TraceTaskResult & { layerIndex: number } => t.layerIndex !== undefined);
+        if (tasksWithLayer.length > 0) {
+          await deps.graphEngine.learnFromTaskResults(tasksWithLayer);
+        }
 
         // Build response
         const successOutputs = executionResult.results
@@ -420,6 +596,8 @@ async function executeDirectMode(
           status: "success",
           result: (successOutputs.length === 1 ? successOutputs[0] : successOutputs) as JsonValue,
           capabilityId: capability.id,
+          capabilityName: autoDisplayName ?? capability.name, // Auto-generated, rename via cap:name
+          capabilityFqdn, // Auto-generated FQDN
           mode: "direct",
           executionTimeMs,
           dag: {
@@ -441,6 +619,8 @@ async function executeDirectMode(
 
         log.info("[pml:execute] Mode Direct completed (ControlledExecutor)", {
           capabilityId: capability.id,
+          capabilityName: autoDisplayName ?? capability.name,
+          capabilityFqdn,
           traceId: trace?.id,
           executionTimeMs: executionTimeMs.toFixed(2),
           toolsCalled: toolsCalled.length,
@@ -482,6 +662,269 @@ async function executeDirectMode(
 }
 
 /**
+ * Mode Call-by-Name: Execute existing capability by name (Story 13.2)
+ *
+ * Flow:
+ * 1. Resolve capability name via CapabilityRegistry
+ * 2. Merge provided args with capability defaults
+ * 3. Execute capability code via WorkerBridge
+ * 4. Record usage metrics
+ *
+ * @param intent - Natural language description
+ * @param capabilityName - Name of capability to execute
+ * @param args - Arguments to pass to capability
+ * @param options - Execution options
+ * @param deps - Dependencies
+ * @param startTime - Start timestamp for metrics
+ */
+async function executeByNameMode(
+  intent: string,
+  capabilityName: string,
+  args: Record<string, JsonValue>,
+  options: ExecuteArgs["options"],
+  deps: ExecuteDependencies,
+  startTime: number,
+): Promise<MCPToolResponse | MCPErrorResponse> {
+  // AC6, AC9: Check if registry is available
+  if (!deps.capabilityRegistry) {
+    return formatMCPToolError(
+      "Call-by-name mode requires CapabilityRegistry. " +
+        "Ensure gateway is properly configured with capabilityRegistry dependency.",
+    );
+  }
+
+  log.info("[pml:execute] Mode Call-by-Name - resolving capability", {
+    capabilityName,
+    argsKeys: Object.keys(args),
+  });
+
+  // AC7: Resolve name to capability record
+  const record = await deps.capabilityRegistry.resolveByName(capabilityName, DEFAULT_SCOPE);
+
+  if (!record) {
+    // AC9: Not found error
+    return formatMCPToolError(
+      `Capability not found: ${capabilityName}`,
+    );
+  }
+
+  // Migration 023: Fetch code from workflow_pattern via FK
+  if (!record.workflowPatternId) {
+    return formatMCPToolError(
+      `Capability '${capabilityName}' has no linked workflow_pattern. Cannot execute.`,
+    );
+  }
+
+  // Fetch code and parameters from workflow_pattern
+  const wpResult = await deps.db.query(
+    `SELECT code_snippet, parameters_schema, description FROM workflow_pattern WHERE pattern_id = $1`,
+    [record.workflowPatternId],
+  );
+
+  if (wpResult.length === 0) {
+    return formatMCPToolError(
+      `Capability '${capabilityName}' linked workflow_pattern not found. Cannot execute.`,
+    );
+  }
+
+  const codeSnippet = wpResult[0].code_snippet as string;
+  const parametersSchema = wpResult[0].parameters_schema
+    ? (typeof wpResult[0].parameters_schema === "string"
+        ? JSON.parse(wpResult[0].parameters_schema as string)
+        : wpResult[0].parameters_schema)
+    : undefined;
+
+  if (!codeSnippet) {
+    return formatMCPToolError(
+      `Capability '${capabilityName}' has no code snippet stored. Cannot execute.`,
+    );
+  }
+
+  log.debug("[pml:execute] Capability resolved", {
+    displayName: record.displayName,
+    fqdn: record.id,
+    workflowPatternId: record.workflowPatternId,
+    hasParametersSchema: !!parametersSchema,
+  });
+
+  // AC8: Merge args with defaults from parametersSchema
+  const mergedArgs = mergeArgsWithDefaults(args, parametersSchema);
+
+  log.debug("[pml:execute] Args merged", {
+    providedKeys: Object.keys(args),
+    mergedKeys: Object.keys(mergedArgs),
+  });
+
+  // Execute the capability code
+  const perLayerValidation = options?.per_layer_validation === true;
+
+  // Step 1: Static analysis via SWC
+  const structureBuilder = new StaticStructureBuilder(deps.db);
+  const staticStructure = await structureBuilder.buildStaticStructure(codeSnippet);
+
+  // Step 2: Build tool definitions
+  const toolDefs = await buildToolDefinitionsFromStaticStructure(staticStructure, deps);
+
+  // Step 3: Create WorkerBridge executor
+  const [toolExecutor, executorContext] = createToolExecutorViaWorker({
+    mcpClients: deps.mcpClients,
+    toolDefinitions: toolDefs,
+    capabilityStore: deps.capabilityStore,
+    graphRAG: deps.graphEngine,
+  });
+
+  try {
+    // Step 4: Check if we can convert to DAG
+    if (isValidForDagConversion(staticStructure)) {
+      const dag = staticStructureToDag(staticStructure, {
+        taskIdPrefix: "task_",
+        includeDecisionTasks: false,
+      });
+
+      if (dag.tasks.length > 0) {
+        log.info("[pml:execute] Executing capability via ControlledExecutor (DAG mode)", {
+          capabilityName: record.displayName,
+          fqdn: record.id,
+          tasksCount: dag.tasks.length,
+        });
+
+        // Create ControlledExecutor
+        const controlledExecutor = new ControlledExecutor(toolExecutor, {
+          maxConcurrency: 5,
+          taskTimeout: options?.timeout ?? 30000,
+        });
+
+        // Per-layer validation check
+        if (perLayerValidation && deps.workflowDeps) {
+          return await handleWorkflowExecution(
+            {
+              workflow: dag,
+              intent,
+              config: { per_layer_validation: true },
+            },
+            deps.workflowDeps,
+          );
+        }
+
+        // Execute DAG
+        const executionResult = await controlledExecutor.execute(dag);
+        const executionTimeMs = performance.now() - startTime;
+
+        // Extract tool calls from results
+        const toolsCalled = executionResult.results
+          .filter((r) => r.status === "success")
+          .map((r) => dag.tasks.find((t) => t.id === r.taskId)?.tool ?? "unknown");
+
+        // Handle execution failure
+        if (executionResult.failedTasks > 0 && executionResult.successfulTasks === 0) {
+          const firstError = executionResult.errors[0];
+
+          // AC10: Record failed usage
+          await deps.capabilityRegistry.recordUsage(record.id, false, executionTimeMs);
+
+          return formatMCPToolError(
+            `Capability execution failed: ${firstError?.error ?? "Unknown error"}`,
+            {
+              capabilityName: record.displayName,
+              fqdn: record.id,
+              failedTasks: executionResult.failedTasks,
+              errors: executionResult.errors,
+              executionTimeMs,
+            },
+          );
+        }
+
+        // AC10: Record successful usage
+        await deps.capabilityRegistry.recordUsage(record.id, true, executionTimeMs);
+
+        // Build response
+        const successOutputs = executionResult.results
+          .filter((r) => r.status === "success")
+          .map((r) => r.output);
+
+        const response: ExecuteResponse = {
+          status: "success",
+          result: (successOutputs.length === 1 ? successOutputs[0] : successOutputs) as JsonValue,
+          capabilityId: record.id,
+          capabilityName: record.displayName,
+          capabilityFqdn: record.id,
+          mode: "call_by_name",
+          executionTimeMs,
+          dag: {
+            mode: "dag",
+            tasksCount: dag.tasks.length,
+            layersCount: executionResult.parallelizationLayers,
+            speedup: controlledExecutor.calculateSpeedup(executionResult),
+            toolsDiscovered: toolsCalled,
+          },
+        };
+
+        // Add tool failures if any
+        if (executionResult.failedTasks > 0) {
+          response.tool_failures = executionResult.errors.map((e) => ({
+            tool: e.taskId,
+            error: e.error,
+          }));
+        }
+
+        log.info("[pml:execute] Mode Call-by-Name completed", {
+          capabilityName: record.displayName,
+          fqdn: record.id,
+          executionTimeMs: executionTimeMs.toFixed(2),
+          toolsCalled: toolsCalled.length,
+        });
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(response, null, 2),
+          }],
+        };
+      }
+    }
+
+    // No valid DAG - fail
+    return formatMCPToolError(
+      `Capability '${capabilityName}' code cannot be executed - no MCP tools found.`,
+      {
+        fqdn: record.id,
+        hint: "The capability may have been created with code that doesn't use MCP tools.",
+      },
+    );
+  } finally {
+    cleanupWorkerBridgeExecutor(executorContext);
+  }
+}
+
+/**
+ * Merge provided args with defaults from JSON Schema (Story 13.2 AC8)
+ *
+ * Algorithm:
+ * 1. Start with provided args
+ * 2. For each property in schema, if not in args and has default, add default
+ *
+ * @param providedArgs - User-provided arguments
+ * @param schema - JSON Schema with defaults
+ * @returns Merged arguments
+ */
+function mergeArgsWithDefaults(
+  providedArgs: Record<string, JsonValue>,
+  schema: { properties?: Record<string, { default?: JsonValue }> } | undefined,
+): Record<string, JsonValue> {
+  const merged = { ...providedArgs };
+
+  if (schema?.properties) {
+    for (const [key, propSchema] of Object.entries(schema.properties)) {
+      if (!(key in merged) && propSchema.default !== undefined) {
+        merged[key] = propSchema.default;
+      }
+    }
+  }
+
+  return merged;
+}
+
+/**
  * Update DR-DSP with a newly created capability
  */
 function updateDRDSP(
@@ -519,21 +962,18 @@ function updateDRDSP(
 }
 
 /**
- * Update SHGAT with new capability and train on trace (live learning)
+ * Register capability and tools in SHGAT graph
  *
- * 1. Registers the capability and any new tools
- * 2. Trains SHGAT on the execution outcome (success/failure)
+ * Adds new nodes to the graph. Training is done separately via PER.
  */
-async function updateSHGAT(
+async function registerSHGATNodes(
   shgat: SHGAT | undefined,
   embeddingModel: EmbeddingModelInterface | undefined,
   capability: { id: string; toolsUsed?: string[]; successRate: number },
   toolsCalled: string[],
   intent: string,
-  success: boolean = true,
 ): Promise<void> {
   if (!shgat || !embeddingModel) {
-    log.debug("[pml:execute] SHGAT or embeddingModel not available - skipping SHGAT update");
     return;
   }
 
@@ -544,10 +984,8 @@ async function updateSHGAT(
     // Register any new tools (with generated embeddings)
     for (const toolId of toolsCalled) {
       if (!shgat.hasToolNode(toolId)) {
-        // Generate tool embedding from tool ID
         const toolEmbedding = await embeddingModel.encode(toolId.replace(":", " "));
         shgat.registerTool({ id: toolId, embedding: toolEmbedding });
-        log.debug("[pml:execute] SHGAT: registered new tool", { toolId });
       }
     }
 
@@ -561,24 +999,66 @@ async function updateSHGAT(
       children: [],
     });
 
-    // Train SHGAT on this trace (online learning)
-    const trainingExample = {
-      intentEmbedding: embedding,
-      contextTools: toolsCalled,
-      candidateId: capability.id,
-      outcome: success ? 1 : 0,
-    };
-
-    // Single-example training (online learning)
-    shgat.trainOnExample(trainingExample);
-
-    log.info("[pml:execute] SHGAT updated and trained", {
+    log.debug("[pml:execute] SHGAT nodes registered", {
       capabilityId: capability.id,
       toolsCount: toolsCalled.length,
-      outcome: success ? "success" : "failure",
     });
   } catch (error) {
-    log.warn("[pml:execute] Failed to update SHGAT", { error: String(error) });
+    log.warn("[pml:execute] Failed to register SHGAT nodes", { error: String(error) });
+  }
+}
+
+/** Training lock to prevent concurrent training */
+let isTrainingInProgress = false;
+
+/**
+ * Run PER batch training (Story 11.6)
+ *
+ * Called after every execution to train SHGAT on high-priority traces.
+ * Skips if another training is already in progress (prevents race conditions).
+ */
+async function runPERBatchTraining(deps: ExecuteDependencies): Promise<void> {
+  // Skip if training already in progress (prevents concurrent training issues)
+  if (isTrainingInProgress) {
+    log.debug("[pml:execute] Skipping PER training - another training in progress");
+    return;
+  }
+
+  // Check required dependencies
+  if (!deps.shgat || !deps.traceStore || !deps.embeddingModel) {
+    return;
+  }
+
+  isTrainingInProgress = true;
+  try {
+    // Create embedding provider wrapper
+    const embeddingProvider = {
+      getEmbedding: async (text: string) => deps.embeddingModel!.encode(text),
+    };
+
+    // Run path-level training with PER sampling
+    const result = await trainSHGATOnPathTraces(
+      deps.shgat,
+      deps.traceStore,
+      embeddingProvider,
+      {
+        minTraces: 1,
+        maxTraces: 50,
+        batchSize: 16,
+      },
+    );
+
+    if (!result.fallback && result.tracesProcessed > 0) {
+      log.debug("[pml:execute] PER training completed", {
+        traces: result.tracesProcessed,
+        examples: result.examplesGenerated,
+        loss: result.loss.toFixed(4),
+      });
+    }
+  } catch (error) {
+    log.warn("[pml:execute] PER training failed", { error: String(error) });
+  } finally {
+    isTrainingInProgress = false;
   }
 }
 
@@ -644,9 +1124,35 @@ async function executeSuggestionMode(
     return formatMCPToolError("Failed to generate intent embedding");
   }
 
-  // Score all capabilities and tools with SHGAT
-  const shgatCapabilities = deps.shgat.scoreAllCapabilities(intentEmbedding);
-  const shgatTools = deps.shgat.scoreAllTools(intentEmbedding);
+  // Score all capabilities and tools with SHGAT v2 (Story 11.10)
+  // Build TraceFeatures map if extractor available, else use empty map (v2 builds defaults)
+  const traceFeaturesMap = new Map<string, import("../../graphrag/algorithms/shgat.ts").TraceFeatures>();
+  if (deps.traceFeatureExtractor) {
+    // Get all tool/capability IDs for batch extraction
+    const allIds = [
+      ...deps.shgat.getToolIds(),
+      ...deps.shgat.getCapabilityIds(),
+    ];
+    if (allIds.length > 0) {
+      const batchStats = await deps.traceFeatureExtractor.batchExtractTraceStats(allIds);
+      // Convert TraceStats to full TraceFeatures (embeddings will be filled by v2 methods)
+      for (const [id, stats] of batchStats) {
+        traceFeaturesMap.set(id, {
+          intentEmbedding,
+          candidateEmbedding: [], // Will be filled by scoreAllCapabilitiesV2/ToolsV2
+          contextEmbeddings: [],
+          contextAggregated: [],
+          traceStats: stats,
+        });
+      }
+    }
+  }
+
+  // Context tool IDs for v2 scoring (empty for now, can be extended with session context)
+  const contextToolIds: string[] = [];
+
+  const shgatCapabilities = deps.shgat.scoreAllCapabilitiesV2(intentEmbedding, traceFeaturesMap, contextToolIds);
+  const shgatTools = deps.shgat.scoreAllToolsV2(intentEmbedding, traceFeaturesMap, contextToolIds);
 
   log.debug("[pml:execute] SHGAT scored", {
     capabilitiesCount: shgatCapabilities.length,

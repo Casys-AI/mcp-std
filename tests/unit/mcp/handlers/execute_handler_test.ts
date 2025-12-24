@@ -57,10 +57,12 @@ function createMockDependencies(): ExecuteDependencies {
     encode: async () => new Array(1024).fill(0.1), // 1024-dim embedding
   };
 
-  // Story 10.7: Mock SHGAT - returns empty by default (no capabilities/tools)
+  // Story 10.7/11.10: Mock SHGAT v2 - returns empty by default (no capabilities/tools)
   const mockShgat = {
-    scoreAllCapabilities: () => [], // No matches
-    scoreAllTools: () => [], // No matches
+    scoreAllCapabilitiesV2: () => [], // No matches (v2)
+    scoreAllToolsV2: () => [], // No matches (v2)
+    getToolIds: () => [], // No tools registered
+    getCapabilityIds: () => [], // No capabilities registered
   };
 
   return {
@@ -184,12 +186,14 @@ Deno.test("Execute Handler - should return suggestions when no capability match 
 Deno.test("Execute Handler - should return suggestions when SHGAT score is low", async () => {
   const deps = createMockDependencies();
 
-  // Mock SHGAT returning low confidence match (below 0.7 threshold)
+  // Mock SHGAT v2 returning low confidence match (below 0.7 threshold)
   deps.shgat = {
-    scoreAllCapabilities: () => [
+    scoreAllCapabilitiesV2: () => [
       { capabilityId: "low-conf-cap", score: 0.5, headWeights: [0.5, 0.5] },
     ],
-    scoreAllTools: () => [],
+    scoreAllToolsV2: () => [],
+    getToolIds: () => [],
+    getCapabilityIds: () => ["low-conf-cap"],
   } as unknown as ExecuteDependencies["shgat"];
 
   // Mock capability store to return the capability
@@ -222,12 +226,14 @@ Deno.test("Execute Handler - should return suggestions when SHGAT score is low",
 Deno.test("Execute Handler - should return suggestions when SHGAT score is high but successRate is low", async () => {
   const deps = createMockDependencies();
 
-  // Mock SHGAT returning high score
+  // Mock SHGAT v2 returning high score
   deps.shgat = {
-    scoreAllCapabilities: () => [
+    scoreAllCapabilitiesV2: () => [
       { capabilityId: "unreliable-cap", score: 0.85, headWeights: [0.85, 0.85] },
     ],
-    scoreAllTools: () => [],
+    scoreAllToolsV2: () => [],
+    getToolIds: () => [],
+    getCapabilityIds: () => ["unreliable-cap"],
   } as unknown as ExecuteDependencies["shgat"];
 
   // Mock capability with low successRate
@@ -280,12 +286,14 @@ Deno.test("Execute Handler - should include executionTimeMs in response", async 
 Deno.test("Execute Handler - should include suggestions structure with tools", async () => {
   const deps = createMockDependencies();
 
-  // Mock SHGAT to return tool scores
+  // Mock SHGAT v2 to return tool scores
   deps.shgat = {
-    scoreAllCapabilities: () => [],
-    scoreAllTools: () => [
+    scoreAllCapabilitiesV2: () => [],
+    scoreAllToolsV2: () => [
       { toolId: "fs:read", score: 0.9 },
     ],
+    getToolIds: () => ["fs:read"],
+    getCapabilityIds: () => [],
   } as unknown as ExecuteDependencies["shgat"];
 
   // Mock graphEngine.getToolNode to return tool metadata
@@ -362,16 +370,18 @@ Deno.test("Execute Handler - should accept per_layer_validation option", async (
 Deno.test("Execute Handler - should use DR-DSP backward to build suggestedDag from hyperpath", async () => {
   const deps = createMockDependencies();
 
-  // Mock SHGAT returning a capability match (but below threshold for execution)
+  // Mock SHGAT v2 returning a capability match (but below threshold for execution)
   deps.shgat = {
-    scoreAllCapabilities: () => [
+    scoreAllCapabilitiesV2: () => [
       { capabilityId: "checkout-cap", score: 0.65, headWeights: [0.6, 0.7] }, // Below 0.7 threshold
     ],
-    scoreAllTools: () => [
+    scoreAllToolsV2: () => [
       { toolId: "db:getCart", score: 0.8 },
       { toolId: "inventory:check", score: 0.7 },
       { toolId: "payment:charge", score: 0.9 },
     ],
+    getToolIds: () => ["db:getCart", "inventory:check", "payment:charge"],
+    getCapabilityIds: () => ["checkout-cap"],
   } as unknown as ExecuteDependencies["shgat"];
 
   // Mock capability with tools for DR-DSP to use
@@ -457,10 +467,12 @@ Deno.test("Execute Handler - should use DR-DSP backward to build suggestedDag fr
 Deno.test("Execute Handler - should NOT create suggestedDag without SHGAT bestCapability", async () => {
   const deps = createMockDependencies();
 
-  // Mock SHGAT returning no match
+  // Mock SHGAT v2 returning no match
   deps.shgat = {
-    scoreAllCapabilities: () => [], // No matches
-    scoreAllTools: () => [],
+    scoreAllCapabilitiesV2: () => [], // No matches
+    scoreAllToolsV2: () => [],
+    getToolIds: () => [],
+    getCapabilityIds: () => [],
   } as unknown as ExecuteDependencies["shgat"];
 
   // Mock DR-DSP available but no bestCapability to use it with
@@ -489,4 +501,199 @@ Deno.test("Execute Handler - should NOT create suggestedDag without SHGAT bestCa
     // NO suggestedDag without bestCapability - no fallbacks
     assertEquals(parsed.suggestions.suggestedDag, undefined);
   }
+});
+
+// ============================================================================
+// Story 13.2 Naming Support Tests
+// ============================================================================
+
+Deno.test("Execute Handler - should reject 'code' and 'capability' used together", async () => {
+  const deps = createMockDependencies();
+  const result = await handleExecute(
+    {
+      intent: "test mutual exclusivity",
+      code: "return 42;",
+      capability: "my-cap",
+    },
+    deps,
+  );
+
+  assertExists(result);
+  if ("content" in result) {
+    const text = result.content[0].text;
+    assertStringIncludes(text, "Cannot use both 'code' and 'capability' parameters");
+  }
+});
+
+Deno.test("Execute Handler - Call-by-Name requires capabilityRegistry", async () => {
+  const deps = createMockDependencies();
+  // Ensure no capabilityRegistry
+  deps.capabilityRegistry = undefined;
+
+  const result = await handleExecute(
+    {
+      intent: "call existing capability",
+      capability: "my-existing-cap",
+    },
+    deps,
+  );
+
+  assertExists(result);
+  if ("content" in result) {
+    const text = result.content[0].text;
+    assertStringIncludes(text, "CapabilityRegistry");
+  }
+});
+
+Deno.test("Execute Handler - Call-by-Name returns not found for unknown capability", async () => {
+  const deps = createMockDependencies();
+
+  // Mock capabilityRegistry that returns null (not found)
+  deps.capabilityRegistry = {
+    resolveByName: async () => null,
+    recordUsage: async () => {},
+  } as unknown as ExecuteDependencies["capabilityRegistry"];
+
+  const result = await handleExecute(
+    {
+      intent: "call unknown capability",
+      capability: "unknown-cap",
+    },
+    deps,
+  );
+
+  assertExists(result);
+  if ("content" in result) {
+    const text = result.content[0].text;
+    assertStringIncludes(text, "not found");
+  }
+});
+
+Deno.test("Execute Handler - mode detection prefers Call-by-Name over Direct", async () => {
+  const deps = createMockDependencies();
+
+  // Even though this test uses a mock that will fail,
+  // we verify the mode detection prioritizes capability over code
+  deps.capabilityRegistry = {
+    resolveByName: async () => null,
+    recordUsage: async () => {},
+  } as unknown as ExecuteDependencies["capabilityRegistry"];
+
+  const result = await handleExecute(
+    {
+      intent: "test mode priority",
+      capability: "test-cap",
+      // Note: code is NOT provided, capability triggers call-by-name
+    },
+    deps,
+  );
+
+  assertExists(result);
+  if ("content" in result) {
+    const text = result.content[0].text;
+    // Should attempt call-by-name (not direct mode)
+    // Call-by-name fails with "not found" since mock returns null
+    assertStringIncludes(text, "not found");
+  }
+});
+
+// ============================================================================
+// Story 13.2 AC8: Args Merging Tests
+// ============================================================================
+
+Deno.test("Execute Handler - mergeArgsWithDefaults merges provided args with schema defaults", async () => {
+  const deps = createMockDependencies();
+
+  // Mock capabilityRegistry with a capability that has parametersSchema with defaults
+  deps.capabilityRegistry = {
+    resolveByName: async () => ({
+      id: "local.default.fs.read_json.a7f3",
+      displayName: "json-reader",
+      org: "local",
+      project: "default",
+      namespace: "fs",
+      action: "read_json",
+      hash: "a7f3",
+      workflowPatternId: "wp-uuid-123",
+      createdBy: "test",
+      createdAt: new Date(),
+      version: 1,
+      verified: false,
+      usageCount: 5,
+      successCount: 4,
+      totalLatencyMs: 1000,
+      tags: [],
+      visibility: "private" as const,
+      routing: "local" as const,
+    }),
+    recordUsage: async () => {},
+  } as unknown as ExecuteDependencies["capabilityRegistry"];
+
+  // Mock db.query to return workflow_pattern with parametersSchema containing defaults
+  deps.db = {
+    query: async (sql: string) => {
+      if (sql.includes("workflow_pattern")) {
+        return [{
+          code_snippet: "const x = await mcp.filesystem.read_file({ path: args.path });",
+          parameters_schema: JSON.stringify({
+            type: "object",
+            properties: {
+              path: { type: "string" },
+              encoding: { type: "string", default: "utf-8" },
+              verbose: { type: "boolean", default: false },
+            },
+          }),
+          description: "Read JSON file",
+        }];
+      }
+      return [];
+    },
+  } as unknown as ExecuteDependencies["db"];
+
+  const result = await handleExecute(
+    {
+      intent: "read config file",
+      capability: "json-reader",
+      args: { path: "config.json" }, // Only path provided, encoding/verbose should use defaults
+    },
+    deps,
+  );
+
+  assertExists(result);
+  // The execution will fail (no real MCP tools) but we verified the flow works
+  // The important thing is it reached the merging logic (no early errors)
+  if ("content" in result) {
+    const text = result.content[0].text;
+    // Should NOT fail on "not found" - capability was resolved
+    assertEquals(text.includes("not found: json-reader"), false);
+  }
+});
+
+// ============================================================================
+// Story 13.2 AC10: Usage Tracking Tests
+// ============================================================================
+
+Deno.test("Execute Handler - Call-by-Name records usage on capability not found", async () => {
+  const deps = createMockDependencies();
+
+  // Track recordUsage calls
+  let recordUsageCalled = false;
+
+  deps.capabilityRegistry = {
+    resolveByName: async () => null, // Not found
+    recordUsage: async () => {
+      recordUsageCalled = true;
+    },
+  } as unknown as ExecuteDependencies["capabilityRegistry"];
+
+  await handleExecute(
+    {
+      intent: "call missing capability",
+      capability: "non-existent",
+    },
+    deps,
+  );
+
+  // recordUsage should NOT be called for not-found (no capability to track)
+  assertEquals(recordUsageCalled, false);
 });

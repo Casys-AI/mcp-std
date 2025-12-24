@@ -369,17 +369,33 @@ export async function generateEmbeddings(
                   : undefined,
               };
 
-              // 3a. Check if embedding already exists (AC6: caching)
+              // 3a. Check if embedding already exists and is up-to-date (AC6: caching)
               const existing = await tx.query(
-                "SELECT tool_id, created_at FROM tool_embedding WHERE tool_id = $1",
+                "SELECT tool_id, metadata FROM tool_embedding WHERE tool_id = $1",
                 [schema.tool_id],
               );
 
               if (existing.length > 0) {
-                // Cache hit - skip generation
-                cachedCount++;
-                progress.increment();
-                continue;
+                // Check if description or schema has changed
+                const existingMeta = existing[0].metadata as {
+                  description?: string;
+                  schema?: { inputSchema?: unknown; outputSchema?: unknown };
+                } | null;
+                const currentDesc = schema.description;
+                const existingDesc = existingMeta?.description || "";
+
+                // Also check input_schema changes (for new required fields, etc.)
+                const currentSchemaStr = JSON.stringify(schema.input_schema);
+                const existingSchemaStr = JSON.stringify(existingMeta?.schema?.inputSchema || {});
+
+                if (currentDesc === existingDesc && currentSchemaStr === existingSchemaStr) {
+                  // Cache hit - no changes, skip regeneration
+                  cachedCount++;
+                  progress.increment();
+                  continue;
+                }
+                // Description or schema changed - regenerate embedding
+                log.debug(`Tool ${schema.tool_id} changed, regenerating embedding`);
               }
 
               // 3b. Generate new embedding

@@ -5,6 +5,7 @@
  */
 
 import type { JsonValue } from "../capabilities/types.ts";
+import type { JsonRpcRequest, JsonRpcResponse } from "./server/types.ts";
 
 /**
  * MCP Server configuration
@@ -42,6 +43,15 @@ export interface SmitheryServerConfig {
 }
 
 /**
+ * Handler for sampling requests from child MCP servers (for relay to parent)
+ */
+export type SamplingRequestHandler = (
+  serverId: string,
+  request: JsonRpcRequest,
+  respondToChild: (response: JsonRpcResponse) => void,
+) => boolean;
+
+/**
  * Common interface for MCP clients (stdio and HTTP Streamable)
  *
  * Both MCPClient (stdio) and SmitheryMCPClient (HTTP) implement this interface.
@@ -61,6 +71,8 @@ export interface MCPClientBase {
   disconnect(): Promise<void>;
   /** Close the connection (alias for disconnect) */
   close(): Promise<void>;
+  /** Set handler for sampling requests from child server (optional, for relay) */
+  setSamplingHandler?(handler: SamplingRequestHandler): void;
 }
 
 /**

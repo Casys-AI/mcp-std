@@ -166,3 +166,73 @@ export interface SearchCapabilitiesArgs {
   intent?: string;
   include_suggestions?: boolean;
 }
+
+// =============================================================================
+// MCP Sampling Types (for agent tools relay)
+// =============================================================================
+
+/**
+ * MCP Sampling message content
+ */
+export interface SamplingMessageContent {
+  type: "text" | "image";
+  text?: string;
+  data?: string;
+  mimeType?: string;
+}
+
+/**
+ * MCP Sampling message
+ */
+export interface SamplingMessage {
+  role: "user" | "assistant";
+  content: SamplingMessageContent | string;
+}
+
+/**
+ * MCP Sampling request (from child server to Gateway)
+ */
+export interface SamplingRequest {
+  messages: SamplingMessage[];
+  maxTokens?: number;
+  temperature?: number;
+  stopSequences?: string[];
+  systemPrompt?: string;
+  /** Hint for agentic loop iterations */
+  _maxIterations?: number;
+  /** Tool patterns allowed for agent */
+  _allowedToolPatterns?: string[];
+}
+
+/**
+ * MCP Sampling response content
+ */
+export interface SamplingResponseContent {
+  type: "text" | "tool_use";
+  text?: string;
+  name?: string;
+  input?: Record<string, unknown>;
+}
+
+/**
+ * MCP Sampling response (from Claude Code to Gateway to child server)
+ */
+export interface SamplingResponse {
+  content: SamplingResponseContent[];
+  model?: string;
+  stopReason: "end_turn" | "tool_use" | "max_tokens";
+}
+
+/**
+ * JSON-RPC response structure
+ */
+export interface JsonRpcResponse {
+  jsonrpc: "2.0";
+  id: number | string;
+  result?: unknown;
+  error?: {
+    code: number;
+    message: string;
+    data?: unknown;
+  };
+}

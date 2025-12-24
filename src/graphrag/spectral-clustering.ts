@@ -373,7 +373,7 @@ export class SpectralClusteringManager {
     this.clusterAssignments = assignment;
 
     const elapsedMs = performance.now() - startTime;
-    logger.info("Spectral clustering computed", {
+    logger.debug("Spectral clustering computed", {
       nodes: n,
       clusters: kEffective,
       elapsedMs: elapsedMs.toFixed(1),

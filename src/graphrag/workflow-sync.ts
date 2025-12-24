@@ -110,7 +110,7 @@ export class WorkflowSyncService {
       const knownTools = await this.loadKnownTools();
       if (knownTools.length === 0) {
         log.warn(
-          "[WorkflowSync] No tools found in tool_schema. Run 'cai serve' first to discover tools.",
+          "[WorkflowSync] No tools found in tool_schema. Run 'pml serve' first to discover tools.",
         );
         return {
           success: false,

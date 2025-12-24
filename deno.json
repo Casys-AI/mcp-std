@@ -19,8 +19,10 @@
   },
   "nodeModulesDir": "auto",
   "tasks": {
-    "dev": "deno run --watch --allow-all --env --unstable-worker-options --unstable-kv src/main.ts serve --port 3003 --config config/.mcp-servers.json",
-    "dev:api": "deno run --watch --allow-all --env --unstable-worker-options --unstable-broadcast-channel --unstable-kv src/main.ts serve --port 3003 --config config/.mcp-servers.json",
+    "dev": "deno run --allow-all scripts/backup-db.ts || true; deno run --watch --allow-all --env --unstable-worker-options --unstable-kv src/main.ts serve --port 3003 --config config/.mcp-servers.json",
+    "dev:api": "deno run --allow-all scripts/backup-db.ts || true; deno run --watch --allow-all --env --unstable-worker-options --unstable-broadcast-channel --unstable-kv src/main.ts serve --port 3003 --config config/.mcp-servers.json",
+    "db:backup": "deno run --allow-all scripts/backup-db.ts",
+    "db:backup:prod": "deno run --allow-all scripts/backup-db.ts .pml.db .pml.db.last",
     "dev:fresh": "cd src/web && deno run -A --env --unstable-kv --node-modules-dir=auto npm:vite",
     "dev:build": "cd src/web && vite build",
     "prod:start": "sudo systemctl start casys-dashboard casys-api",
@@ -58,12 +60,13 @@
     "fmt": "deno fmt",
     "check": "deno check src/**/*.ts",
     "cli": "deno run --allow-all --unstable-worker-options src/main.ts",
-    "build": "deno compile --allow-all --output=cai src/main.ts",
+    "build": "deno compile --allow-all --output=pml src/main.ts",
     "mock:fs": "deno run --allow-all tests/mocks/filesystem-mock.ts",
     "mock:db": "deno run --allow-all tests/mocks/database-mock.ts",
     "mock:api": "deno run --allow-all tests/mocks/api-mock.ts",
-    "db:generate": "deno run --allow-all npm:drizzle-kit generate",
-    "db:studio": "deno run --allow-all npm:drizzle-kit studio"
+    "db:restore": "rm -rf .pml-dev.db && cp -r .pml-dev.db.last .pml-dev.db && echo '✓ Database restored from .pml-dev.db.last'",
+    "db:backup:prod": "cp -r ~/.pml/.pml.db ~/.pml/.pml.db.backup && echo '✓ Production DB backed up to ~/.pml/.pml.db.backup'",
+    "db:restore:prod": "rm -rf ~/.pml/.pml.db && cp -r ~/.pml/.pml.db.backup ~/.pml/.pml.db && echo '✓ Production DB restored'"
   },
   "fmt": {
     "useTabs": false,

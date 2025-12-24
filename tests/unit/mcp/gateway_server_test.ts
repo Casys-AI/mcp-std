@@ -198,9 +198,12 @@ Deno.test({
 
   // ADR-013: Verify presence of critical meta-tools (more robust than exact count)
   // This approach survives refactoring that adds/removes tools
+  // Note: pml:search_tools replaced by pml:discover (Story 10.6)
+  // Note: pml:execute is the primary API (Story 10.7)
   const criticalTools = [
+    "pml:execute",
+    "pml:discover",
     "pml:execute_dag",
-    "pml:search_tools",
     "pml:execute_code",
     "pml:continue",
     "pml:abort",

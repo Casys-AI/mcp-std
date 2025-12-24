@@ -14,8 +14,8 @@ import { getAgentCardsConfigPath, getLegacyConfigPath } from "../utils.ts";
  * Create migrate-config command
  *
  * Usage:
- *   cai migrate-config          # Migrate YAML → JSON
- *   cai migrate-config --force  # Overwrite existing JSON
+ *   pml migrate-config          # Migrate YAML → JSON
+ *   pml migrate-config --force  # Overwrite existing JSON
  */
 export function createMigrateConfigCommand() {
   return new Command()

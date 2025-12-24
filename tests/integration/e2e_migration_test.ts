@@ -63,7 +63,7 @@ Deno.test({
       assert(configExists, "Config file should be created");
 
       // Verify database was created
-      const dbPath = `${testConfigDir}/.agentcards/.cai.db`;
+      const dbPath = `${testConfigDir}/.agentcards/.pml.db`;
       const dbExists = await exists(dbPath);
       assert(dbExists, "Database should be created");
 

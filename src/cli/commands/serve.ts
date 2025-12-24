@@ -16,6 +16,7 @@ import { SmitheryMCPClient } from "../../mcp/smithery-client.ts";
 import { EmbeddingModel } from "../../vector/embeddings.ts";
 import { VectorSearch } from "../../vector/search.ts";
 import { GraphRAGEngine } from "../../graphrag/graph-engine.ts";
+import { syncAllProvidesEdges } from "../../graphrag/provides-edge-calculator.ts";
 import { DAGSuggester } from "../../graphrag/dag-suggester.ts";
 import { ParallelExecutor } from "../../dag/executor.ts";
 import { PMLGatewayServer } from "../../mcp/gateway-server.ts";
@@ -44,12 +45,12 @@ async function findConfigFile(configPath?: string): Promise<string> {
 
 Please specify your MCP servers config file using --config:
 
-  ${Deno.build.os === "windows" ? ">" : "$"} cai serve --port 3001 --config <path-to-config>
+  ${Deno.build.os === "windows" ? ">" : "$"} pml serve --port 3001 --config <path-to-config>
 
 Examples:
   • ./config/mcp-servers.json
   • ./playground/config/mcp-servers.json
-  • ~/.config/cai/mcp-servers.json
+  • ~/.config/pml/mcp-servers.json
 
 Need help creating a config? See: https://github.com/casys-ai/casys-pml#configuration`,
     );
@@ -176,8 +177,8 @@ function createToolExecutor(
  * Create serve command
  *
  * Usage:
- *   cai serve --config ./config/mcp-servers.json --port 3001
- *   cai serve --config ~/.config/cai/mcp-servers.json
+ *   pml serve --config ./config/mcp-servers.json --port 3001
+ *   pml serve --config ~/.config/pml/mcp-servers.json
  */
 export function createServeCommand() {
   return new Command()
@@ -273,6 +274,14 @@ export function createServeCommand() {
 
         const graphEngine = new GraphRAGEngine(db);
         await graphEngine.syncFromDatabase();
+
+        // Calculate provides edges from tool schemas (Definition mode data flow)
+        const providesEdgeCount = await syncAllProvidesEdges(db);
+        if (providesEdgeCount > 0) {
+          log.info(`✓ Synced ${providesEdgeCount} provides edges from tool schemas`);
+          // Re-sync graph to include new provides edges
+          await graphEngine.syncFromDatabase();
+        }
 
         // 4.1 Initialize Capabilities System (Story 7.3a)
         const schemaInferrer = new SchemaInferrer(db);

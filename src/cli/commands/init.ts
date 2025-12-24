@@ -13,9 +13,9 @@ import { ConfigMigrator } from "../config-migrator.ts";
  * Create init command
  *
  * Usage:
- *   cai init                    # Auto-detect config and migrate
- *   cai init --dry-run          # Preview migration without changes
- *   cai init --config <path>    # Use custom config path
+ *   pml init                    # Auto-detect config and migrate
+ *   pml init --dry-run          # Preview migration without changes
+ *   pml init --config <path>    # Use custom config path
  */
 export function createInitCommand() {
   return new Command()

@@ -36,7 +36,7 @@ export function getContextHash(state: WorkflowState | null): string {
   // Build context for hashing (consistent with EpisodicMemoryStore.hashContext)
   const context = {
     workflowType: "dag-execution",
-    domain: "cai",
+    domain: "pml",
     complexity: state.tasks.length > 10
       ? "high"
       : state.tasks.length > 5

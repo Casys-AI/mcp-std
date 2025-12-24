@@ -53,21 +53,22 @@ Deno.test("CapabilityDataService - listCapabilities returns empty list initially
 
 Deno.test("CapabilityDataService - listCapabilities returns capabilities with correct structure", async () => {
   // Insert test capability
+  // Note: name column removed in migration 022 - naming via capability_records.display_name
   const capId = crypto.randomUUID();
   await sharedDb.query(
     `
     INSERT INTO workflow_pattern (
       pattern_id, code_snippet, code_hash, pattern_hash, intent_embedding,
       success_rate, usage_count, avg_duration_ms,
-      created_at, last_used, source, name, description,
+      created_at, last_used, source, description,
       dag_structure
     ) VALUES (
       $1, 'const x = 1;', 'hash1', 'phash1', $2,
       0.9, 5, 100,
-      NOW(), NOW(), 'emergent', 'Test Cap', 'Test description',
+      NOW(), NOW(), 'emergent', 'Test description',
       '{"tools_used": ["filesystem:read", "github:create_issue"]}'::jsonb
     )
-    
+
   `,
     [capId, generateEmbedding()],
   );
@@ -81,7 +82,8 @@ Deno.test("CapabilityDataService - listCapabilities returns capabilities with co
   assertEquals(cap.codeSnippet, "const x = 1;");
   assertEquals(cap.successRate, 0.9);
   assertEquals(cap.usageCount, 5);
-  assertEquals(cap.name, "Test Cap");
+  // name now comes from capability_records.display_name (null if not linked)
+  assertEquals(cap.name, null);
   assertEquals(cap.toolsUsed.length, 2);
   assertEquals(cap.toolsUsed[0], "filesystem:read");
 });
@@ -164,6 +166,7 @@ Deno.test("CapabilityDataService - buildHypergraphData returns empty initially",
 });
 
 Deno.test("CapabilityDataService - buildHypergraphData creates capability and tool nodes", async () => {
+  // Note: name column removed in migration 022 - naming via capability_records.display_name
   const capId = crypto.randomUUID();
 
   await sharedDb.query(
@@ -171,14 +174,14 @@ Deno.test("CapabilityDataService - buildHypergraphData creates capability and to
     INSERT INTO workflow_pattern (
       pattern_id, code_snippet, code_hash, pattern_hash, intent_embedding,
       success_rate, usage_count, avg_duration_ms,
-      created_at, last_used, source, name,
+      created_at, last_used, source, description,
       dag_structure
     ) VALUES (
       $1, 'const x = 1;', 'hash-hyper-1', 'phash-hyper-1', $2,
-      0.8, 10, 100, NOW(), NOW(), 'emergent', 'Test Capability',
+      0.8, 10, 100, NOW(), NOW(), 'emergent', 'Test Capability Description',
       '{"tools_used": ["filesystem:read"]}'::jsonb
     )
-    
+
   `,
     [capId, generateEmbedding()],
   );
@@ -192,7 +195,8 @@ Deno.test("CapabilityDataService - buildHypergraphData creates capability and to
   // Find capability node
   const capNode = result.nodes.find((n) => n.data.type === "capability" && n.data.id === `cap-${capId}`);
   assertExists(capNode);
-  assertEquals(capNode.data.label, "Test Capability");
+  // Label falls back to intentPreview (description) when no capability_records entry exists
+  assertEquals(capNode.data.label, "Test Capability Description");
 
   if (capNode.data.type === "capability") {
     assertEquals(capNode.data.successRate, 0.8);
@@ -355,6 +359,90 @@ Deno.test("CapabilityDataService - buildHypergraphData sets legacy parent field"
       if (toolNode.data.parents.length > 0) {
         assertEquals(toolNode.data.parent, toolNode.data.parents[0]);
       }
+    }
+  }
+});
+
+// Story 11.4: Test includeTraces option
+Deno.test("CapabilityDataService - buildHypergraphData with includeTraces=false excludes traces", async () => {
+  const result = await service.buildHypergraphData({ includeTraces: false });
+
+  // Capability nodes should not have traces when includeTraces is false
+  const capNodes = result.nodes.filter((n) => n.data.type === "capability");
+  for (const node of capNodes) {
+    if (node.data.type === "capability") {
+      // traces should be undefined when not requested
+      assertEquals(node.data.traces, undefined);
+    }
+  }
+});
+
+// Story 11.4: Test includeTraces option returns traces when enabled
+Deno.test("CapabilityDataService - buildHypergraphData with includeTraces=true fetches traces", async () => {
+  // First, insert a capability with an execution trace
+  // Note: name column removed in migration 022 - naming via capability_records.display_name
+  const capId = crypto.randomUUID();
+  const traceId = crypto.randomUUID();
+
+  // Insert capability
+  await sharedDb.query(
+    `
+    INSERT INTO workflow_pattern (
+      pattern_id, code_snippet, code_hash, pattern_hash, intent_embedding,
+      success_rate, usage_count, avg_duration_ms,
+      created_at, last_used, source, description, dag_structure
+    ) VALUES (
+      $1, 'const x = 1;', $2, 'phash_trace', $3,
+      0.9, 1, 100,
+      NOW(), NOW(), 'emergent', 'Trace Test Cap Description',
+      '{"tools_used": ["filesystem:read"]}'::jsonb
+    )
+  `,
+    [capId, `hash_trace_${capId}`, generateEmbedding()],
+  );
+
+  // Insert execution trace with layerIndex
+  await sharedDb.query(
+    `
+    INSERT INTO execution_trace (
+      id, capability_id, executed_at, success, duration_ms, priority, task_results
+    ) VALUES (
+      $1, $2, NOW(), true, 150, 0.5,
+      $3::jsonb
+    )
+  `,
+    [
+      traceId,
+      capId,
+      JSON.stringify([
+        { taskId: "t1", tool: "filesystem:read", args: {}, result: {}, success: true, durationMs: 50, layerIndex: 0 },
+        { taskId: "t2", tool: "github:create_issue", args: {}, result: {}, success: true, durationMs: 100, layerIndex: 1 },
+      ]),
+    ],
+  );
+
+  const result = await service.buildHypergraphData({ includeTraces: true });
+
+  // Find the capability node with our trace
+  const capNode = result.nodes.find(
+    (n) => n.data.type === "capability" && n.data.id === `cap-${capId}`,
+  );
+
+  if (capNode && capNode.data.type === "capability") {
+    // traces should be defined when requested
+    assertExists(capNode.data.traces);
+    assertEquals(Array.isArray(capNode.data.traces), true);
+
+    if (capNode.data.traces && capNode.data.traces.length > 0) {
+      const trace = capNode.data.traces[0];
+      assertEquals(trace.success, true);
+      assertEquals(trace.durationMs, 150);
+
+      // Verify taskResults have layerIndex
+      assertExists(trace.taskResults);
+      assertEquals(trace.taskResults.length, 2);
+      assertEquals(trace.taskResults[0].layerIndex, 0);
+      assertEquals(trace.taskResults[1].layerIndex, 1);
     }
   }
 });

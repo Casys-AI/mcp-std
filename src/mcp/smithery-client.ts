@@ -169,7 +169,7 @@ export class SmitheryMCPClient implements MCPClientBase {
 
       // Create MCP client
       this.client = new MCPClientClass({
-        name: "cai-gateway",
+        name: "pml-gateway",
         version: "1.0.0",
       });
 

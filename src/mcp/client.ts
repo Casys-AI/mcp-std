@@ -7,9 +7,10 @@
  */
 
 import * as log from "@std/log";
-import type { MCPClientBase, MCPServer, MCPTool, ServerDiscoveryResult } from "./types.ts";
+import type { MCPClientBase, MCPServer, MCPTool, SamplingRequestHandler, ServerDiscoveryResult } from "./types.ts";
 import { MCPServerError, TimeoutError } from "../errors/error-types.ts";
 import { withTimeout } from "../utils/timeout.ts";
+import type { JsonRpcRequest, JsonRpcResponse } from "./server/types.ts";
 
 interface JSONRPCResponse {
   jsonrpc: string;
@@ -26,6 +27,8 @@ export interface MCPClientConfig {
   timeoutMs?: number;
   /** Use mutex for request serialization instead of multiplexer (default: false) */
   useMutex?: boolean;
+  /** Handler for sampling requests from child server (for relay to parent) */
+  samplingHandler?: SamplingRequestHandler;
 }
 
 /**
@@ -61,6 +64,9 @@ export class MCPClient implements MCPClientBase {
   private mutexLock: Promise<void> = Promise.resolve();
   private mutexRelease: (() => void) | null = null;
 
+  // Sampling request handler for relay to parent (Story 11.x)
+  private samplingHandler: SamplingRequestHandler | null = null;
+
   constructor(server: MCPServer, config?: MCPClientConfig | number) {
     this.server = server;
     // Support both old signature (number) and new config object
@@ -69,7 +75,16 @@ export class MCPClient implements MCPClientBase {
     } else {
       this.timeout = config?.timeoutMs ?? 10000;
       this.useMutex = config?.useMutex ?? false;
+      this.samplingHandler = config?.samplingHandler ?? null;
     }
+  }
+
+  /**
+   * Set the sampling request handler (for relay to parent)
+   */
+  setSamplingHandler(handler: SamplingRequestHandler): void {
+    this.samplingHandler = handler;
+    log.debug(`[${this.server.id}] Sampling handler configured`);
   }
 
   /**
@@ -272,9 +287,25 @@ export class MCPClient implements MCPClientBase {
   }
 
   /**
+   * Send a JSON-RPC response to the child server (for sampling relay)
+   */
+  private async sendResponseToChild(response: JsonRpcResponse): Promise<void> {
+    if (!this.writer) {
+      log.error(`[${this.server.id}] Cannot send response - writer not initialized`);
+      return;
+    }
+
+    const encoder = new TextEncoder();
+    const message = JSON.stringify(response) + "\n";
+    log.debug(`[${this.server.id}:stdin] → ${JSON.stringify(response)}`);
+    await this.writer.write(encoder.encode(message));
+  }
+
+  /**
    * Start the reader loop for multiplexed JSON-RPC responses
    *
    * Runs continuously once started, dispatching responses to pending requests by ID.
+   * Also handles sampling requests from child server (Story 11.x).
    * Pattern from WorkerBridge (src/sandbox/worker-bridge.ts:337-342)
    */
   private startReaderLoop(): void {
@@ -304,14 +335,46 @@ export class MCPClient implements MCPClientBase {
             if (!line.trim()) continue;
 
             try {
-              const response = JSON.parse(line) as JSONRPCResponse;
+              const parsed = JSON.parse(line);
               log.debug(
                 `[${this.server.id}:stdout] ← ${line.substring(0, 500)}${
                   line.length > 500 ? "..." : ""
                 }`,
               );
 
-              // Dispatch to pending request by ID
+              // Check if it's a request (has method) vs response (has result/error)
+              if (parsed.method) {
+                // This is a request from the child server (e.g., sampling/createMessage)
+                const request = parsed as JsonRpcRequest;
+
+                if (this.samplingHandler) {
+                  const handled = this.samplingHandler(
+                    this.server.id,
+                    request,
+                    (response) => this.sendResponseToChild(response),
+                  );
+
+                  if (handled) {
+                    log.debug(`[${this.server.id}] Sampling request forwarded to relay`);
+                    continue;
+                  }
+                }
+
+                // Not handled - send error response
+                log.warn(`[${this.server.id}] Unhandled request from child: ${request.method}`);
+                await this.sendResponseToChild({
+                  jsonrpc: "2.0",
+                  id: request.id,
+                  error: {
+                    code: -32601,
+                    message: `Method not supported: ${request.method}`,
+                  },
+                });
+                continue;
+              }
+
+              // It's a response - dispatch to pending request
+              const response = parsed as JSONRPCResponse;
               const pending = this.pendingRequests.get(response.id);
               if (pending) {
                 clearTimeout(pending.timeoutId);

@@ -146,6 +146,7 @@ export async function handleListCapabilities(
         return {
           id: cap.id,
           name: cap.name,
+          fqdn: cap.fqdn,
           description: cap.description,
           code_snippet: cap.codeSnippet,
           tools_used: cap.toolsUsed,

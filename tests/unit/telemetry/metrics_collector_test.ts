@@ -228,11 +228,11 @@ Deno.test("MetricsCollector", async (t) => {
 
     const prometheus = collector.toPrometheusFormat();
 
-    // Check format
-    assertEquals(prometheus.includes("# HELP cai_tool_calls_total"), true);
-    assertEquals(prometheus.includes("# TYPE cai_tool_calls_total counter"), true);
-    assertEquals(prometheus.includes("cai_tool_calls_total 1"), true);
-    assertEquals(prometheus.includes("cai_tool_call_duration_ms_bucket"), true);
+    // Check format (prefix renamed from cai_ to pml_)
+    assertEquals(prometheus.includes("# HELP pml_tool_calls_total"), true);
+    assertEquals(prometheus.includes("# TYPE pml_tool_calls_total counter"), true);
+    assertEquals(prometheus.includes("pml_tool_calls_total 1"), true);
+    assertEquals(prometheus.includes("pml_tool_call_duration_ms_bucket"), true);
 
     collector.close();
   });

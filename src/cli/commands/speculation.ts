@@ -34,14 +34,14 @@ function getManager(): SpeculationManager {
  * Create speculation command group
  *
  * Usage:
- *   cai speculation config                    # Show current config
- *   cai speculation config --threshold 0.75   # Update threshold
- *   cai speculation config --enable           # Enable speculation
- *   cai speculation config --disable          # Disable speculation
- *   cai speculation config --timeout 15000    # Set timeout
- *   cai speculation stats                     # Show metrics
- *   cai speculation stats --json              # JSON output
- *   cai speculation stats --reset             # Reset metrics
+ *   pml speculation config                    # Show current config
+ *   pml speculation config --threshold 0.75   # Update threshold
+ *   pml speculation config --enable           # Enable speculation
+ *   pml speculation config --disable          # Disable speculation
+ *   pml speculation config --timeout 15000    # Set timeout
+ *   pml speculation stats                     # Show metrics
+ *   pml speculation stats --json              # JSON output
+ *   pml speculation stats --reset             # Reset metrics
  */
 export function createSpeculationCommand() {
   return new Command()

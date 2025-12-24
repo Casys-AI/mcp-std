@@ -18,7 +18,7 @@ import type { LoggerConfig } from "./types.ts";
  */
 const DEFAULT_LOG_FILE = `${
   Deno.env.get("HOME") || Deno.env.get("USERPROFILE") || "."
-}/.cai/logs/cai.log`;
+}/.pml/logs/pml.log`;
 
 /**
  * Maximum log file size (10MB) before rotation

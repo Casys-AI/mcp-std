@@ -35,6 +35,8 @@ import { addBreadcrumb, captureError, startTransaction } from "../telemetry/sent
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import type { AdaptiveThresholdManager } from "./adaptive-threshold.ts";
 import { CapabilityDataService } from "../capabilities/mod.ts";
+import { CapabilityRegistry } from "../capabilities/capability-registry.ts";
+import { TraceFeatureExtractor } from "../graphrag/algorithms/trace-feature-extractor.ts";
 import { CheckpointManager } from "../dag/checkpoint-manager.ts";
 import { EventsStreamManager } from "../server/events-stream.ts";
 
@@ -85,6 +87,9 @@ import {
 import { buildDRDSPFromCapabilities, DRDSP } from "../graphrag/algorithms/dr-dsp.ts";
 import type { EmbeddingModelInterface } from "../vector/embeddings.ts";
 
+// Sampling Relay for agent tools
+import { samplingRelay } from "./sampling/mod.ts";
+
 // Re-export for backward compatibility
 export type { GatewayServerConfig };
 
@@ -110,6 +115,8 @@ export class PMLGatewayServer {
   private drdsp: DRDSP | null = null;
   private embeddingModel: EmbeddingModelInterface | null = null;
   private shgatSaveInterval: number | null = null; // Story 10.7b: periodic save timer
+  private capabilityRegistry: CapabilityRegistry | null = null; // Story 13.2
+  private traceFeatureExtractor: TraceFeatureExtractor | null = null; // Story 11.10
 
   constructor(
     // @ts-ignore: db kept for future use (direct queries)
@@ -171,7 +178,44 @@ export class PMLGatewayServer {
     this.capabilityDataService = new CapabilityDataService(this.db, this.graphEngine);
     this.capabilityDataService.setDAGSuggester(this.dagSuggester);
 
+    // Initialize CapabilityRegistry for naming support (Story 13.2)
+    this.capabilityRegistry = new CapabilityRegistry(this.db);
+
     this.setupHandlers();
+    this.setupSamplingRelay();
+  }
+
+  /**
+   * Setup sampling relay for agent tools (Story 11.x)
+   *
+   * Configures the relay to forward sampling/createMessage requests from
+   * child MCP servers to Claude Code via the SDK's createMessage method.
+   */
+  private setupSamplingRelay(): void {
+    // Configure the relay to use SDK's createMessage
+    // The server.createMessage method forwards to the parent client (Claude Code)
+    // @ts-ignore - createMessage exists on Server when client supports sampling
+    if (typeof this.server.createMessage === "function") {
+      samplingRelay.setCreateMessageFn(
+        // @ts-ignore - createMessage params type matches our interface
+        (request) => this.server.createMessage(request),
+      );
+      log.info("[Gateway] Sampling relay configured with SDK createMessage");
+    } else {
+      log.warn("[Gateway] SDK server.createMessage not available - sampling relay disabled");
+    }
+
+    // Configure MCPClients with sampling handler
+    for (const [serverId, client] of this.mcpClients.entries()) {
+      // MCPClient has setSamplingHandler if properly typed
+      if ("setSamplingHandler" in client && typeof client.setSamplingHandler === "function") {
+        client.setSamplingHandler(
+          (childServerId, request, respondToChild) =>
+            samplingRelay.handleChildRequest(childServerId, request, respondToChild),
+        );
+        log.debug(`[Gateway] Sampling handler configured for ${serverId}`);
+      }
+    }
   }
 
   /**
@@ -408,8 +452,9 @@ export class PMLGatewayServer {
   }
 
   /**
-   * Get execute handler dependencies (Story 10.7)
+   * Get execute handler dependencies (Story 10.7 + Story 13.2)
    * Uses SHGAT + DR-DSP for capability matching (not CapabilityMatcher)
+   * Includes CapabilityRegistry for naming support
    */
   private getExecuteDeps(): ExecuteDependencies {
     return {
@@ -427,6 +472,8 @@ export class PMLGatewayServer {
       embeddingModel: this.embeddingModel ?? undefined,
       checkpointManager: this.checkpointManager ?? undefined,
       workflowDeps: this.getWorkflowDeps(),
+      capabilityRegistry: this.capabilityRegistry ?? undefined, // Story 13.2
+      traceFeatureExtractor: this.traceFeatureExtractor ?? undefined, // Story 11.10
     };
   }
 
@@ -502,7 +549,14 @@ export class PMLGatewayServer {
         success_rate: number;
       }
       const rows = await this.db.query(
-        `SELECT id, embedding, tools_used, success_rate FROM capability LIMIT 1000`,
+        `SELECT
+          pattern_id as id,
+          intent_embedding as embedding,
+          dag_structure->'tools_used' as tools_used,
+          success_rate
+        FROM workflow_pattern
+        WHERE code_snippet IS NOT NULL
+        LIMIT 1000`,
       ) as unknown as CapRow[];
 
       if (rows.length === 0) {
@@ -540,6 +594,10 @@ export class PMLGatewayServer {
 
         // Story 10.7: Train SHGAT on execution traces if available (≥20 traces)
         await this.trainSHGATOnTraces(capabilitiesWithEmbeddings);
+
+        // Story 11.10: Initialize TraceFeatureExtractor for SHGAT v2 scoring
+        this.traceFeatureExtractor = new TraceFeatureExtractor(this.db);
+        log.info("[Gateway] TraceFeatureExtractor initialized for SHGAT v2");
       }
 
       // Initialize DR-DSP
@@ -702,6 +760,7 @@ export class PMLGatewayServer {
           adamicAdar,
           cooccurrence,
           recency,
+          heatDiffusion: 0, // TODO: compute from graph diffusion
         });
       }
 

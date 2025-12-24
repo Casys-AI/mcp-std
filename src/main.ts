@@ -82,7 +82,7 @@ export async function main(): Promise<void> {
   await handleTelemetryFlags();
 
   await new Command()
-    .name("cai")
+    .name("pml")
     .version("0.1.0")
     .description("MCP Server Context Optimization Engine")
     .globalOption("--telemetry", "Enable telemetry (opt-in)")

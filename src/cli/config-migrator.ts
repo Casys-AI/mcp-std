@@ -262,7 +262,7 @@ export class ConfigMigrator {
     const newConfig = {
       mcpServers: {
         pml: {
-          command: "cai",
+          command: "pml",
           args: ["serve"],
         },
       },

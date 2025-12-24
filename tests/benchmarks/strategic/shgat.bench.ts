@@ -12,11 +12,15 @@
  */
 
 import {
-  SHGAT,
   createSHGATFromCapabilities,
   trainSHGATOnEpisodes,
   type TrainingExample,
 } from "../../../src/graphrag/algorithms/shgat.ts";
+import {
+  DEFAULT_TRACE_STATS,
+  getAdaptiveConfig,
+  type TraceFeatures,
+} from "../../../src/graphrag/algorithms/shgat-types.ts";
 import { SpectralClusteringManager } from "../../../src/graphrag/spectral-clustering.ts";
 import {
   loadScenario,
@@ -68,9 +72,6 @@ for (let i = 0; i < 100; i++) {
   });
 }
 
-// Create SHGAT instance
-const shgat = createSHGATFromCapabilities(mediumCapabilities);
-
 // Pre-trained SHGAT (for inference benchmarks)
 const pretrainedShgat = createSHGATFromCapabilities(mediumCapabilities);
 // Quick pre-training
@@ -98,40 +99,59 @@ spectralManager.computeClusters(5);
 const testIntent = generateMockEmbedding(9999);
 const testContext = [generateMockEmbedding(9998), generateMockEmbedding(9997)];
 
-// Pre-create SHGAT instances with different head counts for fair comparison
-const singleHeadShgat = createSHGATFromCapabilities(
+// Pre-create SHGAT instances with different head counts for Phase 5 v2 benchmarks
+// Head counts scaled to match trace volume: {4, 8, 12, 16} per tech-spec
+const heads4Shgat = createSHGATFromCapabilities(
   [mediumCapabilities[0]],
   toolEmbeddings,
-  { numHeads: 1 },
+  { numHeads: 4, hiddenDim: 64 }, // Conservative (<1K traces)
 );
-const multiHeadShgat = createSHGATFromCapabilities(
+const heads8Shgat = createSHGATFromCapabilities(
   [mediumCapabilities[0]],
   toolEmbeddings,
-  { numHeads: 8 },
+  { numHeads: 8, hiddenDim: 128 }, // Default (1K-10K traces)
+);
+const heads12Shgat = createSHGATFromCapabilities(
+  [mediumCapabilities[0]],
+  toolEmbeddings,
+  { numHeads: 12, hiddenDim: 192 }, // Scale up (10K-100K traces)
+);
+const heads16Shgat = createSHGATFromCapabilities(
+  [mediumCapabilities[0]],
+  toolEmbeddings,
+  { numHeads: 16, hiddenDim: 256 }, // Full capacity (100K+ traces)
 );
 
 Deno.bench({
-  name: "SHGAT: single score (1 head)",
+  name: "SHGAT: single score (4 heads, hiddenDim=64)",
   group: "shgat-inference",
   baseline: true,
   fn: () => {
-    singleHeadShgat.computeAttention(testIntent, testContext, mediumCapabilities[0].id);
+    heads4Shgat.computeAttention(testIntent, testContext, mediumCapabilities[0].id);
   },
 });
 
 Deno.bench({
-  name: "SHGAT: single score (4 heads)",
+  name: "SHGAT: single score (8 heads, hiddenDim=128)",
   group: "shgat-inference",
   fn: () => {
-    pretrainedShgat.computeAttention(testIntent, testContext, mediumCapabilities[0].id);
+    heads8Shgat.computeAttention(testIntent, testContext, mediumCapabilities[0].id);
   },
 });
 
 Deno.bench({
-  name: "SHGAT: single score (8 heads)",
+  name: "SHGAT: single score (12 heads, hiddenDim=192)",
   group: "shgat-inference",
   fn: () => {
-    multiHeadShgat.computeAttention(testIntent, testContext, mediumCapabilities[0].id);
+    heads12Shgat.computeAttention(testIntent, testContext, mediumCapabilities[0].id);
+  },
+});
+
+Deno.bench({
+  name: "SHGAT: single score (16 heads, hiddenDim=256)",
+  group: "shgat-inference",
+  fn: () => {
+    heads16Shgat.computeAttention(testIntent, testContext, mediumCapabilities[0].id);
   },
 });
 
@@ -188,11 +208,8 @@ Deno.bench({
   group: "shgat-training",
   baseline: true,
   fn: () => {
-    const freshShgat = createSHGATFromCapabilities(mediumCapabilities);
-    freshShgat.trainBatch(
-      mockEpisodicEvents.slice(0, 16),
-      (id) => toolEmbeddings.get(id) || null,
-    );
+    const freshShgat = createSHGATFromCapabilities(mediumCapabilities, toolEmbeddings);
+    freshShgat.trainBatch(mockEpisodicEvents.slice(0, 16));
   },
 });
 
@@ -200,11 +217,8 @@ Deno.bench({
   name: "SHGAT: train batch (32 examples)",
   group: "shgat-training",
   fn: () => {
-    const freshShgat = createSHGATFromCapabilities(mediumCapabilities);
-    freshShgat.trainBatch(
-      mockEpisodicEvents.slice(0, 32),
-      (id) => toolEmbeddings.get(id) || null,
-    );
+    const freshShgat = createSHGATFromCapabilities(mediumCapabilities, toolEmbeddings);
+    freshShgat.trainBatch(mockEpisodicEvents.slice(0, 32));
   },
 });
 
@@ -212,11 +226,11 @@ Deno.bench({
   name: "SHGAT: train epoch (100 examples, batch=16)",
   group: "shgat-training",
   fn: async () => {
-    const freshShgat = createSHGATFromCapabilities(mediumCapabilities);
+    const freshShgat = createSHGATFromCapabilities(mediumCapabilities, toolEmbeddings);
     await trainSHGATOnEpisodes(
       freshShgat,
       mockEpisodicEvents,
-      (id) => toolEmbeddings.get(id) || null,
+      (_id: string) => null, // Deprecated param, kept for API compat
       { epochs: 1, batchSize: 16 },
     );
   },
@@ -328,16 +342,254 @@ Deno.bench({
 });
 
 // ============================================================================
+// Benchmarks: SHGAT v1 vs v2 Scoring (Phase 5)
+// ============================================================================
+
+// Build TraceFeatures for v2 scoring (proper type with all required fields)
+function buildMockTraceFeatures(embedding: number[]): TraceFeatures {
+  return {
+    intentEmbedding: testIntent,
+    candidateEmbedding: embedding,
+    contextEmbeddings: testContext,
+    contextAggregated: testContext.length > 0
+      ? testContext[0].map((_, i) =>
+          testContext.reduce((sum, ctx) => sum + ctx[i], 0) / testContext.length
+        )
+      : new Array(1024).fill(0),
+    traceStats: {
+      ...DEFAULT_TRACE_STATS,
+      historicalSuccessRate: 0.8,
+      contextualSuccessRate: 0.75,
+      cooccurrenceWithContext: 0.6,
+      recencyScore: 0.9,
+      usageFrequency: 0.5,
+    },
+  };
+}
+
+const mockTraceFeaturesMap = new Map<string, TraceFeatures>();
+mediumCapabilities.forEach((cap) => {
+  mockTraceFeaturesMap.set(cap.id, buildMockTraceFeatures(cap.embedding));
+});
+
+const mockToolTraceFeaturesMap = new Map<string, TraceFeatures>();
+mediumScenario.nodes.tools.forEach((t) => {
+  const embedding = toolEmbeddings.get(t.id) || generateMockEmbedding(999);
+  mockToolTraceFeaturesMap.set(t.id, buildMockTraceFeatures(embedding));
+});
+
+Deno.bench({
+  name: "SHGAT v1: scoreAllCapabilities (hypergraph features)",
+  group: "shgat-v1-vs-v2",
+  baseline: true,
+  fn: () => {
+    pretrainedShgat.scoreAllCapabilities(testIntent);
+  },
+});
+
+Deno.bench({
+  name: "SHGAT v2: scoreAllCapabilitiesV2 (trace features)",
+  group: "shgat-v1-vs-v2",
+  fn: () => {
+    pretrainedShgat.scoreAllCapabilitiesV2(testIntent, mockTraceFeaturesMap);
+  },
+});
+
+Deno.bench({
+  name: "SHGAT v1: scoreAllTools (graph features)",
+  group: "shgat-v1-vs-v2",
+  fn: () => {
+    pretrainedShgat.scoreAllTools(testIntent);
+  },
+});
+
+Deno.bench({
+  name: "SHGAT v2: scoreAllToolsV2 (trace features)",
+  group: "shgat-v1-vs-v2",
+  fn: () => {
+    pretrainedShgat.scoreAllToolsV2(testIntent, mockToolTraceFeaturesMap);
+  },
+});
+
+// ============================================================================
+// Benchmarks: MRR/Hit@1 Accuracy (Phase 5)
+// ============================================================================
+
+// Ranking accuracy helpers (adapted for AttentionResult which has capabilityId)
+function computeMRRForAttention(
+  predicted: Array<{ capabilityId: string; score: number }>,
+  groundTruth: string,
+): number {
+  const sorted = [...predicted].sort((a, b) => b.score - a.score);
+  const rank = sorted.findIndex((p) => p.capabilityId === groundTruth) + 1;
+  return rank > 0 ? 1 / rank : 0;
+}
+
+function computeHitAtKForAttention(
+  predicted: Array<{ capabilityId: string; score: number }>,
+  groundTruth: string,
+  k: number,
+): number {
+  const sorted = [...predicted].sort((a, b) => b.score - a.score);
+  const topK = sorted.slice(0, k);
+  return topK.some((p) => p.capabilityId === groundTruth) ? 1 : 0;
+}
+
+// Pre-generate test cases for accuracy benchmarks (deterministic)
+const accuracyTestCases = mockEpisodicEvents.slice(0, 20).map((e, idx) => ({
+  intent: e.intentEmbedding,
+  groundTruth: e.candidateId,
+  context: [generateMockEmbedding(2000 + idx), generateMockEmbedding(2001 + idx)],
+}));
+
+Deno.bench({
+  name: "SHGAT: MRR computation (20 queries)",
+  group: "shgat-accuracy",
+  baseline: true,
+  fn: () => {
+    let totalMRR = 0;
+    for (const tc of accuracyTestCases) {
+      const scores = pretrainedShgat.scoreAllCapabilities(tc.intent);
+      totalMRR += computeMRRForAttention(scores, tc.groundTruth);
+    }
+    // Just compute, don't assert (benchmark only)
+    void (totalMRR / accuracyTestCases.length);
+  },
+});
+
+Deno.bench({
+  name: "SHGAT: Hit@1 computation (20 queries)",
+  group: "shgat-accuracy",
+  fn: () => {
+    let hits = 0;
+    for (const tc of accuracyTestCases) {
+      const scores = pretrainedShgat.scoreAllCapabilities(tc.intent);
+      hits += computeHitAtKForAttention(scores, tc.groundTruth, 1);
+    }
+    void (hits / accuracyTestCases.length);
+  },
+});
+
+Deno.bench({
+  name: "SHGAT: Hit@3 computation (20 queries)",
+  group: "shgat-accuracy",
+  fn: () => {
+    let hits = 0;
+    for (const tc of accuracyTestCases) {
+      const scores = pretrainedShgat.scoreAllCapabilities(tc.intent);
+      hits += computeHitAtKForAttention(scores, tc.groundTruth, 3);
+    }
+    void (hits / accuracyTestCases.length);
+  },
+});
+
+// ============================================================================
+// Benchmarks: Adaptive Config Scaling (Phase 5)
+// ============================================================================
+
+Deno.bench({
+  name: "getAdaptiveConfig: <1K traces",
+  group: "shgat-adaptive",
+  baseline: true,
+  fn: () => {
+    getAdaptiveConfig(500);
+  },
+});
+
+Deno.bench({
+  name: "getAdaptiveConfig: 1K-10K traces",
+  group: "shgat-adaptive",
+  fn: () => {
+    getAdaptiveConfig(5_000);
+  },
+});
+
+Deno.bench({
+  name: "getAdaptiveConfig: 10K-100K traces",
+  group: "shgat-adaptive",
+  fn: () => {
+    getAdaptiveConfig(50_000);
+  },
+});
+
+Deno.bench({
+  name: "getAdaptiveConfig: 100K+ traces",
+  group: "shgat-adaptive",
+  fn: () => {
+    getAdaptiveConfig(200_000);
+  },
+});
+
+// ============================================================================
+// Benchmarks: Memory Usage by Config (Phase 5)
+// ============================================================================
+
+// Note: Deno benchmarks don't have built-in memory profiling, so we measure
+// creation time as proxy (more params = more allocation time)
+
+Deno.bench({
+  name: "SHGAT create: 4 heads, 64 dim (~50K params)",
+  group: "shgat-memory",
+  baseline: true,
+  fn: () => {
+    const config = getAdaptiveConfig(500);
+    createSHGATFromCapabilities([mediumCapabilities[0]], toolEmbeddings, config);
+  },
+});
+
+Deno.bench({
+  name: "SHGAT create: 8 heads, 128 dim (~200K params)",
+  group: "shgat-memory",
+  fn: () => {
+    const config = getAdaptiveConfig(5_000);
+    createSHGATFromCapabilities([mediumCapabilities[0]], toolEmbeddings, config);
+  },
+});
+
+Deno.bench({
+  name: "SHGAT create: 12 heads, 192 dim (~450K params)",
+  group: "shgat-memory",
+  fn: () => {
+    const config = getAdaptiveConfig(50_000);
+    createSHGATFromCapabilities([mediumCapabilities[0]], toolEmbeddings, config);
+  },
+});
+
+Deno.bench({
+  name: "SHGAT create: 16 heads, 256 dim (~800K params)",
+  group: "shgat-memory",
+  fn: () => {
+    const config = getAdaptiveConfig(200_000);
+    createSHGATFromCapabilities([mediumCapabilities[0]], toolEmbeddings, config);
+  },
+});
+
+// ============================================================================
 // Cleanup
 // ============================================================================
 
 globalThis.addEventListener("unload", () => {
   const stats = pretrainedShgat.getStats();
 
-  console.log("\nSHGAT Benchmark Summary:");
-  console.log(`- Num heads: ${stats.numHeads}`);
-  console.log(`- Hidden dim: ${stats.hiddenDim}`);
-  console.log(`- Param count: ${stats.paramCount.toLocaleString()}`);
-  console.log(`- Registered capabilities: ${stats.registeredCapabilities}`);
-  console.log(`- Training examples: ${mockEpisodicEvents.length}`);
+  console.log("\n=== SHGAT Benchmark Summary ===");
+  console.log(`Num heads: ${stats.numHeads}`);
+  console.log(`Hidden dim: ${stats.hiddenDim}`);
+  console.log(`Param count: ${stats.paramCount.toLocaleString()}`);
+  console.log(`Registered capabilities: ${stats.registeredCapabilities}`);
+  console.log(`Training examples: ${mockEpisodicEvents.length}`);
+
+  // Compute final accuracy metrics
+  let totalMRR = 0;
+  let hit1 = 0;
+  let hit3 = 0;
+  for (const tc of accuracyTestCases) {
+    const scores = pretrainedShgat.scoreAllCapabilities(tc.intent);
+    totalMRR += computeMRRForAttention(scores, tc.groundTruth);
+    hit1 += computeHitAtKForAttention(scores, tc.groundTruth, 1);
+    hit3 += computeHitAtKForAttention(scores, tc.groundTruth, 3);
+  }
+  console.log(`\n=== Accuracy Metrics (${accuracyTestCases.length} queries) ===`);
+  console.log(`MRR: ${(totalMRR / accuracyTestCases.length).toFixed(3)}`);
+  console.log(`Hit@1: ${((hit1 / accuracyTestCases.length) * 100).toFixed(1)}%`);
+  console.log(`Hit@3: ${((hit3 / accuracyTestCases.length) * 100).toFixed(1)}%`);
 });

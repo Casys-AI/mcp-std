@@ -23,10 +23,10 @@ const DEFAULT_WORKFLOW_PATH = getWorkflowTemplatesPath();
  * Create workflows command group
  *
  * Usage:
- *   cai workflows sync              # Sync workflow templates to graph
- *   cai workflows sync --force      # Force sync even if unchanged
- *   cai workflows validate          # Validate YAML without syncing
- *   cai workflows stats             # Show edge statistics
+ *   pml workflows sync              # Sync workflow templates to graph
+ *   pml workflows sync --force      # Force sync even if unchanged
+ *   pml workflows validate          # Validate YAML without syncing
+ *   pml workflows stats             # Show edge statistics
  */
 export function createWorkflowsCommand() {
   return new Command()
@@ -198,7 +198,7 @@ function createStatsSubcommand() {
 
         // Check if graph is empty
         if (stats.total === 0) {
-          console.log("\n⚠️  Graph is empty. Run 'cai workflows sync' to bootstrap.");
+          console.log("\n⚠️  Graph is empty. Run 'pml workflows sync' to bootstrap.");
         }
 
         await db.close();

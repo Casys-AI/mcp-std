@@ -59,7 +59,7 @@ export class ErrorHandler {
 
       console.error(`❌ Unexpected error: ${error.message}`);
       console.log(
-        `💡 Please report this issue with logs from ~/.cai/logs/`,
+        `💡 Please report this issue with logs from ~/.pml/logs/`,
       );
     }
   }

@@ -19,7 +19,7 @@ import type { TelemetryConfig } from "./types.ts";
  */
 const DEFAULT_CONFIG_PATH = `${
   Deno.env.get("HOME") || Deno.env.get("USERPROFILE") || "."
-}/.cai/config.yaml`;
+}/.pml/config.yaml`;
 
 /**
  * Telemetry Service

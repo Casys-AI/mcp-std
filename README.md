@@ -162,7 +162,7 @@ This will:
 - Discover all your configured MCP servers
 - Extract tool schemas via MCP protocol
 - Generate embeddings for semantic search
-- Store everything in a local PGlite database (`.cai.db`)
+- Store everything in a local PGlite database (`.pml.db`)
 
 ### Step 2: Start the Gateway
 
@@ -185,7 +185,7 @@ Add to your MCP settings (`.mcp.json` or Claude Desktop config):
 ```json
 {
   "mcpServers": {
-    "cai": {
+    "pml": {
       "type": "http",
       "url": "http://localhost:3003/mcp"
     }
@@ -339,7 +339,7 @@ See [ADR-016](docs/adrs/ADR-016-repl-style-auto-return.md) for details.
 LOG_LEVEL=debug deno task dev
 
 # Check database
-ls -lh .cai.db
+ls -lh .pml.db
 
 # Run tests
 deno task test
@@ -407,7 +407,7 @@ Casys PML is designed for local-first, privacy-respecting operation:
 **Data Privacy:**
 
 - All embeddings generated locally (BGE-M3 via Transformers.js)
-- Data stored in local PGlite database (`.cai.db`)
+- Data stored in local PGlite database (`.pml.db`)
 - No cloud dependencies or external API calls for core functionality
 
 **Sandbox Isolation:**

@@ -101,7 +101,7 @@ export class CapabilityStore {
     capability: Capability;
     trace?: ExecutionTrace;
   }> {
-    const { code, intent, durationMs, success = true, name, description, toolsUsed, toolInvocations, traceData } = input;
+    const { code, intent, durationMs, success = true, description, toolsUsed, toolInvocations, traceData } = input;
 
     // Generate code hash for deduplication
     const codeHash = await hashCode(code);
@@ -199,6 +199,7 @@ export class CapabilityStore {
     });
 
     // UPSERT: Insert or update on conflict
+    // Note: 'name' column removed in migration 022 - naming via capability_records.display_name
     const result = await this.db.query(
       `INSERT INTO workflow_pattern (
         pattern_hash,
@@ -210,7 +211,6 @@ export class CapabilityStore {
         code_snippet,
         code_hash,
         cache_config,
-        name,
         description,
         success_rate,
         avg_duration_ms,
@@ -220,7 +220,7 @@ export class CapabilityStore {
         created_at,
         source
       ) VALUES (
-        $1, $2, $3, 1, $4, NOW(), $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), 'emergent'
+        $1, $2, $3, 1, $4, NOW(), $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), 'emergent'
       )
       ON CONFLICT (code_hash) WHERE code_hash IS NOT NULL DO UPDATE SET
         usage_count = workflow_pattern.usage_count + 1,
@@ -229,11 +229,11 @@ export class CapabilityStore {
         success_rate = (workflow_pattern.success_count + CASE WHEN $4 = 1 THEN 1 ELSE 0 END)::real
           / (workflow_pattern.usage_count + 1)::real,
         avg_duration_ms = (
-          (workflow_pattern.avg_duration_ms * workflow_pattern.usage_count) + $11
+          (workflow_pattern.avg_duration_ms * workflow_pattern.usage_count) + $10
         ) / (workflow_pattern.usage_count + 1),
-        parameters_schema = $12,
-        permission_set = $13,
-        permission_confidence = $14,
+        parameters_schema = $11,
+        permission_set = $12,
+        permission_confidence = $13,
         dag_structure = $2
       RETURNING *`,
       [
@@ -244,7 +244,6 @@ export class CapabilityStore {
         code,
         codeHash,
         JSON.stringify(DEFAULT_CACHE_CONFIG),
-        name || this.generateName(intent),
         description || intent,
         success ? 1.0 : 0.0,
         durationMs,
@@ -270,7 +269,8 @@ export class CapabilityStore {
 
     // Story 6.5: Emit capability.learned event (ADR-036)
     const isNew = capability.usageCount === 1;
-    const capabilityName = capability.name ?? this.generateName(intent);
+    // Note: workflow_pattern.name removed in migration 022, use generateName for events
+    const capabilityName = this.generateName(intent);
     const capabilityTools = toolsUsed ?? [];
 
     eventBus.emit({
@@ -368,15 +368,23 @@ export class CapabilityStore {
     let trace: ExecutionTrace | undefined;
     if (traceData && this.traceStore) {
       try {
+        // Prepend capability ID to executed_path for consistent flattening
+        // This ensures sequencePosition works for capabilities (not just tools)
+        // Path structure: [capability_id, tool1, tool2, ...] or [cap_id, sub_cap_id, tool1, ...]
+        const executedPathWithCapability = capability.id
+          ? [capability.id, ...(traceData.executedPath ?? [])]
+          : traceData.executedPath;
+
         trace = await this.traceStore.saveTrace({
           capabilityId: capability.id,
           intentText: intent,
+          intentEmbedding: traceData.intentEmbedding,
           initialContext: traceData.initialContext ?? {},
           executedAt: new Date(),
           success,
           durationMs,
           errorMessage: traceData.errorMessage,
-          executedPath: traceData.executedPath,
+          executedPath: executedPathWithCapability,
           decisions: traceData.decisions ?? [],
           taskResults: traceData.taskResults ?? [],
           priority: DEFAULT_TRACE_PRIORITY,
@@ -726,7 +734,8 @@ export class CapabilityStore {
       intentEmbedding,
       parametersSchema,
       cacheConfig,
-      name: (row.name as string) || undefined,
+      // Note: name column removed in migration 022 - naming via capability_records.display_name
+      name: undefined,
       description: (row.description as string) || undefined,
       usageCount: row.usage_count as number,
       successCount: row.success_count as number,

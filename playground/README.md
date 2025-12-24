@@ -221,7 +221,7 @@ Add to your MCP settings (`.mcp.json` or Claude Desktop config):
 ```json
 {
   "mcpServers": {
-    "cai": {
+    "pml": {
       "type": "http",
       "url": "http://localhost:3003/mcp"
     }

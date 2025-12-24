@@ -315,46 +315,46 @@ export class MetricsCollector {
     const lines: string[] = [];
 
     // Counters
-    lines.push("# HELP cai_tool_calls_total Total number of tool calls");
-    lines.push("# TYPE cai_tool_calls_total counter");
-    lines.push(`cai_tool_calls_total ${metrics.counters.tool_calls_total}`);
+    lines.push("# HELP pml_tool_calls_total Total number of tool calls");
+    lines.push("# TYPE pml_tool_calls_total counter");
+    lines.push(`pml_tool_calls_total ${metrics.counters.tool_calls_total}`);
 
-    lines.push("# HELP cai_tool_calls_success_total Successful tool calls");
-    lines.push("# TYPE cai_tool_calls_success_total counter");
-    lines.push(`cai_tool_calls_success_total ${metrics.counters.tool_calls_success}`);
+    lines.push("# HELP pml_tool_calls_success_total Successful tool calls");
+    lines.push("# TYPE pml_tool_calls_success_total counter");
+    lines.push(`pml_tool_calls_success_total ${metrics.counters.tool_calls_success}`);
 
-    lines.push("# HELP cai_tool_calls_failed_total Failed tool calls");
-    lines.push("# TYPE cai_tool_calls_failed_total counter");
-    lines.push(`cai_tool_calls_failed_total ${metrics.counters.tool_calls_failed}`);
+    lines.push("# HELP pml_tool_calls_failed_total Failed tool calls");
+    lines.push("# TYPE pml_tool_calls_failed_total counter");
+    lines.push(`pml_tool_calls_failed_total ${metrics.counters.tool_calls_failed}`);
 
-    lines.push("# HELP cai_capability_learned_total Capabilities learned");
-    lines.push("# TYPE cai_capability_learned_total counter");
-    lines.push(`cai_capability_learned_total ${metrics.counters.capability_learned_total}`);
+    lines.push("# HELP pml_capability_learned_total Capabilities learned");
+    lines.push("# TYPE pml_capability_learned_total counter");
+    lines.push(`pml_capability_learned_total ${metrics.counters.capability_learned_total}`);
 
-    lines.push("# HELP cai_dag_executions_total Total DAG executions");
-    lines.push("# TYPE cai_dag_executions_total counter");
-    lines.push(`cai_dag_executions_total ${metrics.counters.dag_executions_total}`);
+    lines.push("# HELP pml_dag_executions_total Total DAG executions");
+    lines.push("# TYPE pml_dag_executions_total counter");
+    lines.push(`pml_dag_executions_total ${metrics.counters.dag_executions_total}`);
 
     // Histograms
-    lines.push("# HELP cai_tool_call_duration_ms Tool call duration in milliseconds");
-    lines.push("# TYPE cai_tool_call_duration_ms histogram");
+    lines.push("# HELP pml_tool_call_duration_ms Tool call duration in milliseconds");
+    lines.push("# TYPE pml_tool_call_duration_ms histogram");
     for (const bucket of metrics.histograms.tool_call_duration_ms.buckets) {
-      lines.push(`cai_tool_call_duration_ms_bucket{le="${bucket.le}"} ${bucket.count}`);
+      lines.push(`pml_tool_call_duration_ms_bucket{le="${bucket.le}"} ${bucket.count}`);
     }
     lines.push(
-      `cai_tool_call_duration_ms_bucket{le="+Inf"} ${metrics.histograms.tool_call_duration_ms.count}`,
+      `pml_tool_call_duration_ms_bucket{le="+Inf"} ${metrics.histograms.tool_call_duration_ms.count}`,
     );
-    lines.push(`cai_tool_call_duration_ms_sum ${metrics.histograms.tool_call_duration_ms.sum}`);
-    lines.push(`cai_tool_call_duration_ms_count ${metrics.histograms.tool_call_duration_ms.count}`);
+    lines.push(`pml_tool_call_duration_ms_sum ${metrics.histograms.tool_call_duration_ms.sum}`);
+    lines.push(`pml_tool_call_duration_ms_count ${metrics.histograms.tool_call_duration_ms.count}`);
 
     // Gauges
-    lines.push("# HELP cai_active_dag_executions Currently active DAG executions");
-    lines.push("# TYPE cai_active_dag_executions gauge");
-    lines.push(`cai_active_dag_executions ${metrics.gauges.active_dag_executions}`);
+    lines.push("# HELP pml_active_dag_executions Currently active DAG executions");
+    lines.push("# TYPE pml_active_dag_executions gauge");
+    lines.push(`pml_active_dag_executions ${metrics.gauges.active_dag_executions}`);
 
-    lines.push("# HELP cai_connected_sse_clients Connected SSE clients");
-    lines.push("# TYPE cai_connected_sse_clients gauge");
-    lines.push(`cai_connected_sse_clients ${metrics.gauges.connected_sse_clients}`);
+    lines.push("# HELP pml_connected_sse_clients Connected SSE clients");
+    lines.push("# TYPE pml_connected_sse_clients gauge");
+    lines.push(`pml_connected_sse_clients ${metrics.gauges.connected_sse_clients}`);
 
     return lines.join("\n");
   }

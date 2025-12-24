@@ -34,7 +34,7 @@ export class MCPServerDiscovery {
   /**
    * Load and parse MCP configuration from YAML file
    *
-   * Supports both ~/.cai/config.yaml and Claude Code mcp.json
+   * Supports both ~/.pml/config.yaml and Claude Code mcp.json
    */
   async loadConfig(): Promise<MCPConfig> {
     try {
@@ -259,6 +259,6 @@ export class MCPServerDiscovery {
  */
 export function createDefaultDiscovery(): MCPServerDiscovery {
   const homeDir = Deno.env.get("HOME") || Deno.env.get("USERPROFILE") || ".";
-  const configPath = `${homeDir}/.cai/config.yaml`;
+  const configPath = `${homeDir}/.pml/config.yaml`;
   return new MCPServerDiscovery(configPath);
 }

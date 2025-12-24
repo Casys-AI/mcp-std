@@ -41,7 +41,7 @@ export class PGliteClient {
 
   /**
    * Initialize and connect to the database
-   * Creates ~/.cai/ directory if it doesn't exist
+   * Creates ~/.pml/ directory if it doesn't exist
    * Initializes PGlite with pgvector extension
    */
   async connect(): Promise<void> {

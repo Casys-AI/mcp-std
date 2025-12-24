@@ -10,7 +10,6 @@
  */
 
 import {
-  buildGraphFromScenario,
   generateStressGraph,
   loadScenario,
 } from "../fixtures/scenario-loader.ts";

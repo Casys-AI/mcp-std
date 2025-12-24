@@ -13,9 +13,9 @@
  * @module tests/benchmarks/shgat-vs-unified-search
  */
 
-import { createSHGATFromCapabilities } from "../../src/graphrag/algorithms/shgat.ts";
-import { DRDSP, type Hyperedge } from "../../src/graphrag/algorithms/dr-dsp.ts";
-import { EmbeddingModel } from "../../src/vector/embeddings.ts";
+import { createSHGATFromCapabilities } from "../../../src/graphrag/algorithms/shgat.ts";
+import { DRDSP, type Hyperedge } from "../../../src/graphrag/algorithms/dr-dsp.ts";
+import { EmbeddingModel } from "../../../src/vector/embeddings.ts";
 
 // Load fixture
 const fixtureData = JSON.parse(

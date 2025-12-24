@@ -171,6 +171,25 @@ function mapNodeData(node: GraphNode): Record<string, unknown> {
           duration_ms: inv.durationMs,
           sequence_index: inv.sequenceIndex,
         })),
+        // Story 11.4: Execution traces (when include_traces=true)
+        traces: capNode.data.traces?.map((trace) => ({
+          id: trace.id,
+          capability_id: trace.capabilityId,
+          executed_at: trace.executedAt instanceof Date ? trace.executedAt.toISOString() : trace.executedAt,
+          success: trace.success,
+          duration_ms: trace.durationMs,
+          error_message: trace.errorMessage,
+          priority: trace.priority,
+          task_results: trace.taskResults.map((r) => ({
+            task_id: r.taskId,
+            tool: r.tool,
+            args: r.args,
+            result: r.result,
+            success: r.success,
+            duration_ms: r.durationMs,
+            layer_index: r.layerIndex,
+          })),
+        })),
       },
     };
   } else if (node.data.type === "tool_invocation") {
@@ -304,6 +323,12 @@ export async function handleGraphHypergraph(
         }
         options.minUsage = minUsage;
       }
+    }
+
+    // Story 11.4: Include execution traces for each capability
+    const includeTracesParam = url.searchParams.get("include_traces");
+    if (includeTracesParam !== null) {
+      options.includeTraces = includeTracesParam === "true";
     }
 
     // Build hypergraph data

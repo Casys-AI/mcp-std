@@ -1,5 +1,8 @@
 /**
- * Type definitions for Capability Storage (Epic 7 - Story 7.2a)
+ * Type definitions for Capability Storage
+ *
+ * Epic 7 - Story 7.2a: Capability storage for learned code patterns
+ * Epic 13 - Story 13.1: FQDN registry with naming and aliases
  *
  * Capabilities are learned code patterns that can be matched and reused.
  * Eager learning: store on 1st successful execution, no wait for patterns.
@@ -136,7 +139,10 @@ export interface Capability {
   parametersSchema?: JSONSchema;
   /** Cache configuration */
   cacheConfig: CacheConfig;
-  /** Human-readable name (auto-generated or manual) */
+  /**
+   * @deprecated Use capability_records.display_name instead (Story 13.2)
+   * Kept for backward compatibility, always undefined after migration 022
+   */
   name?: string;
   /** Description of what this capability does */
   description?: string;
@@ -204,8 +210,6 @@ export interface SaveCapabilityInput {
   durationMs: number;
   /** Whether execution was successful */
   success?: boolean;
-  /** Optional name for the capability */
-  name?: string;
   /** Optional description */
   description?: string;
   /** Tool IDs used during execution (from traces) - deduplicated list */
@@ -231,6 +235,11 @@ export interface SaveCapabilityInput {
     userId?: string;
     /** Parent trace ID for hierarchical traces */
     parentTraceId?: string;
+    /**
+     * BGE-M3 1024D embedding of intent (Story 11.x - SHGAT v2)
+     * Used for semantic similarity search in intentSimilarSuccessRate
+     */
+    intentEmbedding?: number[];
   };
 }
 
@@ -404,6 +413,13 @@ export interface TraceTaskResult {
   success: boolean;
   /** Execution duration in milliseconds */
   durationMs: number;
+  /**
+   * DAG layer index for fan-in/fan-out edge reconstruction
+   * Story 11.4: Tasks with same layerIndex execute in parallel
+   * - Layer 0: root tasks (no dependencies)
+   * - Layer N: tasks that depend on layer N-1
+   */
+  layerIndex?: number;
 }
 
 /**
@@ -436,6 +452,13 @@ export interface ExecutionTrace {
   capabilityId?: string;
   /** Natural language intent that triggered this execution */
   intentText?: string;
+  /**
+   * BGE-M3 1024D embedding of intent_text (Story 11.x - SHGAT v2)
+   *
+   * Used for semantic similarity search in queryIntentSimilarSuccessRate().
+   * Populated at trace save time from the intent embedding used for scoring.
+   */
+  intentEmbedding?: number[];
   /** Input arguments/context for the execution (AC #9 - Epic 12 dependency) */
   initialContext?: Record<string, JsonValue>;
   /** When the execution occurred */
@@ -644,7 +667,8 @@ export interface CapabilityFilters {
  */
 export interface CapabilityResponseInternal {
   id: string; // pattern_id UUID
-  name: string | null; // Human-readable name
+  name: string | null; // Human-readable name (from capability_records.display_name or FQDN)
+  fqdn: string | null; // Full FQDN from capability_records (Story 13.2)
   description: string | null; // Intent description
   codeSnippet: string; // TypeScript code
   toolsUsed: string[]; // ["filesystem:read", "github:create_issue"]
@@ -681,6 +705,11 @@ export interface HypergraphOptions {
   minSuccessRate?: number;
   /** Filter capabilities by minimum usage */
   minUsage?: number;
+  /**
+   * Include execution traces for each capability (Story 11.4)
+   * When true, each capability node includes up to 10 recent traces
+   */
+  includeTraces?: boolean;
 }
 
 /**
@@ -700,6 +729,8 @@ export interface CapabilityNode {
     pagerank: number; // Hypergraph PageRank score (0-1)
     toolsUsed?: string[]; // Unique tools (deduplicated)
     toolInvocations?: CapabilityToolInvocation[]; // Full sequence with timestamps (for invocation mode)
+    /** Execution traces (Story 11.4) - included when includeTraces=true */
+    traces?: ExecutionTrace[];
   };
 }
 
@@ -874,4 +905,173 @@ export interface HypergraphResponseInternal {
     generatedAt: string;
     version: string;
   };
+}
+
+// ============================================
+// FQDN Types (Story 13.1)
+// ============================================
+
+/**
+ * Visibility levels for capability records (Epic 13)
+ *
+ * Controls access to capabilities:
+ * - private: Only visible to creator
+ * - project: Visible within same project
+ * - org: Visible within same organization
+ * - public: Visible to everyone
+ */
+export type CapabilityVisibility = "private" | "project" | "org" | "public";
+
+/**
+ * Routing mode for capability execution (Epic 13)
+ *
+ * - local: Execute in local sandbox (default)
+ * - cloud: Execute via cloud RPC
+ */
+export type CapabilityRouting = "local" | "cloud";
+
+/**
+ * Components of a Fully Qualified Domain Name for capabilities (Story 13.1)
+ *
+ * FQDN format: `<org>.<project>.<namespace>.<action>.<hash>`
+ *
+ * @example
+ * - `local.default.fs.read_json.a7f3` - Local dev capability
+ * - `acme.webapp.api.fetch_user.b8e2` - Organization capability
+ * - `marketplace.public.util.format_date.c9d1` - Public marketplace capability
+ */
+export interface FQDNComponents {
+  /** Organization identifier (e.g., "local", "acme", "marketplace") */
+  org: string;
+  /** Project identifier (e.g., "default", "webapp", "public") */
+  project: string;
+  /** Namespace grouping (e.g., "fs", "api", "util") - user-chosen, not enforced */
+  namespace: string;
+  /** Action name (e.g., "read_json", "fetch_user") */
+  action: string;
+  /** 4-char hex hash of code content for uniqueness */
+  hash: string;
+}
+
+/**
+ * Scope for capability name resolution (Story 13.1)
+ *
+ * Used to resolve short names within a specific org/project context.
+ *
+ * @example
+ * ```typescript
+ * const scope: Scope = { org: "acme", project: "webapp" };
+ * const resolved = await registry.resolveByName("my-reader", scope);
+ * // Returns: "acme.webapp.fs.read_json.a7f3"
+ * ```
+ */
+export interface Scope {
+  /** Organization identifier ("local" for self-hosted, org slug for cloud) */
+  org: string;
+  /** Project identifier */
+  project: string;
+}
+
+/**
+ * A named capability in the registry (Story 13.1)
+ *
+ * This is the registry record type stored in `capability_records` table.
+ * Different from `Capability` which is the workflow_pattern-based type.
+ *
+ * Architecture: Dual-table strategy (migration 023)
+ * - capability_records: FQDN registry, naming, visibility, provenance
+ * - workflow_pattern: Code, embeddings, execution stats (via workflowPatternId FK)
+ */
+export interface CapabilityRecord {
+  // Identity
+  /** FQDN primary key: <org>.<project>.<namespace>.<action>.<hash> */
+  id: string;
+  /** Free-format display name (user-chosen) */
+  displayName: string;
+  /** Organization */
+  org: string;
+  /** Project */
+  project: string;
+  /** Namespace grouping */
+  namespace: string;
+  /** Action name */
+  action: string;
+  /** 4-char hex hash of code_snippet */
+  hash: string;
+
+  // Link to workflow_pattern (migration 023)
+  /** FK to workflow_pattern.pattern_id for code, embedding, stats */
+  workflowPatternId?: string;
+
+  // Provenance
+  /** Who created this record */
+  createdBy: string;
+  /** When created */
+  createdAt: Date;
+  /** Who last updated (null if never updated) */
+  updatedBy?: string;
+  /** When last updated (null if never updated) */
+  updatedAt?: Date;
+
+  // Versioning
+  /** Version number (increments on updates) */
+  version: number;
+  /** Optional semantic version tag (e.g., "1.0.0") */
+  versionTag?: string;
+
+  // Trust
+  /** Whether this capability is verified */
+  verified: boolean;
+  /** Optional cryptographic signature */
+  signature?: string;
+
+  // Metrics
+  /** Total number of times used */
+  usageCount: number;
+  /** Number of successful executions */
+  successCount: number;
+  /** Cumulative execution time in milliseconds */
+  totalLatencyMs: number;
+
+  // Metadata
+  /** Tags for categorization */
+  tags: string[];
+  /** Visibility level */
+  visibility: CapabilityVisibility;
+  /** Execution routing: local or cloud */
+  routing: CapabilityRouting;
+}
+
+/**
+ * Alias record for capability name resolution (Story 13.1)
+ *
+ * Stored in `capability_aliases` table with composite PK (org, project, alias).
+ * Used to support renames while maintaining backward compatibility.
+ */
+export interface CapabilityAlias {
+  /** The old/alternative name */
+  alias: string;
+  /** Organization scope */
+  org: string;
+  /** Project scope */
+  project: string;
+  /** Points to current FQDN (no alias chains) */
+  targetFqdn: string;
+  /** When alias was created */
+  createdAt: Date;
+}
+
+/**
+ * Result of alias resolution (Story 13.1)
+ *
+ * Includes both the record and whether it was resolved via alias.
+ * When isAlias=true, a deprecation warning should be logged.
+ */
+export interface AliasResolutionResult {
+  /** The resolved capability record */
+  record: CapabilityRecord;
+  /** Whether this was resolved via alias (deprecated name) */
+  isAlias: boolean;
+  /** The original alias used (only set if isAlias=true) */
+  usedAlias?: string;
 }

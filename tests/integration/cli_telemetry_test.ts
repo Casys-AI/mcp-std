@@ -13,13 +13,13 @@ Deno.test({
   async fn() {
     // Override HOME to use test config location
     const originalHome = Deno.env.get("HOME");
-    const testHome = `/tmp/cai-test-home-${Date.now()}`;
+    const testHome = `/tmp/pml-test-home-${Date.now()}`;
     Deno.env.set("HOME", testHome);
 
     try {
       // Create test home directory
       await Deno.mkdir(testHome, { recursive: true });
-      await Deno.mkdir(`${testHome}/.cai`, { recursive: true });
+      await Deno.mkdir(`${testHome}/.pml`, { recursive: true });
 
       // Run CLI with --telemetry flag
       const process = new Deno.Command(Deno.execPath(), {
@@ -47,7 +47,7 @@ Deno.test({
       );
 
       // Verify config file was created with telemetry enabled
-      const configPath = `${testHome}/.cai/config.yaml`;
+      const configPath = `${testHome}/.pml/config.yaml`;
       const configText = await Deno.readTextFile(configPath);
       const config = parseYaml(configText) as Record<string, unknown>;
 
@@ -76,13 +76,13 @@ Deno.test({
   sanitizeResources: false,
   async fn() {
     const originalHome = Deno.env.get("HOME");
-    const testHome = `/tmp/cai-test-home-${Date.now()}`;
+    const testHome = `/tmp/pml-test-home-${Date.now()}`;
     Deno.env.set("HOME", testHome);
 
     try {
       // Create test home directory
       await Deno.mkdir(testHome, { recursive: true });
-      await Deno.mkdir(`${testHome}/.cai`, { recursive: true });
+      await Deno.mkdir(`${testHome}/.pml`, { recursive: true });
 
       // Run CLI with --no-telemetry flag
       const process = new Deno.Command(Deno.execPath(), {
@@ -110,7 +110,7 @@ Deno.test({
       );
 
       // Verify config file was created with telemetry disabled
-      const configPath = `${testHome}/.cai/config.yaml`;
+      const configPath = `${testHome}/.pml/config.yaml`;
       const configText = await Deno.readTextFile(configPath);
       const config = parseYaml(configText) as Record<string, unknown>;
 
@@ -139,13 +139,13 @@ Deno.test({
   sanitizeResources: false,
   async fn() {
     const originalHome = Deno.env.get("HOME");
-    const testHome = `/tmp/cai-test-home-${Date.now()}`;
+    const testHome = `/tmp/pml-test-home-${Date.now()}`;
     Deno.env.set("HOME", testHome);
 
     try {
       // Create test home directory
       await Deno.mkdir(testHome, { recursive: true });
-      await Deno.mkdir(`${testHome}/.cai`, { recursive: true });
+      await Deno.mkdir(`${testHome}/.pml`, { recursive: true });
 
       // Run CLI without telemetry flags
       const process = new Deno.Command(Deno.execPath(), {
@@ -172,7 +172,7 @@ Deno.test({
       );
 
       // Config file should not be created
-      const configPath = `${testHome}/.cai/config.yaml`;
+      const configPath = `${testHome}/.pml/config.yaml`;
       try {
         await Deno.stat(configPath);
         assertEquals(false, true, "Config file should not exist");

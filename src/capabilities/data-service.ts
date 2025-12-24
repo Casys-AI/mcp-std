@@ -17,10 +17,12 @@ import type {
   CapabilityFilters,
   CapabilityListResponseInternal,
   CapabilityResponseInternal,
+  CapabilityNode,
   HypergraphOptions,
   HypergraphResponseInternal,
 } from "./types.ts";
 import { HypergraphBuilder } from "./hypergraph-builder.ts";
+import { ExecutionTraceStore } from "./execution-trace-store.ts";
 import { getLogger } from "../telemetry/logger.ts";
 
 const logger = getLogger("default");
@@ -111,46 +113,49 @@ export class CapabilityDataService {
     });
 
     try {
-      // Build WHERE clause dynamically
-      const conditions: string[] = ["code_hash IS NOT NULL"];
+      // Build WHERE clause dynamically (use wp. prefix for workflow_pattern columns)
+      const conditions: string[] = ["wp.code_hash IS NOT NULL"];
       const params: unknown[] = [];
       let paramIndex = 1;
 
       if (communityId !== undefined) {
-        conditions.push(`community_id = $${paramIndex++}`);
+        conditions.push(`wp.community_id = $${paramIndex++}`);
         params.push(communityId);
       }
 
-      conditions.push(`success_rate >= $${paramIndex++}`);
+      conditions.push(`wp.success_rate >= $${paramIndex++}`);
       params.push(minSuccessRate);
 
-      conditions.push(`usage_count >= $${paramIndex++}`);
+      conditions.push(`wp.usage_count >= $${paramIndex++}`);
       params.push(minUsage);
 
       const whereClause = conditions.join(" AND ");
 
-      // Query capabilities
+      // Query capabilities with JOIN to capability_records for display_name
+      // Story 13.2/Migration 023: Naming unified via capability_records.display_name (FK join)
       const query = `
         SELECT
-          pattern_id as id,
-          name,
-          description,
-          code_snippet,
-          dag_structure->'tools_used' as tools_used,
-          dag_structure->'tool_invocations' as tool_invocations,
-          success_rate,
-          usage_count,
-          avg_duration_ms,
-          community_id,
-          created_at,
-          last_used,
-          source,
+          wp.pattern_id as id,
+          COALESCE(cr.display_name, cr.id) as name,
+          cr.id as fqdn,
+          wp.description,
+          wp.code_snippet,
+          wp.dag_structure->'tools_used' as tools_used,
+          wp.dag_structure->'tool_invocations' as tool_invocations,
+          wp.success_rate,
+          wp.usage_count,
+          wp.avg_duration_ms,
+          wp.community_id,
+          wp.created_at,
+          wp.last_used,
+          wp.source,
           CASE
-            WHEN description IS NOT NULL AND LENGTH(description) > 100
-            THEN SUBSTRING(description, 1, 97) || '...'
-            ELSE description
+            WHEN wp.description IS NOT NULL AND LENGTH(wp.description) > 100
+            THEN SUBSTRING(wp.description, 1, 97) || '...'
+            ELSE wp.description
           END as intent_preview
-        FROM workflow_pattern
+        FROM workflow_pattern wp
+        LEFT JOIN capability_records cr ON cr.workflow_pattern_id = wp.pattern_id
         WHERE ${whereClause}
         ORDER BY ${dbSortField} ${order.toUpperCase()}
         LIMIT $${paramIndex++} OFFSET $${paramIndex}
@@ -162,7 +167,7 @@ export class CapabilityDataService {
       // Count total matching records
       const countQuery = `
         SELECT COUNT(*) as total
-        FROM workflow_pattern
+        FROM workflow_pattern wp
         WHERE ${whereClause}
       `;
       const countResult = await this.db.query(
@@ -206,6 +211,7 @@ export class CapabilityDataService {
           return {
             id: String(row.id),
             name: row.name ? String(row.name) : null,
+            fqdn: row.fqdn ? String(row.fqdn) : null,
             description: row.description ? String(row.description) : null,
             codeSnippet: String(row.code_snippet || ""),
             toolsUsed,
@@ -269,9 +275,10 @@ export class CapabilityDataService {
       includeOrphans = true, // Default true for backward compat
       minSuccessRate = 0,
       minUsage = 0,
+      includeTraces = false, // Story 11.4
     } = options;
 
-    logger.debug("Building hypergraph data", { options });
+    logger.debug("Building hypergraph data", { options, includeTraces });
 
     try {
       // 1. Fetch capabilities
@@ -385,7 +392,31 @@ export class CapabilityDataService {
         });
       }
 
-      // 6. Build final response with backward compatibility
+      // 6. Story 11.4: Fetch traces for each capability if requested
+      if (includeTraces) {
+        const traceStore = new ExecutionTraceStore(this.db);
+        const capabilityNodes = hypergraphResult.nodes.filter(
+          (n): n is CapabilityNode => n.data.type === "capability"
+        );
+
+        // Fetch traces in parallel (limit 10 per capability for performance)
+        const tracePromises = capabilityNodes.map(async (capNode) => {
+          const capId = capNode.data.id.replace("cap-", "");
+          try {
+            const traces = await traceStore.getTraces(capId, 10);
+            capNode.data.traces = traces;
+          } catch (err) {
+            logger.warn(`Failed to fetch traces for capability ${capId}`, { error: err });
+          }
+        });
+
+        await Promise.all(tracePromises);
+        logger.debug("Fetched traces for capabilities", {
+          capabilitiesWithTraces: capabilityNodes.filter((n) => n.data.traces?.length).length,
+        });
+      }
+
+      // 7. Build final response with backward compatibility
       // Note: Tools with `parents[]` array also have `parent` set to first parent for legacy support
       const result: HypergraphResponseInternal = {
         nodes: hypergraphResult.nodes,

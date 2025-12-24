@@ -27,6 +27,11 @@ import { createPermissionInferenceMigration } from "./migrations/017_permission_
 import { createPermissionAuditLogMigration } from "./migrations/018_permission_audit_log.ts";
 import { createDbSchemaCleanupMigration } from "./migrations/019_db_schema_cleanup.ts";
 import { createExecutionTraceMigration } from "./migrations/020_execution_trace.ts";
+import { createCapabilityRecordsMigration } from "./migrations/021_capability_records.ts";
+import { createUnifyCapabilityNamingMigration } from "./migrations/022_unify_capability_naming.ts";
+import { createCapabilityRecordsFkMigration } from "./migrations/023_capability_records_fk.ts";
+import { createErrorTypeColumnMigration } from "./migrations/024_error_type_column.ts";
+import { createIntentEmbeddingColumnMigration } from "./migrations/025_intent_embedding_column.ts";
 
 /**
  * Migration definition
@@ -407,5 +412,10 @@ export function getAllMigrations(): Migration[] {
     createPermissionAuditLogMigration(), // Story 7.7c: HIL permission escalation audit log
     createDbSchemaCleanupMigration(), // Story 11.0: DB cleanup - drop workflow_dags, mcp_tool, mcp_server
     createExecutionTraceMigration(), // Story 11.2: Execution trace table (TD Error + PER)
+    createCapabilityRecordsMigration(), // Story 13.1: Capability records & aliases (Epic 13)
+    createUnifyCapabilityNamingMigration(), // Story 13.2: Unify naming (remove workflow_pattern.name)
+    createCapabilityRecordsFkMigration(), // Story 13.2 fix: Add FK, remove duplicated columns
+    createErrorTypeColumnMigration(), // SHGAT v2: errorTypeAffinity feature
+    createIntentEmbeddingColumnMigration(), // SHGAT v2: intentSimilarSuccessRate feature
   ];
 }

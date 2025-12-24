@@ -373,6 +373,7 @@ export class ControlledExecutor extends ParallelExecutor {
         layer,
         layerResults,
         results,
+        layerIdx,
       );
 
       for (const event of layerTaskResults.events) yield event;
@@ -484,6 +485,7 @@ export class ControlledExecutor extends ParallelExecutor {
             result: event.result,
           },
           executionTimeMs: event.executionTimeMs,
+          layerIndex: event.layerIndex, // Story 11.4: Pass layer for edge learning
         });
       } else if (event.type === "task_error") {
         const taskError: TaskError = {
@@ -496,6 +498,7 @@ export class ControlledExecutor extends ParallelExecutor {
           taskId: event.taskId,
           status: "error",
           error: event.error,
+          layerIndex: event.layerIndex, // Story 11.4
         });
       } else if (event.type === "task_warning") {
         // Safe-to-fail task - mark as failed_safe
@@ -503,6 +506,7 @@ export class ControlledExecutor extends ParallelExecutor {
           taskId: event.taskId,
           status: "failed_safe",
           error: event.error,
+          layerIndex: event.layerIndex, // Story 11.4
         });
       } else if (event.type === "decision_required") {
         // execute() is non-interactive - return error result instead of blocking
@@ -631,6 +635,7 @@ export class ControlledExecutor extends ParallelExecutor {
         layer,
         layerResults,
         results,
+        actualLayerIdx,
       );
 
       for (const event of layerTaskResults.events) yield event;
@@ -967,6 +972,7 @@ export class ControlledExecutor extends ParallelExecutor {
     layer: Task[],
     layerResults: PromiseSettledResult<{ output: unknown; executionTimeMs: number }>[],
     results: Map<string, TaskResult>,
+    layerIdx: number,
   ): Promise<{
     layerTaskResults: { tasks: TaskResult[]; events: ExecutionEvent[] };
     layerSuccess: number;
@@ -989,6 +995,7 @@ export class ControlledExecutor extends ParallelExecutor {
           status: "success",
           output: result.value.output,
           executionTimeMs: result.value.executionTimeMs,
+          layerIndex: layerIdx,
         };
         results.set(task.id, taskResult);
         tasks.push(taskResult);
@@ -1006,6 +1013,7 @@ export class ControlledExecutor extends ParallelExecutor {
           workflowId,
           taskId: task.id,
           executionTimeMs: result.value.executionTimeMs,
+          layerIndex: layerIdx, // Story 11.4: Include layer for edge learning
           result: result.value.output as JsonValue,
           resultPreview,
           resultSize,
@@ -1021,7 +1029,7 @@ export class ControlledExecutor extends ParallelExecutor {
 
         if (isSafe) {
           log.warn(`Safe-to-fail task ${task.id} failed (continuing): ${errorMsg}`);
-          const taskResult: TaskResult = { taskId: task.id, status: "failed_safe" as const, output: null, error: errorMsg };
+          const taskResult: TaskResult = { taskId: task.id, status: "failed_safe" as const, output: null, error: errorMsg, layerIndex: layerIdx };
           results.set(task.id, taskResult);
           tasks.push(taskResult);
 
@@ -1032,13 +1040,14 @@ export class ControlledExecutor extends ParallelExecutor {
             taskId: task.id,
             error: errorMsg,
             message: "Safe-to-fail task failed, workflow continues",
+            layerIndex: layerIdx, // Story 11.4
           };
           await this.eventStream.emit(warningEvent);
           events.push(warningEvent);
           captureTaskComplete(ctx, workflowId, task.id, "failed_safe", null, undefined, errorMsg);
         } else {
           layerFailed++;
-          const taskResult: TaskResult = { taskId: task.id, status: "error", error: errorMsg };
+          const taskResult: TaskResult = { taskId: task.id, status: "error", error: errorMsg, layerIndex: layerIdx };
           results.set(task.id, taskResult);
           tasks.push(taskResult);
 
@@ -1048,6 +1057,7 @@ export class ControlledExecutor extends ParallelExecutor {
             workflowId,
             taskId: task.id,
             error: errorMsg,
+            layerIndex: layerIdx, // Story 11.4
           };
           await this.eventStream.emit(errorEvent);
           events.push(errorEvent);

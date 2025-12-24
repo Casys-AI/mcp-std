@@ -18,6 +18,7 @@
  */
 
 import { MiniToolsClient } from "./mcp-tools.ts";
+import { setSamplingClient } from "./std/mod.ts";
 
 // ============================================================================
 // MCP Protocol Types
@@ -35,6 +36,85 @@ interface JsonRpcResponse {
   id: number | string;
   result?: unknown;
   error?: { code: number; message: string; data?: unknown };
+}
+
+// ============================================================================
+// Sampling Client for Agent Tools
+// ============================================================================
+
+// Pending sampling requests (waiting for response from client)
+const pendingSamplingRequests = new Map<
+  number,
+  { resolve: (result: unknown) => void; reject: (error: Error) => void }
+>();
+let samplingRequestId = 1;
+
+/**
+ * Send a sampling request to the MCP client (Claude Code)
+ * Per MCP spec, the client handles the agentic loop and tool execution
+ */
+async function sendSamplingRequest(params: {
+  messages: Array<{ role: "user" | "assistant"; content: string }>;
+  tools?: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
+  toolChoice?: "auto" | "required" | "none";
+  maxTokens?: number;
+  maxIterations?: number;
+  allowedToolPatterns?: string[];
+}): Promise<{
+  content: Array<{ type: string; text?: string; name?: string; input?: Record<string, unknown> }>;
+  stopReason: "end_turn" | "tool_use" | "max_tokens";
+}> {
+  const id = samplingRequestId++;
+
+  // Create promise that will be resolved when we get the response
+  const promise = new Promise<unknown>((resolve, reject) => {
+    pendingSamplingRequests.set(id, { resolve, reject });
+
+    // Timeout after 5 minutes
+    setTimeout(() => {
+      if (pendingSamplingRequests.has(id)) {
+        pendingSamplingRequests.delete(id);
+        reject(new Error("Sampling request timed out"));
+      }
+    }, 300000);
+  });
+
+  // Send the request to the client
+  const request: JsonRpcRequest = {
+    jsonrpc: "2.0",
+    id,
+    method: "sampling/createMessage",
+    params: {
+      messages: params.messages.map((m) => ({
+        role: m.role,
+        content: { type: "text", text: m.content },
+      })),
+      maxTokens: params.maxTokens || 4096,
+      // Pass hints for agentic loop control
+      ...(params.maxIterations && { _maxIterations: params.maxIterations }),
+      ...(params.allowedToolPatterns && { _allowedToolPatterns: params.allowedToolPatterns }),
+    },
+  };
+
+  const encoder = new TextEncoder();
+  await Deno.stdout.write(encoder.encode(JSON.stringify(request) + "\n"));
+
+  // Wait for response
+  const result = await promise;
+  return result as {
+    content: Array<{ type: string; text?: string; name?: string; input?: Record<string, unknown> }>;
+    stopReason: "end_turn" | "tool_use" | "max_tokens";
+  };
+}
+
+/**
+ * Initialize the sampling client for agent tools
+ */
+function initSamplingClient(): void {
+  setSamplingClient({
+    createMessage: sendSamplingRequest,
+  });
+  console.error("[mcp-std] Sampling client initialized for agent tools");
 }
 
 // ============================================================================
@@ -133,7 +213,11 @@ class MCPServer {
 const decoder = new TextDecoder();
 let stdinBuffer = "";
 
-async function readMessage(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<JsonRpcRequest | null> {
+/**
+ * Read a message from stdin
+ * Returns the message type: "request" for incoming requests, "response" for sampling responses
+ */
+async function readMessage(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<{ type: "request"; data: JsonRpcRequest } | { type: "response"; data: JsonRpcResponse } | null> {
   while (true) {
     // First check if we already have a complete message in the buffer
     const newlineIndex = stdinBuffer.indexOf("\n");
@@ -143,7 +227,15 @@ async function readMessage(reader: ReadableStreamDefaultReader<Uint8Array>): Pro
 
       if (line) {
         try {
-          return JSON.parse(line) as JsonRpcRequest;
+          const parsed = JSON.parse(line);
+
+          // Check if it's a response (has result or error, no method)
+          if (!parsed.method && (parsed.result !== undefined || parsed.error !== undefined)) {
+            return { type: "response", data: parsed as JsonRpcResponse };
+          }
+
+          // Otherwise it's a request
+          return { type: "request", data: parsed as JsonRpcRequest };
         } catch {
           console.error("Failed to parse JSON-RPC message:", line);
         }
@@ -156,6 +248,27 @@ async function readMessage(reader: ReadableStreamDefaultReader<Uint8Array>): Pro
     if (done) return null;
 
     stdinBuffer += decoder.decode(value, { stream: true });
+  }
+}
+
+/**
+ * Handle a sampling response from the client
+ */
+function handleSamplingResponse(response: JsonRpcResponse): void {
+  const id = response.id as number;
+  const pending = pendingSamplingRequests.get(id);
+
+  if (!pending) {
+    console.error(`[mcp-std] Received response for unknown sampling request: ${id}`);
+    return;
+  }
+
+  pendingSamplingRequests.delete(id);
+
+  if (response.error) {
+    pending.reject(new Error(response.error.message));
+  } else {
+    pending.resolve(response.result);
   }
 }
 
@@ -208,12 +321,24 @@ async function main() {
   const server = new MCPServer(categories);
   const reader = Deno.stdin.readable.getReader();
 
+  // Initialize sampling client for agent tools
+  initSamplingClient();
+
   // Log to stderr (stdout is for MCP protocol)
   console.error(`[mcp-std] Server started (concurrent, max=${MAX_CONCURRENT})${categories ? ` with categories: ${categories.join(", ")}` : " with all categories"}`);
 
   while (true) {
-    const request = await readMessage(reader);
-    if (!request) break;
+    const message = await readMessage(reader);
+    if (!message) break;
+
+    // Handle sampling responses (from client back to us)
+    if (message.type === "response") {
+      handleSamplingResponse(message.data);
+      continue;
+    }
+
+    // Handle incoming requests
+    const request = message.data;
 
     // Fire and forget - concurrent processing
     (async () => {

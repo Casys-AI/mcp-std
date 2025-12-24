@@ -20,6 +20,11 @@ export interface TaskResult {
   output?: unknown;
   error?: string;
   executionTimeMs?: number;
+  /**
+   * DAG layer index (Story 11.4)
+   * Tasks in the same layer execute in parallel.
+   */
+  layerIndex?: number;
 }
 
 /**
@@ -203,6 +208,8 @@ export type ExecutionEvent =
     workflowId: string;
     taskId: string;
     executionTimeMs: number;
+    /** DAG layer index (Story 11.4) */
+    layerIndex?: number;
     /** Full result (stored for retrieval via pml_get_task_result) */
     result?: JsonValue;
     /** Preview of result (first 500 chars of JSON stringified) */
@@ -216,12 +223,16 @@ export type ExecutionEvent =
     workflowId: string;
     taskId: string;
     error: string;
+    /** DAG layer index (Story 11.4) */
+    layerIndex?: number;
   }
   | {
     type: "task_warning";
     timestamp: number;
     workflowId: string;
     taskId: string;
+    /** DAG layer index (Story 11.4) */
+    layerIndex?: number;
     error: string;
     message: string;
   }

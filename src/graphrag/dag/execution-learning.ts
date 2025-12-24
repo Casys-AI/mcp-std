@@ -235,3 +235,89 @@ export async function createOrUpdateEdge(
     return "created";
   }
 }
+
+/**
+ * Task result with layer index for fan-in/fan-out edge learning
+ * Story 11.4: Added layerIndex support
+ */
+export interface TaskResultWithLayer {
+  taskId: string;
+  tool: string;
+  layerIndex: number;
+}
+
+/**
+ * Learn sequence edges from task results with layerIndex (Story 11.4)
+ *
+ * Creates fan-in/fan-out edges based on layer grouping:
+ * - Tasks in the same layer are parallel (no edges between them)
+ * - All tasks in layer N connect to all tasks in layer N+1
+ *
+ * Example:
+ *   Layer 0: [read_config]      → 1 node
+ *   Layer 1: [parse_a, parse_b] → 2 parallel nodes (fan-out from layer 0)
+ *   Layer 2: [merge_results]    → 1 node (fan-in from layer 1)
+ *
+ * @param graph - Graph instance
+ * @param tasks - Task results with layerIndex
+ * @param eventEmitter - Optional event emitter
+ * @returns Statistics about edges created/updated
+ */
+export async function learnSequenceEdgesFromTasks(
+  graph: ExecutionLearningGraph,
+  tasks: TaskResultWithLayer[],
+  eventEmitter?: EdgeEventEmitter
+): Promise<{ edgesCreated: number; edgesUpdated: number }> {
+  const result = { edgesCreated: 0, edgesUpdated: 0 };
+
+  if (tasks.length < 2) return result;
+
+  // Group tasks by layerIndex
+  const tasksByLayer = new Map<number, TaskResultWithLayer[]>();
+  for (const task of tasks) {
+    const layer = task.layerIndex ?? 0;
+    if (!tasksByLayer.has(layer)) {
+      tasksByLayer.set(layer, []);
+    }
+    tasksByLayer.get(layer)!.push(task);
+  }
+
+  // Sort layers
+  const sortedLayers = Array.from(tasksByLayer.keys()).sort((a, b) => a - b);
+
+  // Ensure all tool nodes exist before creating edges
+  for (const task of tasks) {
+    if (!graph.hasNode(task.tool)) {
+      graph.addNode(task.tool, {
+        type: "tool",
+        name: task.tool,
+      });
+    }
+  }
+
+  // Create fan-in/fan-out edges between consecutive layers
+  for (let i = 0; i < sortedLayers.length - 1; i++) {
+    const currentLayer = tasksByLayer.get(sortedLayers[i])!;
+    const nextLayer = tasksByLayer.get(sortedLayers[i + 1])!;
+
+    // Connect all tasks in current layer to all tasks in next layer
+    for (const fromTask of currentLayer) {
+      for (const toTask of nextLayer) {
+        if (fromTask.tool === toTask.tool) continue; // Skip self-loops
+
+        const edgeResult = await createOrUpdateEdge(
+          graph,
+          fromTask.tool,
+          toTask.tool,
+          "sequence",
+          eventEmitter
+        );
+
+        if (edgeResult === "created") result.edgesCreated++;
+        else if (edgeResult === "updated") result.edgesUpdated++;
+      }
+    }
+  }
+
+  return result;
+}

@@ -1,13 +1,13 @@
 /**
  * Integration Tests for CLI Status Command
  *
- * Tests AC6: cai status CLI command
+ * Tests AC6: pml status CLI command
  */
 
 import { assert, assertEquals } from "@std/assert";
 
 Deno.test({
-  name: "AC6: cai status command is registered and shows help",
+  name: "AC6: pml status command is registered and shows help",
   sanitizeResources: false,
   async fn() {
     // Run CLI with status --help
@@ -63,7 +63,7 @@ Deno.test({
 });
 
 Deno.test({
-  name: "AC6: cai status fails gracefully when no config found",
+  name: "AC6: pml status fails gracefully when no config found",
   sanitizeResources: false,
   async fn() {
     // Override HOME to use non-existent test location

@@ -47,6 +47,8 @@ import { buildDAG as buildDAGFromGraph } from "./dag/builder.ts";
 import {
   createOrUpdateEdge,
   updateFromCodeExecution as updateFromCodeExecutionImpl,
+  learnSequenceEdgesFromTasks,
+  type TaskResultWithLayer,
 } from "./dag/execution-learning.ts";
 import {
   adamicAdarBetween,
@@ -255,6 +257,22 @@ export class GraphRAGEngine {
   async updateFromCodeExecution(traces: TraceEvent[]): Promise<void> {
     await updateFromCodeExecutionImpl(this.graph, this.db, traces, this.eventEmitter);
     if (this.graph.order > 0) await this.precomputeMetrics();
+  }
+
+  /**
+   * Learn sequence edges from task results with layerIndex (Story 11.4)
+   *
+   * Creates fan-in/fan-out edges based on DAG layer execution:
+   * - All tasks in layer N connect to all tasks in layer N+1
+   *
+   * @param tasks - Task results with tool and layerIndex
+   */
+  async learnFromTaskResults(tasks: TaskResultWithLayer[]): Promise<void> {
+    const result = await learnSequenceEdgesFromTasks(this.graph, tasks, this.eventEmitter);
+    if (result.edgesCreated > 0 || result.edgesUpdated > 0) {
+      await persistEdgesToDatabase(this.db, this.graph);
+      if (this.graph.order > 0) await this.precomputeMetrics();
+    }
   }
 
   // === Graph Accessors ===

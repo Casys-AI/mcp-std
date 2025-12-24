@@ -296,3 +296,49 @@ export async function batchUpdatePriorities(
 
   return updated;
 }
+
+/**
+ * Update trace priorities directly from pre-computed TD errors
+ *
+ * More efficient than batchUpdatePriorities() as it doesn't recalculate
+ * TD errors via SHGAT forward pass.
+ *
+ * Used after trainBatch() which already computed TD errors during training.
+ *
+ * @param traceStore - ExecutionTraceStore instance
+ * @param traces - Traces that were trained on
+ * @param tdErrorsPerTrace - Map of trace ID → max |TD error| from training
+ * @returns Number of traces updated
+ */
+export async function batchUpdatePrioritiesFromTDErrors(
+  traceStore: ExecutionTraceStore,
+  traces: ExecutionTrace[],
+  tdErrorsPerTrace: Map<string, number>,
+): Promise<number> {
+  let updated = 0;
+
+  for (const trace of traces) {
+    const tdError = tdErrorsPerTrace.get(trace.id);
+    if (tdError === undefined) continue;
+
+    // Priority = |TD error| clamped to [MIN_PRIORITY, MAX_PRIORITY]
+    const priority = Math.max(MIN_PRIORITY, Math.min(MAX_PRIORITY, Math.abs(tdError)));
+
+    try {
+      await traceStore.updatePriority(trace.id, priority);
+      updated++;
+    } catch (error) {
+      logger.warn("[PER] Failed to update trace priority from TD error", {
+        traceId: trace.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  logger.debug("[PER] Batch priority update from TD errors completed", {
+    total: traces.length,
+    updated,
+  });
+
+  return updated;
+}

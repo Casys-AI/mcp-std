@@ -46,7 +46,7 @@ export async function startStdioServer(
   log.info("✓ Casys PML MCP gateway started (stdio mode)");
   log.info(`  Server: ${config.name} v${config.version}`);
   log.info(`  Connected MCP servers: ${mcpClients.size}`);
-  log.info("  Claude Code can now connect to cai");
+  log.info("  Claude Code can now connect to pml");
 }
 
 /**

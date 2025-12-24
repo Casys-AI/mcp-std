@@ -13,7 +13,7 @@ dist/
 build/
 _fresh/
 *.exe
-cai
+pml
 lib/std/bundle.js
 
 # Logs
@@ -51,10 +51,9 @@ temp/
 *.tmp
 
 # Database files
-*.db
+
 *.db-shm
 *.db-wal
-.cai/
 *.db.corrupted-*
 *.db.backup-*
 *.db.old
@@ -108,3 +107,8 @@ scripts/deploy.sh
 # docs/ux-design-*
 # docs/wireframes-*
 # docs/mockups-*
+# PGlite databases
+.pml-dev.db/
+.pml-dev.db.last/
+.pml-dev.db.backup*/
+.pml.db
