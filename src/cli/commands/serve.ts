@@ -8,7 +8,7 @@
 
 import { Command } from "@cliffy/command";
 import * as log from "@std/log";
-import { createDefaultClient } from "../../db/client.ts";
+import { createClient } from "../../db/mod.ts";
 import { getAllMigrations, MigrationRunner } from "../../db/migrations.ts";
 import { MCPServerDiscovery } from "../../mcp/discovery.ts";
 import { MCPClient } from "../../mcp/client.ts";
@@ -236,7 +236,7 @@ export function createServeCommand() {
 
         // 2. Initialize database
         log.info("Step 2/6: Initializing database...");
-        const db = createDefaultClient();
+        const db = createClient();
         await db.connect();
 
         // Run migrations

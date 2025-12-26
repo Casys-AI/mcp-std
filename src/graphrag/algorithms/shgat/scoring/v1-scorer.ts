@@ -23,8 +23,8 @@ import type {
   SHGATConfig,
   ToolGraphFeatures,
   ToolNode,
-} from "../../shgat-types.ts";
-import { DEFAULT_HYPERGRAPH_FEATURES } from "../../shgat-types.ts";
+} from "../types.ts";
+import { DEFAULT_HYPERGRAPH_FEATURES } from "../types.ts";
 
 /**
  * Forward pass result containing propagated embeddings

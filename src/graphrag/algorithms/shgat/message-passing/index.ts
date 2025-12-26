@@ -2,6 +2,7 @@
  * Message Passing Module Index
  *
  * Exports all message passing phases and orchestrator for SHGAT.
+ * Supports both legacy 2-level (V→E→V) and multi-level n-SuperHyperGraph.
  *
  * @module graphrag/algorithms/shgat/message-passing
  */
@@ -16,3 +17,10 @@ export {
   type ForwardCache,
   type OrchestratorConfig,
 } from "./multi-level-orchestrator.ts";
+
+// Re-export multi-level types from main types for convenience
+export type {
+  MultiLevelEmbeddings,
+  LevelParams,
+  MultiLevelForwardCache,
+} from "../types.ts";

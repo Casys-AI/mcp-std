@@ -15,6 +15,7 @@ import {
   DEFAULT_TRACE_PRIORITY,
   type BranchDecision,
   type ExecutionTrace,
+  type HierarchyNode,
   type JsonValue,
   type TraceTaskResult,
 } from "./types.ts";
@@ -520,6 +521,47 @@ export class ExecutionTraceStore {
     }
 
     return anonymizedCount;
+  }
+
+  /**
+   * Build hierarchy tree from flat traces using parentTraceId
+   *
+   * Reconstructs the hierarchical execution structure from traces
+   * that have parentTraceId linking them together.
+   *
+   * @param traces Flat list of execution traces
+   * @returns Array of root hierarchy nodes
+   * @see 08-migration.md for spec details
+   */
+  buildHierarchy(traces: ExecutionTrace[]): HierarchyNode[] {
+    const traceMap = new Map<string, HierarchyNode>();
+    const roots: HierarchyNode[] = [];
+
+    // Build node map
+    for (const trace of traces) {
+      traceMap.set(trace.id, { trace, children: [] });
+    }
+
+    // Link children to parents
+    for (const trace of traces) {
+      const node = traceMap.get(trace.id)!;
+
+      if (!trace.parentTraceId) {
+        // Root node (no parent)
+        roots.push(node);
+      } else {
+        // Child node: attach to parent
+        const parent = traceMap.get(trace.parentTraceId);
+        if (parent) {
+          parent.children.push(node);
+        } else {
+          // Parent not in result set: treat as root
+          roots.push(node);
+        }
+      }
+    }
+
+    return roots;
   }
 
   /**

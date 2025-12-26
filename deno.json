@@ -107,6 +107,7 @@
     "@cliffy/command": "jsr:@cliffy/command@1.0.0-rc.8",
     "@electric-sql/pglite": "npm:@electric-sql/pglite@0.3.14",
     "@electric-sql/pglite/vector": "npm:@electric-sql/pglite@0.3.14/vector",
+    "postgres": "npm:postgres@^3.4.7",
     "@huggingface/transformers": "npm:@huggingface/transformers@3.7.6",
     "graphology": "npm:graphology@^0.25.4",
     "graphology-metrics": "npm:graphology-metrics@^2.2.0",

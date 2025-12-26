@@ -31,14 +31,17 @@ import { GatewayHandler } from "./gateway-handler.ts";
 import type { MCPClientBase } from "./types.ts";
 import { HealthChecker } from "../health/health-checker.ts";
 import { ContextBuilder } from "../sandbox/context-builder.ts";
+import { WorkerBridge } from "../sandbox/worker-bridge.ts";
 import { addBreadcrumb, captureError, startTransaction } from "../telemetry/sentry.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import type { AdaptiveThresholdManager } from "./adaptive-threshold.ts";
 import { CapabilityDataService } from "../capabilities/mod.ts";
 import { CapabilityRegistry } from "../capabilities/capability-registry.ts";
+import { CapabilityMCPServer } from "./capability-server/mod.ts";
 import { TraceFeatureExtractor } from "../graphrag/algorithms/trace-feature-extractor.ts";
 import { CheckpointManager } from "../dag/checkpoint-manager.ts";
 import { EventsStreamManager } from "../server/events-stream.ts";
+import { PmlStdServer } from "../../lib/std/cap.ts";
 
 // Server types, constants, lifecycle, and HTTP server
 import {
@@ -116,7 +119,9 @@ export class PMLGatewayServer {
   private embeddingModel: EmbeddingModelInterface | null = null;
   private shgatSaveInterval: number | null = null; // Story 10.7b: periodic save timer
   private capabilityRegistry: CapabilityRegistry | null = null; // Story 13.2
+  private capabilityMCPServer: CapabilityMCPServer | null = null; // Story 13.3
   private traceFeatureExtractor: TraceFeatureExtractor | null = null; // Story 11.10
+  private pmlStdServer: PmlStdServer | null = null; // Story 13.5: cap:* management tools
 
   constructor(
     // @ts-ignore: db kept for future use (direct queries)
@@ -180,6 +185,24 @@ export class PMLGatewayServer {
 
     // Initialize CapabilityRegistry for naming support (Story 13.2)
     this.capabilityRegistry = new CapabilityRegistry(this.db);
+
+    // Story 13.5: Initialize PmlStdServer for cap:* management tools
+    this.pmlStdServer = new PmlStdServer(this.capabilityRegistry, this.db);
+    log.info("[Gateway] PmlStdServer initialized (Story 13.5)");
+
+    // Story 13.3: Initialize CapabilityMCPServer for capability-as-tool execution
+    if (this.capabilityStore && this.capabilityRegistry) {
+      const workerBridge = new WorkerBridge(this.mcpClients, {
+        capabilityStore: this.capabilityStore,
+        graphRAG: this.graphEngine,
+      });
+      this.capabilityMCPServer = new CapabilityMCPServer(
+        this.capabilityStore,
+        this.capabilityRegistry,
+        workerBridge,
+      );
+      log.info("[Gateway] CapabilityMCPServer initialized (Story 13.3)");
+    }
 
     this.setupHandlers();
     this.setupSamplingRelay();
@@ -255,9 +278,13 @@ export class PMLGatewayServer {
     const transaction = startTransaction("mcp.tools.list", "mcp");
     try {
       addBreadcrumb("mcp", "Processing tools/list request", {});
-      log.info(`list_tools: returning meta-tools only (ADR-013)`);
+      log.info(`list_tools: returning meta-tools + cap:* tools (ADR-013, Story 13.5)`);
 
-      const result = { tools: getMetaTools() };
+      // Get meta-tools + cap:* management tools
+      const metaTools = getMetaTools();
+      const capTools = this.pmlStdServer?.handleListTools() ?? [];
+
+      const result = { tools: [...metaTools, ...capTools] };
       transaction.setData("tools_returned", result.tools.length);
       transaction.finish();
       return Promise.resolve(result);
@@ -377,6 +404,35 @@ export class PMLGatewayServer {
     // Unified execute (Story 10.7)
     if (name === "pml:execute") {
       return await handleExecute(args, this.getExecuteDeps());
+    }
+
+    // Story 13.3: Capability tool execution (mcp__namespace__action format)
+    if (name.startsWith("mcp__") && this.capabilityMCPServer) {
+      const result = await this.capabilityMCPServer.handleCallTool(
+        name,
+        args as Record<string, unknown>,
+      );
+      if (result.success) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result.data, null, 2),
+            },
+          ],
+        };
+      } else {
+        return formatMCPToolError(result.error || "Capability execution failed");
+      }
+    }
+
+    // Story 13.5: cap:* management tools
+    if (name.startsWith("cap:") && this.pmlStdServer) {
+      const result = await this.pmlStdServer.handleCallTool(name, args);
+      return {
+        content: result.content,
+        ...(result.isError ? { isError: true } : {}),
+      };
     }
 
     // Single tool execution (proxy to underlying MCP server)

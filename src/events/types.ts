@@ -66,6 +66,7 @@ export type EventType =
   | "execution.traces.pruned"
   | "learning.pattern.detected"
   | "learning.edge.strengthened"
+  | "learning.online.trained"
   | "cache.hit"
   | "cache.miss"
   | "cache.invalidated"

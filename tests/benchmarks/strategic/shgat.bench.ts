@@ -20,7 +20,7 @@ import {
   DEFAULT_TRACE_STATS,
   getAdaptiveConfig,
   type TraceFeatures,
-} from "../../../src/graphrag/algorithms/shgat-types.ts";
+} from "../../../src/graphrag/algorithms/shgat/types.ts";
 import { SpectralClusteringManager } from "../../../src/graphrag/spectral-clustering.ts";
 import {
   loadScenario,

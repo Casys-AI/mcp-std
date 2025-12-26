@@ -112,3 +112,8 @@ scripts/deploy.sh
 .pml-dev.db.last/
 .pml-dev.db.backup*/
 .pml.db
+backups/
+
+# Playground (not mature yet)
+playground/
+.devcontainer/playground/

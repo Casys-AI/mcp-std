@@ -2,15 +2,20 @@
  * SHGAT v1 vs v2 vs v3 Comparison Benchmark
  *
  * Compares the three SHGAT scoring approaches:
- * - v1: Message passing (V→E→V) + 3 specialized heads (semantic/structure/temporal)
+ * - v1: Message passing (V→E→V) + K adaptive heads (numHeads=4-16 based on graph size)
  * - v2: Direct embeddings + Rich TraceFeatures (17 features) + K heads + Fusion MLP
  * - v3: HYBRID - Message passing + TraceFeatures + K heads + Fusion MLP
  *
- * Metrics:
+ * PRIMARY METRICS (Precision-focused):
  * - MRR (Mean Reciprocal Rank): Average 1/rank of correct answer
  * - Hit@1: % of times correct answer is ranked #1
  * - Hit@3: % of times correct answer is in top 3
- * - Latency: Time per scoring operation
+ * - Hierarchical precision: How well nested capabilities are scored
+ *
+ * SECONDARY METRICS:
+ * - Latency: Time per scoring operation (informational only)
+ *
+ * Uses BGE-M3 embeddings from medium-graph fixture with real descriptions.
  *
  * Run: deno bench --allow-all tests/benchmarks/strategic/shgat-v1-v2-v3-comparison.bench.ts
  *
@@ -20,81 +25,110 @@
 import {
   createSHGATFromCapabilities,
   trainSHGATOnEpisodes,
+  trainSHGATOnEpisodesKHead,
   type TrainingExample,
 } from "../../../src/graphrag/algorithms/shgat.ts";
 import {
   DEFAULT_TRACE_STATS,
   type TraceFeatures,
-} from "../../../src/graphrag/algorithms/shgat-types.ts";
+} from "../../../src/graphrag/algorithms/shgat/types.ts";
 import { loadScenario } from "../fixtures/scenario-loader.ts";
 
 // ============================================================================
-// Setup Test Data
+// Setup Test Data with Pre-computed Embeddings
 // ============================================================================
 
+console.log("📦 Loading medium-graph scenario (with pre-computed embeddings)...");
 const scenario = await loadScenario("medium-graph");
 
-// Generate deterministic embeddings
-function generateMockEmbedding(seed: number = 0): number[] {
-  const embedding: number[] = [];
-  for (let i = 0; i < 1024; i++) {
-    embedding.push(Math.sin(seed * 1000 + i) * 0.5);
-  }
-  return embedding;
-}
+// Type for fixture with embeddings
+type CapWithEmb = { id: string; embedding: number[]; toolsUsed: string[]; successRate: number; parents?: string[]; children?: string[]; description?: string; level?: number };
+type ToolWithEmb = { id: string; embedding: number[]; pageRank: number; community: number };
+type EventWithEmb = { intent: string; intentEmbedding: number[]; contextTools: string[]; selectedCapability: string; outcome: string };
+type QueryWithEmb = { intent: string; intentEmbedding: number[]; expectedCapability: string; difficulty: string };
 
-// Create capabilities with embeddings
-const capabilities = scenario.nodes.capabilities.map((c, idx) => ({
+const rawCaps = scenario.nodes.capabilities as CapWithEmb[];
+const rawTools = scenario.nodes.tools as ToolWithEmb[];
+const rawEvents = (scenario as { episodicEvents?: EventWithEmb[] }).episodicEvents || [];
+const rawQueries = (scenario as { testQueries?: QueryWithEmb[] }).testQueries || [];
+
+// Build capabilities array from pre-computed embeddings
+console.log("🧮 Loading pre-computed embeddings...");
+type RawCap = CapWithEmb & { hypergraphFeatures?: { spectralCluster: number; hypergraphPageRank: number; cooccurrence: number; recency: number; adamicAdar?: number; heatDiffusion?: number } };
+const capabilities = (rawCaps as RawCap[]).map(c => ({
   id: c.id,
-  embedding: generateMockEmbedding(idx),
+  embedding: c.embedding,
   toolsUsed: c.toolsUsed,
   successRate: c.successRate,
-  parents: [] as string[],
-  children: [] as string[],
+  parents: c.parents || [],
+  children: c.children || [],
+  description: c.description || c.id,
+  level: c.level,
+  hypergraphFeatures: c.hypergraphFeatures, // ← AJOUTÉ
 }));
 
-// Create tool embeddings map
+// Build tool embeddings map
 const toolEmbeddings = new Map<string, number[]>();
-scenario.nodes.tools.forEach((t, idx) => {
-  toolEmbeddings.set(t.id, generateMockEmbedding(100 + idx));
-});
-
-// Generate mock episodic events for training
-const mockEpisodicEvents: TrainingExample[] = [];
-for (let i = 0; i < 100; i++) {
-  const cap = capabilities[i % capabilities.length];
-  const contextTools = cap.toolsUsed.slice(0, 2);
-
-  mockEpisodicEvents.push({
-    intentEmbedding: generateMockEmbedding(1000 + i),
-    contextTools,
-    candidateId: cap.id,
-    outcome: Math.random() > 0.3 ? 1 : 0, // 70% success rate
-  });
+for (const t of rawTools) {
+  toolEmbeddings.set(t.id, t.embedding);
 }
 
-// Create SHGAT instances
+// Build training data from pre-computed embeddings
+console.log("📚 Building training data...");
+const trainingExamples: TrainingExample[] = rawEvents.map(event => ({
+  intentEmbedding: event.intentEmbedding,
+  contextTools: event.contextTools,
+  candidateId: event.selectedCapability,
+  outcome: event.outcome === "success" ? 1 : 0,
+}));
+
+// Create SHGAT instance
+console.log("🏗️ Creating SHGAT model...");
 const shgat = createSHGATFromCapabilities(capabilities, toolEmbeddings);
 
-// Extended training (was: 3 epochs, 50 examples)
-await trainSHGATOnEpisodes(
+// Training with K-head (trains W_q, W_k for multi-head attention scoring)
+console.log("🎓 Training SHGAT K-head (30 epochs, batch=16)...");
+await trainSHGATOnEpisodesKHead(
   shgat,
-  mockEpisodicEvents, // All 100 examples
+  trainingExamples,
   (id) => toolEmbeddings.get(id) || null,
-  { epochs: 15, batchSize: 16 }, // Increase to 25+ for better v2 results
+  { epochs: 30, batchSize: 16 },
 );
+console.log("✅ K-head training complete!");
 
-// Test intent and context
-const testIntent = generateMockEmbedding(9999);
-const contextToolIds = capabilities[0].toolsUsed.slice(0, 2);
+// Build test queries from pre-computed embeddings
+console.log("📝 Loading test queries...");
+
+interface TestQuery {
+  intent: number[];
+  contextToolIds: string[];
+  expectedCapabilityId: string;
+  description: string;
+  difficulty: string;
+}
+
+const testQueries: TestQuery[] = rawQueries.map(q => {
+  const cap = capabilities.find(c => c.id === q.expectedCapability);
+  return {
+    intent: q.intentEmbedding,
+    contextToolIds: cap?.toolsUsed.slice(0, 2) || [],
+    expectedCapabilityId: q.expectedCapability,
+    description: q.intent,
+    difficulty: q.difficulty,
+  };
+});
+
+// Use first query for single-intent tests
+const testIntent = testQueries[0]?.intent || new Array(1024).fill(0);
+const contextToolIds = testQueries[0]?.contextToolIds || ["fs__read"];
 
 // Build TraceFeatures map for v2 and v3
 const traceFeaturesMap = new Map<string, TraceFeatures>();
-capabilities.forEach((cap) => {
+for (const cap of capabilities) {
   traceFeaturesMap.set(cap.id, {
     intentEmbedding: testIntent,
     candidateEmbedding: cap.embedding,
-    contextEmbeddings: contextToolIds.map((id) => toolEmbeddings.get(id)!),
+    contextEmbeddings: contextToolIds.map((id) => toolEmbeddings.get(id)!).filter(Boolean),
     contextAggregated: new Array(1024).fill(0),
     traceStats: {
       ...DEFAULT_TRACE_STATS,
@@ -102,39 +136,7 @@ capabilities.forEach((cap) => {
       contextualSuccessRate: cap.successRate,
     },
   });
-});
-
-// ============================================================================
-// Test Queries with Ground Truth
-// ============================================================================
-
-interface TestQuery {
-  intent: number[];
-  contextToolIds: string[];
-  expectedCapabilityId: string;
-  description: string;
 }
-
-const testQueries: TestQuery[] = [
-  {
-    intent: generateMockEmbedding(8001),
-    contextToolIds: capabilities[0].toolsUsed.slice(0, 2),
-    expectedCapabilityId: capabilities[0].id,
-    description: "Query 1: First capability",
-  },
-  {
-    intent: generateMockEmbedding(8002),
-    contextToolIds: capabilities[5].toolsUsed.slice(0, 2),
-    expectedCapabilityId: capabilities[5].id,
-    description: "Query 2: Mid capability",
-  },
-  {
-    intent: generateMockEmbedding(8003),
-    contextToolIds: capabilities[Math.min(10, capabilities.length - 1)].toolsUsed.slice(0, 2),
-    expectedCapabilityId: capabilities[Math.min(10, capabilities.length - 1)].id,
-    description: "Query 3: Later capability",
-  },
-];
 
 // ============================================================================
 // Accuracy Metrics Computation
@@ -177,7 +179,7 @@ function computeAccuracyMetrics(
 // ============================================================================
 
 Deno.bench({
-  name: "v1: scoreAllCapabilities (message passing + 3 heads)",
+  name: "v1: scoreAllCapabilities (message passing + K heads)",
   group: "shgat-versions-latency",
   baseline: true,
   fn: () => {
@@ -238,7 +240,7 @@ console.log(
 );
 console.log("-".repeat(80));
 console.log(
-  "v1 (message passing + 3 heads)".padEnd(50) +
+  "v1 (message passing + K heads)".padEnd(50) +
     v1Accuracy.mrr.toFixed(3).padEnd(10) +
     (v1Accuracy.hit1 * 100).toFixed(1).padEnd(10) +
     (v1Accuracy.hit3 * 100).toFixed(1).padEnd(10),
@@ -268,4 +270,75 @@ const winner = versions.reduce((best, current) =>
 );
 
 console.log(`\n🏆 WINNER (by MRR): ${winner.name} with MRR=${winner.accuracy.mrr.toFixed(3)}`);
+console.log("=".repeat(80) + "\n");
+
+// ============================================================================
+// Hierarchical Precision Tests (using real fixture data)
+// ============================================================================
+
+console.log("\n" + "=".repeat(80));
+console.log("HIERARCHICAL CAPABILITY PRECISION TEST");
+console.log("=".repeat(80));
+
+// Test with the trained SHGAT using real hierarchical data from fixture
+// Query: "orchestrate end-to-end business process" -> expected: cap__full_stack (level 3)
+const hierQuery = testQueries.find(q => q.expectedCapabilityId === "cap__full_stack");
+if (hierQuery) {
+  const hierResults = shgat.scoreAllCapabilities(hierQuery.intent);
+
+  console.log("\nHierarchical Ranking Test:");
+  console.log("-".repeat(50));
+  console.log(`Intent: "${hierQuery.description}"`);
+  console.log("Expected: cap__full_stack (level 3) should rank highest\n");
+
+  hierResults.slice(0, 8).forEach((r, i) => {
+    const cap = capabilities.find(c => c.id === r.capabilityId);
+    const level = (cap as { level?: number } & typeof cap)?.level ?? "?";
+    console.log(`  ${i + 1}. ${r.capabilityId.padEnd(25)} score=${r.score.toFixed(4)} (level ${level})`);
+  });
+
+  const topResult = hierResults[0];
+  const hierarchyPrecision = topResult.capabilityId === "cap__full_stack" ? "✅ PASS" : "❌ FAIL";
+  console.log(`\nHierarchy Precision: ${hierarchyPrecision}`);
+
+  // Test: Parent-Child score relationship (cap__application_core contains cap__data_layer)
+  const appCoreScore = hierResults.find((r) => r.capabilityId === "cap__application_core")?.score ?? 0;
+  const dataLayerScore = hierResults.find((r) => r.capabilityId === "cap__data_layer")?.score ?? 0;
+  const apiLayerScore = hierResults.find((r) => r.capabilityId === "cap__api_layer")?.score ?? 0;
+
+  console.log("\nParent-Child Score Relationship:");
+  console.log(`  Parent (cap__application_core, L2): ${appCoreScore.toFixed(4)}`);
+  console.log(`  Child (cap__data_layer, L1): ${dataLayerScore.toFixed(4)}`);
+  console.log(`  Child (cap__api_layer, L1): ${apiLayerScore.toFixed(4)}`);
+}
+
+// Precision by difficulty level
+console.log("\n" + "-".repeat(50));
+console.log("PRECISION BY DIFFICULTY LEVEL");
+console.log("-".repeat(50));
+
+const difficultyGroups = { easy: [] as TestQuery[], medium: [] as TestQuery[], hard: [] as TestQuery[] };
+testQueries.forEach(q => {
+  if (q.difficulty in difficultyGroups) {
+    difficultyGroups[q.difficulty as keyof typeof difficultyGroups].push(q);
+  }
+});
+
+for (const [difficulty, queries] of Object.entries(difficultyGroups)) {
+  if (queries.length === 0) continue;
+
+  let hit1 = 0, hit3 = 0, totalReciprocal = 0;
+  for (const q of queries) {
+    const results = shgat.scoreAllCapabilities(q.intent);
+    const rank = results.findIndex(r => r.capabilityId === q.expectedCapabilityId) + 1;
+    if (rank > 0) {
+      totalReciprocal += 1 / rank;
+      if (rank === 1) hit1++;
+      if (rank <= 3) hit3++;
+    }
+  }
+  const mrr = totalReciprocal / queries.length;
+  console.log(`  ${difficulty.toUpperCase().padEnd(8)} (${queries.length} queries): MRR=${mrr.toFixed(3)}, Hit@1=${(hit1/queries.length*100).toFixed(1)}%, Hit@3=${(hit3/queries.length*100).toFixed(1)}%`);
+}
+
 console.log("=".repeat(80) + "\n");

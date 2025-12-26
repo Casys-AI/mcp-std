@@ -54,8 +54,6 @@ import { buildToolDefinitionsFromStaticStructure } from "./shared/tool-definitio
 
 // Story 11.6: PER Training imports
 import { trainSHGATOnPathTraces } from "../../graphrag/learning/mod.ts";
-// Story 11.10: TraceFeatureExtractor for SHGAT v2
-import type { TraceFeatureExtractor } from "../../graphrag/algorithms/trace-feature-extractor.ts";
 
 /**
  * Dependencies required for execute handler
@@ -85,8 +83,6 @@ export interface ExecuteDependencies {
   traceStore?: ExecutionTraceStore;
   /** Capability registry for naming support (Story 13.2) */
   capabilityRegistry?: CapabilityRegistry;
-  /** TraceFeatureExtractor for SHGAT v2 scoring (Story 11.10) */
-  traceFeatureExtractor?: TraceFeatureExtractor;
 }
 
 /**
@@ -989,14 +985,17 @@ async function registerSHGATNodes(
       }
     }
 
-    // Register the capability
+    // Register the capability with new SHGAT v1 structure
+    const toolMembers = (capability.toolsUsed ?? toolsCalled).map((id) => ({
+      type: "tool" as const,
+      id,
+    }));
     shgat.registerCapability({
       id: capability.id,
       embedding,
-      toolsUsed: capability.toolsUsed ?? toolsCalled,
+      members: toolMembers,
+      hierarchyLevel: 0, // Tools only = level 0
       successRate: capability.successRate,
-      parents: [],
-      children: [],
     });
 
     log.debug("[pml:execute] SHGAT nodes registered", {
@@ -1124,35 +1123,10 @@ async function executeSuggestionMode(
     return formatMCPToolError("Failed to generate intent embedding");
   }
 
-  // Score all capabilities and tools with SHGAT v2 (Story 11.10)
-  // Build TraceFeatures map if extractor available, else use empty map (v2 builds defaults)
-  const traceFeaturesMap = new Map<string, import("../../graphrag/algorithms/shgat.ts").TraceFeatures>();
-  if (deps.traceFeatureExtractor) {
-    // Get all tool/capability IDs for batch extraction
-    const allIds = [
-      ...deps.shgat.getToolIds(),
-      ...deps.shgat.getCapabilityIds(),
-    ];
-    if (allIds.length > 0) {
-      const batchStats = await deps.traceFeatureExtractor.batchExtractTraceStats(allIds);
-      // Convert TraceStats to full TraceFeatures (embeddings will be filled by v2 methods)
-      for (const [id, stats] of batchStats) {
-        traceFeaturesMap.set(id, {
-          intentEmbedding,
-          candidateEmbedding: [], // Will be filled by scoreAllCapabilitiesV2/ToolsV2
-          contextEmbeddings: [],
-          contextAggregated: [],
-          traceStats: stats,
-        });
-      }
-    }
-  }
-
-  // Context tool IDs for v2 scoring (empty for now, can be extended with session context)
-  const contextToolIds: string[] = [];
-
-  const shgatCapabilities = deps.shgat.scoreAllCapabilitiesV2(intentEmbedding, traceFeaturesMap, contextToolIds);
-  const shgatTools = deps.shgat.scoreAllToolsV2(intentEmbedding, traceFeaturesMap, contextToolIds);
+  // Score all capabilities and tools with SHGAT v1 (message passing + K adaptive heads)
+  // V1 won benchmark: MRR=0.214 vs V2=0.198
+  const shgatCapabilities = deps.shgat.scoreAllCapabilities(intentEmbedding);
+  const shgatTools = deps.shgat.scoreAllTools(intentEmbedding);
 
   log.debug("[pml:execute] SHGAT scored", {
     capabilitiesCount: shgatCapabilities.length,

@@ -45,3 +45,9 @@ export {
   type PERTrainingOptions,
   type PERTrainingResult,
 } from "./per-training.ts";
+
+export {
+  OnlineLearningController,
+  startOnlineLearning,
+  type OnlineLearningConfig,
+} from "./online-learning.ts";

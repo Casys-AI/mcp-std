@@ -1043,6 +1043,21 @@ export interface CapabilityRecord {
 }
 
 /**
+ * Hierarchy node for trace reconstruction (Phase 8 - Migration)
+ *
+ * Used by ExecutionTraceStore.buildHierarchy() to reconstruct
+ * the tree structure from flat traces with parentTraceId.
+ *
+ * @see 08-migration.md for spec details
+ */
+export interface HierarchyNode {
+  /** The trace at this node */
+  trace: ExecutionTrace;
+  /** Child traces (those with parentTraceId pointing to this trace) */
+  children: HierarchyNode[];
+}
+
+/**
  * Alias record for capability name resolution (Story 13.1)
  *
  * Stored in `capability_aliases` table with composite PK (org, project, alias).
