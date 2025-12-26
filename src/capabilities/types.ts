@@ -1090,3 +1090,44 @@ export interface AliasResolutionResult {
   /** The original alias used (only set if isAlias=true) */
   usedAlias?: string;
 }
+
+// ============================================
+// MCP Tool Listing Types (Story 13.3)
+// ============================================
+
+/**
+ * Capability with schema for MCP tool listing (Story 13.3)
+ *
+ * JOINed data from capability_records + workflow_pattern tables
+ * for generating MCP tool definitions.
+ */
+export interface CapabilityWithSchema {
+  /** Capability pattern_id */
+  id: string;
+  /** Namespace from capability_records */
+  namespace: string;
+  /** Action from capability_records */
+  action: string;
+  /** Display name from capability_records */
+  displayName: string;
+  /** Description from workflow_pattern */
+  description: string | null;
+  /** JSON Schema for parameters from workflow_pattern */
+  parametersSchema: Record<string, unknown> | null;
+  /** Usage count for sorting */
+  usageCount: number;
+}
+
+/**
+ * Options for listWithSchemas query (Story 13.3)
+ */
+export interface ListWithSchemasOptions {
+  /** Filter by visibility levels (default: all) */
+  visibility?: Array<"public" | "org" | "project" | "private">;
+  /** Filter by creator */
+  createdBy?: string;
+  /** Maximum results (default: 100) */
+  limit?: number;
+  /** Order by field (default: usageCount) */
+  orderBy?: "usageCount" | "displayName" | "createdAt";
+}

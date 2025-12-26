@@ -19,8 +19,10 @@ import {
   type CapabilityDependency,
   type CapabilityEdgeSource,
   type CapabilityEdgeType,
+  type CapabilityWithSchema,
   type CreateCapabilityDependencyInput,
   type ExecutionTrace,
+  type ListWithSchemasOptions,
   type PermissionSet,
   type SaveCapabilityInput,
   type StaticStructure,
@@ -1225,5 +1227,90 @@ export class CapabilityStore {
       });
       return null;
     }
+  }
+
+  // ============================================
+  // MCP Tool Listing Methods (Story 13.3)
+  // ============================================
+
+  /**
+   * List capabilities with their schemas for MCP tool listing (Story 13.3)
+   *
+   * JOINs workflow_pattern with capability_records to get:
+   * - namespace, action, displayName from capability_records
+   * - parametersSchema, description from workflow_pattern
+   *
+   * Used by CapabilityListerService to generate MCP tool list.
+   *
+   * @param options - Query options (ListWithSchemasOptions from types.ts)
+   * @returns Capabilities with schema info (CapabilityWithSchema from types.ts)
+   */
+  async listWithSchemas(
+    options: ListWithSchemasOptions = {},
+  ): Promise<CapabilityWithSchema[]> {
+    const {
+      visibility = ["public", "org", "project", "private"],
+      createdBy,
+      limit = 100,
+      orderBy = "usageCount",
+    } = options;
+
+    // Build ORDER BY clause
+    let orderClause: string;
+    switch (orderBy) {
+      case "displayName":
+        orderClause = "cr.display_name ASC";
+        break;
+      case "createdAt":
+        orderClause = "wp.created_at DESC";
+        break;
+      case "usageCount":
+      default:
+        orderClause = "wp.usage_count DESC";
+    }
+
+    // Build query with JOIN
+    const query = `
+      SELECT
+        wp.pattern_id as id,
+        cr.namespace,
+        cr.action,
+        cr.display_name,
+        wp.description,
+        wp.parameters_schema,
+        wp.usage_count
+      FROM capability_records cr
+      INNER JOIN workflow_pattern wp ON cr.workflow_pattern_id = wp.pattern_id
+      WHERE cr.visibility = ANY($1::text[])
+        ${createdBy ? "AND cr.created_by = $2" : ""}
+      ORDER BY ${orderClause}
+      LIMIT ${createdBy ? "$3" : "$2"}
+    `;
+
+    const params = createdBy
+      ? [visibility, createdBy, limit]
+      : [visibility, limit];
+
+    const result = await this.db.query(query, params);
+
+    return result.map((row) => {
+      // Parse parameters_schema if it's a string
+      let parametersSchema: Record<string, unknown> | null = null;
+      if (row.parameters_schema) {
+        parametersSchema = typeof row.parameters_schema === "string"
+          ? JSON.parse(row.parameters_schema)
+          : row.parameters_schema as Record<string, unknown>;
+      }
+
+      return {
+        id: row.id as string,
+        namespace: row.namespace as string,
+        action: row.action as string,
+        displayName: row.display_name as string,
+        description: row.description as string | null,
+        parametersSchema,
+        usageCount: row.usage_count as number,
+      };
+    });
   }
 }
