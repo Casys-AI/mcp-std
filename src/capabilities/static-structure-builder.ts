@@ -244,46 +244,6 @@ export class StaticStructureBuilder {
     return { start, end };
   }
 
-  /**
-   * Extract just the method name and arguments from a CallExpression
-   * (Story 10.2c - Method chaining support)
-   *
-   * For chained calls like `numbers.filter(x => x > 0).map(x => x * 2).sort()`,
-   * we want to extract just `sort()` for the sort node, not the whole chain.
-   *
-   * @param callExpr The CallExpression AST node
-   * @param methodName The method name (e.g., "sort", "map", "filter")
-   * @returns Just the method call code (e.g., "sort()" or "map(x => x * 2)")
-   */
-  private extractMethodCode(
-    callExpr: Record<string, unknown>,
-    methodName: string,
-  ): string | undefined {
-    // Extract arguments code
-    const args = callExpr.arguments as Array<Record<string, unknown>> | undefined;
-    if (!args || args.length === 0) {
-      return `${methodName}()`;
-    }
-
-    // Try to extract each argument
-    const argStrings: string[] = [];
-    for (const arg of args) {
-      const argExpr = (arg?.expression as Record<string, unknown>) ?? arg;
-      const argSpan = argExpr?.span as { start: number; end: number } | undefined;
-      const argCode = this.extractCodeFromSpan(argSpan);
-      if (argCode) {
-        argStrings.push(argCode);
-      }
-    }
-
-    if (argStrings.length > 0) {
-      return `${methodName}(${argStrings.join(", ")})`;
-    }
-
-    // Fallback: just the method name with empty parens
-    return `${methodName}()`;
-  }
-
   constructor(private db: DbClient) {
     logger.debug("StaticStructureBuilder initialized");
   }
@@ -633,12 +593,10 @@ export class StaticStructureBuilder {
         // Option B: Determine if this task is executable
         const isExecutable = nestingLevel === 0;
 
-        // Story 10.2c fix: If this node is part of a chain (has chainedInputNodeId),
-        // extract the FULL chain code from source to this node.
-        // Otherwise, extract just the method code for this operation.
-        const code = chainedInputNodeId
-          ? this.extractCodeFromSpan(this.extractFullChainSpan(n)) // Full chain
-          : this.extractMethodCode(n, methodName); // Just this method
+        // Story 10.2c fix: Always extract full code including the object reference.
+        // For chains: nums.filter().map() → full chain
+        // For single calls: nums.map() → includes nums
+        const code = this.extractCodeFromSpan(this.extractFullChainSpan(n));
 
         nodes.push({
           id: nodeId,
@@ -726,10 +684,8 @@ export class StaticStructureBuilder {
         const nodeId = this.generateNodeId("task");
         const isExecutable = nestingLevel === 0;
 
-        // Story 10.2c fix: If this node is part of a chain, extract full chain code
-        const code = chainedInputNodeId
-          ? this.extractCodeFromSpan(this.extractFullChainSpan(n)) // Full chain
-          : this.extractMethodCode(n, methodName); // Just this method
+        // Story 10.2c fix: Always extract full code including the object reference
+        const code = this.extractCodeFromSpan(this.extractFullChainSpan(n));
 
         nodes.push({
           id: nodeId,
@@ -1501,7 +1457,12 @@ export class StaticStructureBuilder {
       const obj = node.object as Record<string, unknown>;
       const prop = node.property as Record<string, unknown>;
 
+      // Handle dot notation: capabilities.name → prop.type = "Identifier"
       if (prop?.type === "Identifier" && typeof prop?.value === "string") {
+        parts.unshift(prop.value);
+      }
+      // Handle bracket notation: capabilities["name"] → prop.type = "StringLiteral"
+      else if (prop?.type === "StringLiteral" && typeof prop?.value === "string") {
         parts.unshift(prop.value);
       }
 
