@@ -247,7 +247,7 @@ async function handleBatchRequest(
 export interface SSEConsumer {
   addEventListener(
     type: string,
-    handler: (event: { data: any }) => void,
+    handler: (event: { data: unknown }) => void,
   ): void;
   close(): void;
 }
@@ -301,9 +301,9 @@ export async function parseSSEStream(
           try {
             const data = JSON.parse(eventData);
             events.push({
-              type: eventType as any,
+              type: eventType,
               data,
-            });
+            } as SSEEvent);
           } catch (error) {
             log.error("Failed to parse SSE event data", error);
           }

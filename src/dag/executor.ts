@@ -633,13 +633,13 @@ export class ParallelExecutor {
    */
   private getNestedProperty(obj: unknown, path: string): unknown {
     const parts = path.split(".");
-    let current: any = obj;
+    let current: unknown = obj;
 
     for (const part of parts) {
       if (current === null || current === undefined) {
         return undefined;
       }
-      current = current[part];
+      current = (current as Record<string, unknown>)[part];
     }
 
     return current;

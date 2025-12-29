@@ -386,15 +386,15 @@ export async function persistWorkflowExecution(
   const sanitizedDecisions = sanitizeForStorage(execution.decisions || []);
   const sanitizedTaskResults = sanitizeForStorage(execution.taskResults || []);
 
+  // Note: intent_text column removed in migration 030 (now from workflow_pattern via JOIN)
   const result = await db.query(
     `INSERT INTO execution_trace
-     (intent_text, success, duration_ms, error_message, user_id, created_by,
+     (success, duration_ms, error_message, user_id, created_by,
       capability_id, decisions, task_results, executed_path, parent_trace_id,
       initial_context, priority)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11, $12::jsonb, $13)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11::jsonb, $12)
      RETURNING id`,
     [
-      execution.intentText || null,
       execution.success,
       Math.round(execution.executionTimeMs),
       execution.errorMessage || null,

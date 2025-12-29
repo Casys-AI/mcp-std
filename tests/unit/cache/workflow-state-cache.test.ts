@@ -52,7 +52,7 @@ Deno.test("AC8: saveWorkflowState - stores DAG in KV", async () => {
     assertEquals(retrieved.tasks[0].id, "task-0");
   } finally {
     await deleteWorkflowState(workflowId);
-    await closeKv();
+    closeKv();
   }
 });
 
@@ -73,7 +73,7 @@ Deno.test("AC8: getWorkflowState - retrieves stored DAG", async () => {
     assertEquals(retrieved.tasks[2].dependsOn, ["task-1"]);
   } finally {
     await deleteWorkflowState(workflowId);
-    await closeKv();
+    closeKv();
   }
 });
 
@@ -82,7 +82,7 @@ Deno.test("AC8: getWorkflowState - returns null for non-existent workflow", asyn
     const result = await getWorkflowState("non-existent-workflow-id");
     assertEquals(result, null, "Should return null for non-existent workflow");
   } finally {
-    await closeKv();
+    closeKv();
   }
 });
 
@@ -117,7 +117,7 @@ Deno.test("AC8: getWorkflowStateRecord - returns full record with metadata", asy
     assertEquals(ttlMs, 3600_000, "TTL should be 1 hour (3600000ms)");
   } finally {
     await deleteWorkflowState(workflowId);
-    await closeKv();
+    closeKv();
   }
 });
 
@@ -152,7 +152,7 @@ Deno.test("AC8: updateWorkflowState - updates DAG and refreshes TTL", async () =
     );
   } finally {
     await deleteWorkflowState(workflowId);
-    await closeKv();
+    closeKv();
   }
 });
 
@@ -166,7 +166,7 @@ Deno.test("AC8: updateWorkflowState - throws for non-existent workflow", async (
       "not found",
     );
   } finally {
-    await closeKv();
+    closeKv();
   }
 });
 
@@ -188,7 +188,7 @@ Deno.test("AC8: deleteWorkflowState - removes workflow from KV", async () => {
     const after = await getWorkflowState(workflowId);
     assertEquals(after, null, "Should be null after deletion");
   } finally {
-    await closeKv();
+    closeKv();
   }
 });
 
@@ -209,7 +209,7 @@ Deno.test("AC9: TTL configuration - verifies 1 hour expiration is set", async ()
     assertEquals(ttlMs, 3600_000, "TTL should be 1 hour (3600000ms)");
   } finally {
     await deleteWorkflowState(workflowId);
-    await closeKv();
+    closeKv();
   }
 });
 
@@ -226,7 +226,7 @@ Deno.test("AC8: saveWorkflowState - handles empty intent", async () => {
     assertEquals(record.intent, null, "Empty intent should be stored as null");
   } finally {
     await deleteWorkflowState(workflowId);
-    await closeKv();
+    closeKv();
   }
 });
 
@@ -242,7 +242,7 @@ Deno.test("AC8: saveWorkflowState - handles large DAG", async () => {
     assertEquals(retrieved.tasks.length, 100, "Should store large DAG");
   } finally {
     await deleteWorkflowState(workflowId);
-    await closeKv();
+    closeKv();
   }
 });
 
@@ -266,6 +266,6 @@ Deno.test("AC8: multiple workflows - isolated storage", async () => {
   } finally {
     await deleteWorkflowState(workflow1);
     await deleteWorkflowState(workflow2);
-    await closeKv();
+    closeKv();
   }
 });

@@ -131,13 +131,14 @@ export class CapabilityDataService {
 
       const whereClause = conditions.join(" AND ");
 
-      // Query capabilities with JOIN to capability_records for display_name
-      // Story 13.2/Migration 023: Naming unified via capability_records.display_name (FK join)
+      // Query capabilities with JOIN to capability_records for name
+      // Migration 028: display_name removed, use namespace:action
+      // Migration 029: hierarchy_level for nested compound nodes
       const query = `
         SELECT
           wp.pattern_id as id,
-          COALESCE(cr.display_name, cr.id) as name,
-          cr.id as fqdn,
+          COALESCE(cr.namespace || ':' || cr.action, cr.id::text) as name,
+          COALESCE(cr.org || '.' || cr.project || '.' || cr.namespace || '.' || cr.action, cr.id::text) as fqdn,
           wp.description,
           wp.code_snippet,
           wp.dag_structure->'tools_used' as tools_used,
@@ -149,6 +150,7 @@ export class CapabilityDataService {
           wp.created_at,
           wp.last_used,
           wp.source,
+          COALESCE(wp.hierarchy_level, 0) as hierarchy_level,
           CASE
             WHEN wp.description IS NOT NULL AND LENGTH(wp.description) > 100
             THEN SUBSTRING(wp.description, 1, 97) || '...'
@@ -226,6 +228,7 @@ export class CapabilityDataService {
             createdAt: row.created_at ? new Date(String(row.created_at)).toISOString() : "",
             lastUsed: row.last_used ? new Date(String(row.last_used)).toISOString() : "",
             source: (row.source as "emergent" | "manual") || "emergent",
+            hierarchyLevel: Number(row.hierarchy_level || 0),
           };
         },
       );
@@ -247,6 +250,74 @@ export class CapabilityDataService {
       const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error("Failed to list capabilities", { error: errorMsg });
       throw new Error(`Failed to list capabilities: ${errorMsg}`);
+    }
+  }
+
+  /**
+   * Find capabilities that co-occur with the given capability in execution traces.
+   * Co-occurrence = same user session (within 1 hour window) or same parent trace.
+   *
+   * @param capabilityId - Source capability ID
+   * @param limit - Max results
+   * @returns Array of co-occurring capabilities with count and recency
+   */
+  async findCoOccurringCapabilities(
+    capabilityId: string,
+    limit: number = 10,
+  ): Promise<
+    Array<
+      { capabilityId: string; name: string | null; cooccurrenceCount: number; lastSeen: string }
+    >
+  > {
+    try {
+      // Find capabilities that appear in traces within 1 hour of source capability's traces
+      // or share the same parent_trace_id
+      const query = `
+        WITH source_traces AS (
+          SELECT id, user_id, executed_at, parent_trace_id
+          FROM execution_trace
+          WHERE capability_id = $1
+        ),
+        cooccurring AS (
+          SELECT
+            et.capability_id,
+            COUNT(DISTINCT et.id) as cooccurrence_count,
+            MAX(et.executed_at) as last_seen
+          FROM execution_trace et
+          JOIN source_traces st ON (
+            -- Same parent trace (hierarchical execution)
+            (et.parent_trace_id IS NOT NULL AND et.parent_trace_id = st.parent_trace_id)
+            OR
+            -- Same user within 1 hour window
+            (et.user_id = st.user_id AND ABS(EXTRACT(EPOCH FROM (et.executed_at - st.executed_at))) < 3600)
+          )
+          WHERE et.capability_id IS NOT NULL
+            AND et.capability_id != $1
+          GROUP BY et.capability_id
+        )
+        SELECT
+          c.capability_id,
+          COALESCE(cr.namespace || ':' || cr.action, cr.id::text) as name,
+          c.cooccurrence_count,
+          c.last_seen
+        FROM cooccurring c
+        LEFT JOIN workflow_pattern wp ON wp.pattern_id = c.capability_id
+        LEFT JOIN capability_records cr ON cr.workflow_pattern_id = wp.pattern_id
+        ORDER BY c.cooccurrence_count DESC, c.last_seen DESC
+        LIMIT $2
+      `;
+
+      const results = await this.db.query(query, [capabilityId, limit]);
+
+      return results.map((row: Record<string, unknown>) => ({
+        capabilityId: String(row.capability_id),
+        name: row.name ? String(row.name) : null,
+        cooccurrenceCount: Number(row.cooccurrence_count),
+        lastSeen: row.last_seen ? new Date(String(row.last_seen)).toISOString() : "",
+      }));
+    } catch (error) {
+      logger.warn("Failed to find co-occurring capabilities", { error, capabilityId });
+      return [];
     }
   }
 
@@ -299,8 +370,13 @@ export class CapabilityDataService {
       }
 
       // 2b. Get capability PageRanks from DAGSuggester (Story 8.2)
+      // Ensure pageranks are computed on-demand if not already done
       let capabilityPageranks: Map<string, number> | undefined;
       if (this.dagSuggester) {
+        // Trigger computation if not already computed
+        this.dagSuggester.ensurePageranksComputed(
+          capabilities.map((c) => ({ id: c.id, toolsUsed: c.toolsUsed })),
+        );
         capabilityPageranks = this.dagSuggester.getCapabilityPageranks();
         logger.debug("Got capability pageranks for hypergraph", {
           count: capabilityPageranks.size,
@@ -340,6 +416,7 @@ export class CapabilityDataService {
           WHERE confidence_score > 0.3
         `);
 
+        // Story 10.1: Pass nodes to set parent on child capabilities for "contains" edges
         builder.addCapabilityDependencyEdges(
           hypergraphResult.edges,
           capDeps as Array<{
@@ -350,6 +427,7 @@ export class CapabilityDataService {
             edge_source: string;
           }>,
           existingCapIds,
+          hypergraphResult.nodes,
         );
         logger.debug("Added capability dependency edges", { count: capDeps.length });
       } catch (error) {

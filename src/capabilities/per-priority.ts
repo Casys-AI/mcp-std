@@ -98,7 +98,7 @@ export interface TDErrorResult {
 export async function calculateTDError(
   shgat: SHGAT,
   embeddingProvider: EmbeddingProvider,
-  trace: Pick<ExecutionTrace, "intentText" | "executedPath" | "success">,
+  trace: Pick<ExecutionTrace, "intentText" | "intentEmbedding" | "executedPath" | "success">,
 ): Promise<TDErrorResult> {
   const actual = trace.success ? 1.0 : 0.0;
 
@@ -117,9 +117,15 @@ export async function calculateTDError(
     };
   }
 
-  // Generate embedding for intent
-  const intentText = trace.intentText ?? "";
-  const intentEmbedding = await embeddingProvider.getEmbedding(intentText);
+  // Use intentEmbedding from trace if available (from JOIN with workflow_pattern)
+  // Otherwise fall back to generating from intentText
+  let intentEmbedding: number[];
+  if (trace.intentEmbedding && trace.intentEmbedding.length > 0) {
+    intentEmbedding = trace.intentEmbedding;
+  } else {
+    const intentText = trace.intentText ?? "";
+    intentEmbedding = await embeddingProvider.getEmbedding(intentText);
+  }
 
   // Get SHGAT prediction for the path
   const executedPath = trace.executedPath ?? [];
@@ -130,7 +136,8 @@ export async function calculateTDError(
   const priority = Math.min(MAX_PRIORITY, Math.max(MIN_PRIORITY, Math.abs(tdError)));
 
   logger.debug("[PER] TD Error calculated", {
-    intentText: intentText.slice(0, 50),
+    intentText: (trace.intentText ?? "").slice(0, 50),
+    hasEmbeddingFromJoin: !!(trace.intentEmbedding && trace.intentEmbedding.length > 0),
     pathLength: executedPath.length,
     predicted,
     actual,

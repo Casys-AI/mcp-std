@@ -705,8 +705,16 @@ Deno.test("StaticStructureBuilder - literalBindings tracks object literals", asy
 
   // Value should be the actual object
   assertEquals(typeof configBinding, "object", "Should be an object");
-  assertEquals((configBinding as Record<string, number>).timeout, 5000, "Should have timeout property");
-  assertEquals((configBinding as Record<string, number>).retries, 3, "Should have retries property");
+  assertEquals(
+    (configBinding as Record<string, number>).timeout,
+    5000,
+    "Should have timeout property",
+  );
+  assertEquals(
+    (configBinding as Record<string, number>).retries,
+    3,
+    "Should have retries property",
+  );
 
   await db.close();
 });
@@ -757,7 +765,7 @@ Deno.test("StaticStructureBuilder - literalBindings does NOT track MCP results",
   assertEquals(
     structure.literalBindings!["file"],
     undefined,
-    "'file' should NOT be in literalBindings (it's an MCP result)"
+    "'file' should NOT be in literalBindings (it's an MCP result)",
   );
 
   await db.close();
@@ -916,7 +924,11 @@ Deno.test("StaticStructureBuilder - literalBindings skips expressions with unkno
   assertExists(structure.literalBindings, "Should have literalBindings");
   assertEquals(structure.literalBindings!["known"], 10, "Should track known literal");
   assertEquals(structure.literalBindings!["unknown"], undefined, "Function call not tracked");
-  assertEquals(structure.literalBindings!["sum"], undefined, "Cannot evaluate with unknown operand");
+  assertEquals(
+    structure.literalBindings!["sum"],
+    undefined,
+    "Cannot evaluate with unknown operand",
+  );
 
   await db.close();
 });

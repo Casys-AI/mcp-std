@@ -75,7 +75,14 @@ export interface ExecutorContext {
 export function createToolExecutorViaWorker(
   config: WorkerBridgeExecutorConfig,
 ): [ToolExecutor, ExecutorContext] {
-  const { mcpClients, toolDefinitions = [], capabilityStore, graphRAG, capabilityRegistry, timeout = 30000 } = config;
+  const {
+    mcpClients,
+    toolDefinitions = [],
+    capabilityStore,
+    graphRAG,
+    capabilityRegistry,
+    timeout = 30000,
+  } = config;
 
   // Create persistent WorkerBridge for all tool calls
   const bridge = new WorkerBridge(mcpClients, {

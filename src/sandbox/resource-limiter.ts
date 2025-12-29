@@ -223,7 +223,7 @@ export class ResourceLimiter {
 
     // Check memory pressure (if enabled)
     if (this.config.enableMemoryPressureDetection) {
-      const memoryPressure = await this.detectMemoryPressure();
+      const memoryPressure = this.detectMemoryPressure();
       if (memoryPressure) {
         this.rejectedExecutions++;
         logger.warn("Memory pressure detected - rejecting execution", {
@@ -325,7 +325,7 @@ export class ResourceLimiter {
    *
    * @returns True if memory pressure detected
    */
-  private async detectMemoryPressure(): Promise<boolean> {
+  private detectMemoryPressure(): boolean {
     try {
       // Check Deno's memory usage
       const memInfo = Deno.memoryUsage();

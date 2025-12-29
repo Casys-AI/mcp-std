@@ -28,6 +28,25 @@ const logger = getLogger("default");
 // Note: DEFAULT_TRACE_PRIORITY imported from types.ts
 
 /**
+ * Base SELECT with LEFT JOIN on workflow_pattern for intent data.
+ *
+ * Since migration 030, intent_text and intent_embedding are no longer
+ * stored in execution_trace. We JOIN on workflow_pattern to get:
+ * - wp.description → intentText
+ * - wp.intent_embedding → intentEmbedding
+ *
+ * This ensures renaming a capability instantly updates all associated traces.
+ */
+const SELECT_TRACE_WITH_INTENT = `
+  SELECT
+    et.*,
+    wp.description AS intent_text,
+    wp.intent_embedding AS intent_embedding
+  FROM execution_trace et
+  LEFT JOIN workflow_pattern wp ON wp.pattern_id = et.capability_id
+`;
+
+/**
  * Input type for saving a trace (id is auto-generated)
  */
 export type SaveTraceInput = Omit<ExecutionTrace, "id">;
@@ -103,22 +122,18 @@ export class ExecutionTraceStore {
       taskResultsCount: trace.taskResults.length,
     });
 
-    // Format intent embedding as PostgreSQL vector if provided
-    const intentEmbeddingValue = trace.intentEmbedding
-      ? `[${trace.intentEmbedding.join(",")}]`
-      : null;
+    // Note: intent_text and intent_embedding are no longer stored in execution_trace
+    // They are retrieved via JOIN on workflow_pattern (migration 030)
 
     const result = await this.db.query(
       `INSERT INTO execution_trace (
-        capability_id, intent_text, intent_embedding, initial_context, success, duration_ms,
+        capability_id, initial_context, success, duration_ms,
         error_message, user_id, created_by, executed_path, decisions,
         task_results, priority, parent_trace_id
-      ) VALUES ($1, $2, $3::vector, $4::jsonb, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13, $14)
+      ) VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12)
       RETURNING *`,
       [
         trace.capabilityId ?? null,
-        trace.intentText ?? null,
-        intentEmbeddingValue,
         sanitizedContext, // postgres.js auto-serializes to JSONB
         trace.success,
         trace.durationMs,
@@ -137,7 +152,14 @@ export class ExecutionTraceStore {
       throw new Error("Failed to save execution trace - no result returned");
     }
 
-    const savedTrace = this.rowToTrace(result[0] as Row);
+    // Query again with JOIN to get intent data from workflow_pattern
+    const traceId = (result[0] as Row).id as string;
+    const fullResult = await this.db.query(
+      `${SELECT_TRACE_WITH_INTENT} WHERE et.id = $1`,
+      [traceId],
+    );
+
+    const savedTrace = this.rowToTrace(fullResult[0] as Row);
 
     logger.info("Execution trace saved", {
       traceId: savedTrace.id,
@@ -171,7 +193,7 @@ export class ExecutionTraceStore {
    */
   async getTraceById(traceId: string): Promise<ExecutionTrace | null> {
     const result = await this.db.query(
-      `SELECT * FROM execution_trace WHERE id = $1`,
+      `${SELECT_TRACE_WITH_INTENT} WHERE et.id = $1`,
       [traceId],
     );
 
@@ -193,9 +215,9 @@ export class ExecutionTraceStore {
    */
   async getTraces(capabilityId: string, limit = 50): Promise<ExecutionTrace[]> {
     const result = await this.db.query(
-      `SELECT * FROM execution_trace
-       WHERE capability_id = $1
-       ORDER BY executed_at DESC
+      `${SELECT_TRACE_WITH_INTENT}
+       WHERE et.capability_id = $1
+       ORDER BY et.executed_at DESC
        LIMIT $2`,
       [capabilityId, limit],
     );
@@ -214,8 +236,8 @@ export class ExecutionTraceStore {
    */
   async getHighPriorityTraces(limit = 100): Promise<ExecutionTrace[]> {
     const result = await this.db.query(
-      `SELECT * FROM execution_trace
-       ORDER BY priority DESC, executed_at DESC
+      `${SELECT_TRACE_WITH_INTENT}
+       ORDER BY et.priority DESC, et.executed_at DESC
        LIMIT $1`,
       [limit],
     );
@@ -284,9 +306,9 @@ export class ExecutionTraceStore {
     // Fetch eligible traces (fetch more than needed for proper sampling)
     const fetchLimit = Math.min(limit * 3, 500);
     const result = await this.db.query(
-      `SELECT * FROM execution_trace
-       WHERE priority >= $1
-       ORDER BY priority DESC
+      `${SELECT_TRACE_WITH_INTENT}
+       WHERE et.priority >= $1
+       ORDER BY et.priority DESC
        LIMIT $2`,
       [minPriority, fetchLimit],
     );
@@ -446,9 +468,9 @@ export class ExecutionTraceStore {
    */
   async getTracesByUser(userId: string, limit = 50): Promise<ExecutionTrace[]> {
     const result = await this.db.query(
-      `SELECT * FROM execution_trace
-       WHERE user_id = $1
-       ORDER BY executed_at DESC
+      `${SELECT_TRACE_WITH_INTENT}
+       WHERE et.user_id = $1
+       ORDER BY et.executed_at DESC
        LIMIT $2`,
       [userId, limit],
     );
@@ -464,9 +486,9 @@ export class ExecutionTraceStore {
    */
   async getChildTraces(parentTraceId: string): Promise<ExecutionTrace[]> {
     const result = await this.db.query(
-      `SELECT * FROM execution_trace
-       WHERE parent_trace_id = $1
-       ORDER BY executed_at ASC`,
+      `${SELECT_TRACE_WITH_INTENT}
+       WHERE et.parent_trace_id = $1
+       ORDER BY et.executed_at ASC`,
       [parentTraceId],
     );
 
@@ -484,12 +506,12 @@ export class ExecutionTraceStore {
    * @returns Number of anonymized traces
    */
   async anonymizeUserTraces(userId: string): Promise<number> {
+    // Note: intent_text column removed in migration 030 (now from workflow_pattern via JOIN)
     const result = await this.db.query(
       `UPDATE execution_trace
        SET user_id = 'anonymized',
            created_by = 'anonymized',
            updated_by = 'anonymized',
-           intent_text = NULL,
            initial_context = '{}'::jsonb
        WHERE user_id = $1
        RETURNING id`,
@@ -571,6 +593,7 @@ export class ExecutionTraceStore {
           : (row.task_results as unknown[]);
 
         // Map snake_case → camelCase (Phase 2a)
+        // deno-lint-ignore no-explicit-any
         taskResults = (rawResults as any[]).map((r: any) => ({
           taskId: r.task_id, // snake_case → camelCase
           tool: r.tool,
@@ -581,6 +604,7 @@ export class ExecutionTraceStore {
           layerIndex: r.layer_index, // snake_case → camelCase
           // Phase 2a: Fusion metadata
           isFused: r.is_fused, // snake_case → camelCase
+          // deno-lint-ignore no-explicit-any
           logicalOperations: r.logical_operations?.map((op: any) => ({
             toolId: op.tool_id, // snake_case → camelCase
             durationMs: op.duration_ms, // snake_case → camelCase

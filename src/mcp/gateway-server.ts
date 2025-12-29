@@ -42,6 +42,7 @@ import { CapabilityMCPServer } from "./capability-server/mod.ts";
 import { CheckpointManager } from "../dag/checkpoint-manager.ts";
 import { EventsStreamManager } from "../server/events-stream.ts";
 import { PmlStdServer } from "../../lib/std/cap.ts";
+import type { AlgorithmTracer } from "../telemetry/algorithm-tracer.ts";
 
 // Server types, constants, lifecycle, and HTTP server
 import {
@@ -121,6 +122,7 @@ export class PMLGatewayServer {
   private capabilityMCPServer: CapabilityMCPServer | null = null; // Story 13.3
   // traceFeatureExtractor removed - V1 uses message passing, not TraceFeatures
   private pmlStdServer: PmlStdServer | null = null; // Story 13.5: cap:* management tools
+  private algorithmTracer: AlgorithmTracer | null = null; // Story 7.6: Observability
 
   constructor(
     // @ts-ignore: db kept for future use (direct queries)
@@ -192,7 +194,11 @@ export class PMLGatewayServer {
 
     // Story 13.5: Initialize PmlStdServer for cap:* management tools
     // Pass embeddingModel for embedding updates on rename
-    this.pmlStdServer = new PmlStdServer(this.capabilityRegistry, this.db, this.embeddingModel ?? undefined);
+    this.pmlStdServer = new PmlStdServer(
+      this.capabilityRegistry,
+      this.db,
+      this.embeddingModel ?? undefined,
+    );
     log.info("[Gateway] PmlStdServer initialized (Story 13.5)");
 
     // Story 13.3: Initialize CapabilityMCPServer for capability-as-tool execution
@@ -245,6 +251,15 @@ export class PMLGatewayServer {
         log.debug(`[Gateway] Sampling handler configured for ${serverId}`);
       }
     }
+  }
+
+  /**
+   * Set AlgorithmTracer for observability (Story 7.6)
+   * Called from serve.ts after gateway construction.
+   */
+  setAlgorithmTracer(tracer: AlgorithmTracer): void {
+    this.algorithmTracer = tracer;
+    log.debug("[Gateway] AlgorithmTracer configured for observability");
   }
 
   /**
@@ -403,7 +418,13 @@ export class PMLGatewayServer {
 
     // Unified discover (Story 10.6)
     if (name === "pml:discover") {
-      return await handleDiscover(args, this.vectorSearch, this.graphEngine, this.dagSuggester);
+      return await handleDiscover(
+        args,
+        this.vectorSearch,
+        this.graphEngine,
+        this.dagSuggester,
+        this.capabilityRegistry ?? undefined,
+      );
     }
 
     // Unified execute (Story 10.7)
@@ -539,6 +560,7 @@ export class PMLGatewayServer {
       capabilityRegistry: this.capabilityRegistry ?? undefined, // Story 13.2
       traceStore: this.capabilityStore?.getTraceStore(), // Story 11.6: PER training
       onSHGATParamsUpdated: () => this.saveSHGATParams(), // Save after PER training
+      algorithmTracer: this.algorithmTracer ?? undefined, // Story 7.6: Observability
     };
   }
 
@@ -624,6 +646,36 @@ export class PMLGatewayServer {
         LIMIT 1000`,
       ) as unknown as CapRow[];
 
+      // Story 10.1: Load capability-to-capability "contains" edges for hierarchy
+      interface ContainsEdge {
+        from_capability_id: string;
+        to_capability_id: string;
+      }
+      const containsEdges = await this.db.query(
+        `SELECT from_capability_id, to_capability_id
+         FROM capability_dependency
+         WHERE edge_type = 'contains'`,
+      ) as unknown as ContainsEdge[];
+
+      // Build children/parents maps from contains edges
+      const childrenMap = new Map<string, string[]>();
+      const parentsMap = new Map<string, string[]>();
+      for (const edge of containsEdges) {
+        // Parent -> Children
+        const children = childrenMap.get(edge.from_capability_id) || [];
+        children.push(edge.to_capability_id);
+        childrenMap.set(edge.from_capability_id, children);
+        // Child -> Parents
+        const parents = parentsMap.get(edge.to_capability_id) || [];
+        parents.push(edge.from_capability_id);
+        parentsMap.set(edge.to_capability_id, parents);
+      }
+      // Count cap→tool edges from tools_used arrays
+      const toolEdgesCount = rows.reduce((acc, c) => acc + (c.tools_used?.length ?? 0), 0);
+      log.debug(
+        `[Gateway] Loaded SHGAT hierarchy: ${containsEdges.length} cap→cap edges, ${toolEdgesCount} cap→tool edges (from tools_used)`,
+      );
+
       // Initialize SHGAT with capabilities that have embeddings (or empty)
       // Note: pgvector returns string like "[0.1,0.2,...]", pglite returns array
       const capabilitiesWithEmbeddings = rows
@@ -651,6 +703,9 @@ export class PMLGatewayServer {
           embedding: c.embedding,
           toolsUsed: c.tools_used ?? [],
           successRate: c.success_rate,
+          // Story 10.1: Include children/parents for capability hierarchy
+          children: childrenMap.get(c.id),
+          parents: parentsMap.get(c.id),
         }));
 
       // Always create SHGAT - even empty, capabilities added dynamically
@@ -675,7 +730,9 @@ export class PMLGatewayServer {
           log.warn(`[Gateway] Background SHGAT training failed: ${err}`)
         );
       } else if (paramsLoaded) {
-        log.info(`[Gateway] SHGAT params loaded from DB - skipping batch training (PER handles updates)`);
+        log.info(
+          `[Gateway] SHGAT params loaded from DB - skipping batch training (PER handles updates)`,
+        );
       }
 
       // TraceFeatureExtractor removed - V1 uses message passing, not TraceFeatures
@@ -711,20 +768,28 @@ export class PMLGatewayServer {
     }
 
     try {
-      // Query execution_trace for traces with capability_id
+      // Query execution_trace with JOIN on workflow_pattern for intent data
+      // Since migration 030, intent_text and intent_embedding come from workflow_pattern
       interface TraceRow {
         capability_id: string;
         intent_text: string | null;
+        intent_embedding: string | null; // PostgreSQL vector format "[0.1,0.2,...]"
         success: boolean;
         executed_path: string[] | null;
       }
 
       const traces = await this.db.query(`
-        SELECT capability_id, intent_text, success, executed_path
-        FROM execution_trace
-        WHERE capability_id IS NOT NULL
-          AND intent_text IS NOT NULL
-        ORDER BY priority DESC
+        SELECT
+          et.capability_id,
+          wp.description AS intent_text,
+          wp.intent_embedding,
+          et.success,
+          et.executed_path
+        FROM execution_trace et
+        JOIN workflow_pattern wp ON wp.pattern_id = et.capability_id
+        WHERE et.capability_id IS NOT NULL
+          AND wp.intent_embedding IS NOT NULL
+        ORDER BY et.priority DESC
         LIMIT 500
       `) as unknown as TraceRow[];
 
@@ -742,13 +807,22 @@ export class PMLGatewayServer {
       }
 
       // Convert traces to TrainingExamples
+      // Since migration 030, intentEmbedding comes from workflow_pattern via JOIN
       const examples: TrainingExample[] = [];
       for (const trace of traces) {
         // Skip if capability not in our set
         if (!capEmbeddings.has(trace.capability_id)) continue;
 
-        // Generate intent embedding
-        const intentEmbedding = await this.embeddingModel.encode(trace.intent_text!);
+        // Parse intent embedding from PostgreSQL vector format
+        if (!trace.intent_embedding) continue;
+        let intentEmbedding: number[];
+        try {
+          const embStr = trace.intent_embedding;
+          const cleaned = embStr.replace(/^\[|\]$/g, "");
+          intentEmbedding = cleaned.split(",").map(Number);
+        } catch {
+          continue; // Skip traces with invalid embedding format
+        }
 
         examples.push({
           intentEmbedding,
@@ -777,9 +851,7 @@ export class PMLGatewayServer {
         id: c.id,
         embedding: c.embedding,
         // First capability gets all tools from examples to ensure they're registered
-        toolsUsed: i === 0
-          ? [...new Set([...c.toolsUsed, ...allToolsFromExamples])]
-          : c.toolsUsed,
+        toolsUsed: i === 0 ? [...new Set([...c.toolsUsed, ...allToolsFromExamples])] : c.toolsUsed,
         successRate: c.successRate,
       }));
 
@@ -1140,5 +1212,4 @@ export class PMLGatewayServer {
       log.warn(`[Gateway] Could not save SHGAT params: ${error}`);
     }
   }
-
 }

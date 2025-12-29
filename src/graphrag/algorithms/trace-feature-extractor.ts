@@ -16,7 +16,8 @@
  * @module graphrag/algorithms/trace-feature-extractor
  */
 
-import type { PGliteClient, Row } from "../../db/client.ts";
+import type { DbClient } from "../../db/types.ts";
+import type { Row } from "../../db/client.ts";
 import { DEFAULT_TRACE_STATS, type TraceFeatures, type TraceStats } from "./shgat.ts";
 import { ERROR_TYPES } from "../../db/migrations/024_error_type_column.ts";
 import { getLogger } from "../../telemetry/logger.ts";
@@ -414,7 +415,9 @@ export class TraceFeatureExtractor {
           array_position(executed_path, $1) as pos,
           array_length(executed_path, 1) as total_len
         FROM execution_trace
-        WHERE $1 = ANY(executed_path)
+        WHERE executed_path IS NOT NULL
+          AND cardinality(executed_path) > 0
+          AND $1 = ANY(executed_path)
           AND array_length(executed_path, 1) > 0
       )
       SELECT AVG((pos - 1.0) / NULLIF(total_len - 1, 0)) as avg_position
@@ -488,7 +491,9 @@ export class TraceFeatureExtractor {
         SELECT
           array_length(executed_path, 1) - array_position(executed_path, $1) + 1 as steps_to_end
         FROM execution_trace
-        WHERE success = true
+        WHERE executed_path IS NOT NULL
+          AND cardinality(executed_path) > 0
+          AND success = true
           AND $1 = ANY(executed_path)
           AND array_length(executed_path, 1) > 0
       )
@@ -531,19 +536,21 @@ export class TraceFeatureExtractor {
       const embeddingStr = `[${intentEmbedding.join(",")}]`;
 
       // Use vector cosine similarity search to find similar intents
-      // Filter by: has intent_embedding, tool in executed_path, similarity >= threshold
+      // Filter by: has intent_embedding via JOIN, tool in executed_path, similarity >= threshold
+      // Note: Since migration 030, intent_embedding comes from workflow_pattern via capability_id FK
       const result = await this.db.queryOne(
         `
         WITH similar_traces AS (
           SELECT
-            id,
-            success,
-            1 - (intent_embedding <=> $1::vector) as similarity
-          FROM execution_trace
-          WHERE intent_embedding IS NOT NULL
-            AND $2 = ANY(executed_path)
-            AND 1 - (intent_embedding <=> $1::vector) >= $3
-          ORDER BY intent_embedding <=> $1::vector
+            et.id,
+            et.success,
+            1 - (wp.intent_embedding <=> $1::vector) as similarity
+          FROM execution_trace et
+          JOIN workflow_pattern wp ON wp.pattern_id = et.capability_id
+          WHERE wp.intent_embedding IS NOT NULL
+            AND $2 = ANY(et.executed_path)
+            AND 1 - (wp.intent_embedding <=> $1::vector) >= $3
+          ORDER BY wp.intent_embedding <=> $1::vector
           LIMIT $4
         )
         SELECT
@@ -675,7 +682,9 @@ export class TraceFeatureExtractor {
         MAX(executed_at) as last_used,
         AVG(duration_ms) as avg_duration
       FROM execution_trace, UNNEST(executed_path) as tool_id
-      WHERE tool_id = ANY($1::text[])
+      WHERE executed_path IS NOT NULL
+        AND cardinality(executed_path) > 0
+        AND tool_id = ANY($1::text[])
       GROUP BY tool_id
     `,
       [toolIds],
@@ -695,7 +704,9 @@ export class TraceFeatureExtractor {
           array_position(executed_path, tool_id) as pos,
           array_length(executed_path, 1) as total_len
         FROM execution_trace, UNNEST(executed_path) as tool_id
-        WHERE tool_id = ANY($1::text[])
+        WHERE executed_path IS NOT NULL
+          AND cardinality(executed_path) > 0
+          AND tool_id = ANY($1::text[])
           AND array_length(executed_path, 1) > 1
       )
       SELECT
@@ -724,7 +735,9 @@ export class TraceFeatureExtractor {
           tool_id,
           array_length(executed_path, 1) - array_position(executed_path, tool_id) + 1 as steps_to_end
         FROM execution_trace, UNNEST(executed_path) as tool_id
-        WHERE success = true
+        WHERE executed_path IS NOT NULL
+          AND cardinality(executed_path) > 0
+          AND success = true
           AND tool_id = ANY($1::text[])
           AND array_length(executed_path, 1) > 0
       )
@@ -823,6 +836,7 @@ export class TraceFeatureExtractor {
           COUNT(*) as usage_count,
           MAX(duration_ms) as duration_ms
         FROM execution_trace, UNNEST(executed_path) as tool_id
+        WHERE executed_path IS NOT NULL AND cardinality(executed_path) > 0
         GROUP BY tool_id
       ) tool_stats
     `) as Row | null;

@@ -195,7 +195,7 @@ export async function saveWorkflowDAG(
   dag: DAGStructure,
   intent: string = "",
 ): Promise<void> {
-  return saveWorkflowState(workflowId, dag, intent);
+  await saveWorkflowState(workflowId, dag, intent);
 }
 
 /**
@@ -206,7 +206,7 @@ export async function getWorkflowDAG(
   _db: DbClient,
   workflowId: string,
 ): Promise<DAGStructure | null> {
-  return getWorkflowState(workflowId);
+  return await getWorkflowState(workflowId);
 }
 
 /**
@@ -217,7 +217,7 @@ export async function getWorkflowDAGRecord(
   _db: DbClient,
   workflowId: string,
 ): Promise<WorkflowDAGRecord | null> {
-  return getWorkflowStateRecord(workflowId);
+  return await getWorkflowStateRecord(workflowId);
 }
 
 /**
@@ -229,7 +229,7 @@ export async function updateWorkflowDAG(
   workflowId: string,
   dag: DAGStructure,
 ): Promise<void> {
-  return updateWorkflowState(workflowId, dag);
+  await updateWorkflowState(workflowId, dag);
 }
 
 /**
@@ -240,16 +240,16 @@ export async function deleteWorkflowDAG(
   _db: DbClient,
   workflowId: string,
 ): Promise<void> {
-  return deleteWorkflowState(workflowId);
+  await deleteWorkflowState(workflowId);
 }
 
 /**
  * Cleanup expired DAGs - NO-OP with Deno KV (TTL is automatic)
  * @deprecated TTL cleanup is automatic with Deno KV
  */
-export async function cleanupExpiredDAGs(_db: DbClient): Promise<number> {
+export function cleanupExpiredDAGs(_db: DbClient): Promise<number> {
   log.debug("cleanupExpiredDAGs: No-op with Deno KV (TTL is automatic)");
-  return 0;
+  return Promise.resolve(0);
 }
 
 /**

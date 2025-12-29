@@ -7,6 +7,7 @@
  */
 
 import type { MiniTool } from "./types.ts";
+import process from "node:process";
 
 // Platform detection (defaults to posix for most environments)
 const isWindows = typeof Deno !== "undefined"

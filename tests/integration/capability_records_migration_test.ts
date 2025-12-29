@@ -16,7 +16,10 @@
 import { assert, assertEquals } from "@std/assert";
 import { PGliteClient } from "../../src/db/client.ts";
 import { getAllMigrations, MigrationRunner } from "../../src/db/migrations.ts";
-import { CapabilityRegistry, getCapabilityFqdn } from "../../src/capabilities/capability-registry.ts";
+import {
+  CapabilityRegistry,
+  getCapabilityFqdn,
+} from "../../src/capabilities/capability-registry.ts";
 import { createTestWorkflowPattern } from "../fixtures/test-helpers.ts";
 
 // Test setup helper
@@ -381,8 +384,10 @@ Deno.test("Migration 028 - indexes are created correctly", async () => {
 
   // Check unique index on FQDN components exists
   assert(
-    indexNames.some((n) => n.includes("fqdn") || n.includes("org") || n.includes("capability_records_org")),
-    "Missing FQDN unique index"
+    indexNames.some((n) =>
+      n.includes("fqdn") || n.includes("org") || n.includes("capability_records_org")
+    ),
+    "Missing FQDN unique index",
   );
 
   await db.close();

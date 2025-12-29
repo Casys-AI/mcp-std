@@ -352,7 +352,7 @@ export const geoTools: MiniTool[] = [
     },
     handler: ({ decimal, type }) => {
       const isNegative = (decimal as number) < 0;
-      let absDecimal = Math.abs(decimal as number);
+      const absDecimal = Math.abs(decimal as number);
 
       const degrees = Math.floor(absDecimal);
       const minFloat = (absDecimal - degrees) * 60;

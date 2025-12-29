@@ -8,7 +8,11 @@
  */
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { CapabilityRegistry, getCapabilityFqdn, getCapabilityDisplayName } from "../../../src/capabilities/capability-registry.ts";
+import {
+  CapabilityRegistry,
+  getCapabilityDisplayName,
+  getCapabilityFqdn,
+} from "../../../src/capabilities/capability-registry.ts";
 import { PGliteClient } from "../../../src/db/client.ts";
 import { getAllMigrations, MigrationRunner } from "../../../src/db/migrations.ts";
 import { createTestWorkflowPattern } from "../../fixtures/test-helpers.ts";

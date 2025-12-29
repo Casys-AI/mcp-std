@@ -206,7 +206,7 @@ export class PermissionAuditStore {
     capabilityId: string,
     limit = 50,
   ): Promise<PermissionAuditLogEntry[]> {
-    return this.getAuditLog({ capabilityId, limit });
+    return await this.getAuditLog({ capabilityId, limit });
   }
 
   /**

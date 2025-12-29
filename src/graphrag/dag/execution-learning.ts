@@ -199,13 +199,13 @@ export async function updateFromCodeExecution(
  * @param eventEmitter - Optional event emitter
  * @returns Result of operation
  */
-export async function createOrUpdateEdge(
+export function createOrUpdateEdge(
   graph: ExecutionLearningGraph,
   fromId: string,
   toId: string,
   edgeType: EdgeType,
   eventEmitter?: EdgeEventEmitter,
-): Promise<"created" | "updated" | "none"> {
+): "created" | "updated" | "none" {
   const baseWeight = EDGE_TYPE_WEIGHTS[edgeType];
 
   if (graph.hasEdge(fromId, toId)) {

@@ -298,9 +298,9 @@ export class GatewayHandler {
    */
   private async executeTask(task: Task): Promise<unknown> {
     if (this.config.executionMode === "dry_run") {
-      return this.simulateToolExecution(task);
+      return await this.simulateToolExecution(task);
     }
-    return this.executeToolReal(task);
+    return await this.executeToolReal(task);
   }
 
   /**

@@ -681,7 +681,7 @@ export const formatTools: MiniTool[] = [
     },
     handler: ({ phone, format = "international", defaultCountry = "US" }) => {
       // Remove all non-digit characters except leading +
-      let cleaned = (phone as string).replace(/[^\d+]/g, "");
+      const cleaned = (phone as string).replace(/[^\d+]/g, "");
 
       // Extract country code if present
       let countryCode = "";

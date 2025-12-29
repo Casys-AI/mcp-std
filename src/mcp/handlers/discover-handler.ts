@@ -25,6 +25,7 @@ import { formatMCPSuccess } from "../server/responses.ts";
 import { addBreadcrumb, captureError, startTransaction } from "../../telemetry/sentry.ts";
 import type { HybridSearchResult } from "../../graphrag/types.ts";
 import type { CapabilityMatch } from "../../capabilities/types.ts";
+import type { CapabilityRegistry } from "../../capabilities/capability-registry.ts";
 import {
   calculateReliabilityFactor,
   DEFAULT_RELIABILITY_CONFIG,
@@ -72,6 +73,14 @@ interface DiscoverResultItem {
   success_rate?: number;
   usage_count?: number;
   semantic_score?: number;
+  /** How to call this capability: "namespace:action" format */
+  call_name?: string;
+  /** Inner capabilities called by this meta-capability */
+  called_capabilities?: Array<{
+    id: string;
+    call_name?: string;
+    input_schema?: Record<string, unknown>;
+  }>;
 }
 
 /**
@@ -128,6 +137,7 @@ export async function handleDiscover(
   vectorSearch: VectorSearch,
   graphEngine: GraphRAGEngine,
   dagSuggester: DAGSuggester,
+  capabilityRegistry?: CapabilityRegistry,
 ): Promise<MCPToolResponse | MCPErrorResponse> {
   const transaction = startTransaction("mcp.discover", "mcp");
   const startTime = performance.now();
@@ -186,7 +196,12 @@ export async function handleDiscover(
 
     // Search capabilities if filter allows
     if (filterType === "all" || filterType === "capability") {
-      const capabilityResult = await searchCapability(intent, dagSuggester, correlationId);
+      const capabilityResult = await searchCapability(
+        intent,
+        dagSuggester,
+        capabilityRegistry,
+        correlationId,
+      );
       if (capabilityResult && capabilityResult.score >= minScore) {
         results.push(capabilityResult);
         capabilitiesCount++;
@@ -308,9 +323,13 @@ async function searchTools(
 async function searchCapability(
   intent: string,
   dagSuggester: DAGSuggester,
+  capabilityRegistry?: CapabilityRegistry,
   correlationId?: string,
 ): Promise<DiscoverResultItem | null> {
-  const match: CapabilityMatch | null = await dagSuggester.searchCapabilities(intent, correlationId);
+  const match: CapabilityMatch | null = await dagSuggester.searchCapabilities(
+    intent,
+    correlationId,
+  );
 
   if (!match) {
     return null;
@@ -319,6 +338,56 @@ async function searchCapability(
   // AC12-13: CapabilityMatcher.findMatch() already computes:
   // score = semanticScore × reliabilityFactor × transitiveReliability
   // See matcher.ts:187-188 and computeTransitiveReliability() for implementation
+
+  // Get namespace:action from capability_records via registry (preferred)
+  // Note: match.capability.id is workflow_pattern.pattern_id, not capability_records.id
+  // Fallback to parsing FQDN if registry not available
+  let callName: string | undefined;
+  if (capabilityRegistry) {
+    const record = await capabilityRegistry.getByWorkflowPatternId(match.capability.id);
+    if (record) {
+      callName = `${record.namespace}:${record.action}`;
+    }
+  } else if (match.capability.fqdn) {
+    // Fallback: Extract from FQDN (format: org.project.namespace.action.hash)
+    const parts = match.capability.fqdn.split(".");
+    if (parts.length >= 5) {
+      callName = `${parts[2]}:${parts[3]}`;
+    }
+  }
+
+  // Parse $cap:uuid references from code to find called capabilities
+  const calledCapabilities: Array<{
+    id: string;
+    call_name?: string;
+    input_schema?: Record<string, unknown>;
+  }> = [];
+
+  if (match.capability.codeSnippet && capabilityRegistry) {
+    // Find all $cap:uuid patterns in the code
+    const capRefPattern = /\$cap:([a-f0-9-]{36})/g;
+    let capMatch;
+    const seenIds = new Set<string>();
+
+    while ((capMatch = capRefPattern.exec(match.capability.codeSnippet)) !== null) {
+      const capUuid = capMatch[1];
+      if (seenIds.has(capUuid)) continue;
+      seenIds.add(capUuid);
+
+      // Look up the inner capability by its workflow_pattern_id
+      const innerRecord = await capabilityRegistry.getByWorkflowPatternId(capUuid);
+      if (innerRecord) {
+        // Get the capability's schema from the store
+        const innerCap = await dagSuggester.getCapabilityStore()?.findById(capUuid);
+        calledCapabilities.push({
+          id: capUuid,
+          call_name: `${innerRecord.namespace}:${innerRecord.action}`,
+          input_schema: innerCap?.parametersSchema as Record<string, unknown> | undefined,
+        });
+      }
+    }
+  }
+
   return {
     type: "capability",
     id: match.capability.id,
@@ -329,6 +398,9 @@ async function searchCapability(
     success_rate: match.capability.successRate,
     usage_count: match.capability.usageCount,
     semantic_score: match.semanticScore,
+    call_name: callName,
+    input_schema: match.parametersSchema as Record<string, unknown> | undefined,
+    called_capabilities: calledCapabilities.length > 0 ? calledCapabilities : undefined,
   };
 }
 

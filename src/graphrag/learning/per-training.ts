@@ -128,7 +128,7 @@ export interface PERTrainingResult {
 export async function trainSHGATOnPathTraces(
   shgat: SHGAT,
   traceStore: ExecutionTraceStore,
-  embeddingProvider: EmbeddingProvider,
+  _embeddingProvider: EmbeddingProvider, // Unused since migration 030 (embeddings from JOIN)
   options: PERTrainingOptions = {},
 ): Promise<PERTrainingResult> {
   const {
@@ -184,28 +184,24 @@ export async function trainSHGATOnPathTraces(
 
   // Step 4: Flatten paths and generate training examples
   const allExamples: TrainingExample[] = [];
-  const intentEmbeddings = new Map<string, number[]>();
   // Track which examples belong to which trace (for TD error aggregation)
   const exampleToTraceId: string[] = [];
 
-  // Batch compute embeddings for efficiency
-  const uniqueIntents = [...new Set(traces.map((t) => t.intentText ?? ""))];
-  for (const intent of uniqueIntents) {
-    try {
-      const embedding = await embeddingProvider.getEmbedding(intent);
-      intentEmbeddings.set(intent, embedding);
-    } catch (error) {
-      log.warn("[PER-Training] Failed to embed intent", {
-        intent: intent.slice(0, 50),
-        error: String(error),
-      });
-    }
-  }
+  // Note: Since migration 030, intentEmbedding comes from capability via JOIN.
+  // No need to regenerate embeddings - use trace.intentEmbedding directly.
+  // This ensures perfect consistency when capabilities are renamed.
 
   // Generate examples for each trace
   for (const trace of traces) {
-    const intentEmbedding = intentEmbeddings.get(trace.intentText ?? "");
-    if (!intentEmbedding) continue;
+    // Use intentEmbedding from JOIN (comes from workflow_pattern.intent_embedding)
+    const intentEmbedding = trace.intentEmbedding;
+    if (!intentEmbedding || intentEmbedding.length === 0) {
+      log.debug("[PER-Training] Skipping trace without intent embedding", {
+        traceId: trace.id,
+        capabilityId: trace.capabilityId,
+      });
+      continue;
+    }
 
     // Flatten hierarchical path
     const flatPath = await flattenExecutedPath(trace, traceStore);
@@ -521,7 +517,7 @@ export interface SubprocessPEROptions extends PERTrainingOptions {
 export async function trainSHGATOnPathTracesSubprocess(
   shgat: SHGAT,
   traceStore: ExecutionTraceStore,
-  embeddingProvider: EmbeddingProvider,
+  _embeddingProvider: EmbeddingProvider, // Unused since migration 030 (embeddings from JOIN)
   options: SubprocessPEROptions,
 ): Promise<PERTrainingResult> {
   const {
@@ -579,27 +575,22 @@ export async function trainSHGATOnPathTracesSubprocess(
 
   // Step 4: Generate training examples
   const allExamples: TrainingExample[] = [];
-  const intentEmbeddings = new Map<string, number[]>();
   const exampleToTraceId: string[] = [];
 
-  // Batch compute embeddings
-  const uniqueIntents = [...new Set(traces.map((t) => t.intentText ?? ""))];
-  for (const intent of uniqueIntents) {
-    try {
-      const embedding = await embeddingProvider.getEmbedding(intent);
-      intentEmbeddings.set(intent, embedding);
-    } catch (error) {
-      log.warn("[PER-Subprocess] Failed to embed intent", {
-        intent: intent.slice(0, 50),
-        error: String(error),
-      });
-    }
-  }
+  // Note: Since migration 030, intentEmbedding comes from capability via JOIN.
+  // No need to regenerate embeddings - use trace.intentEmbedding directly.
 
   // Generate examples for each trace
   for (const trace of traces) {
-    const intentEmbedding = intentEmbeddings.get(trace.intentText ?? "");
-    if (!intentEmbedding) continue;
+    // Use intentEmbedding from JOIN (comes from workflow_pattern.intent_embedding)
+    const intentEmbedding = trace.intentEmbedding;
+    if (!intentEmbedding || intentEmbedding.length === 0) {
+      log.debug("[PER-Subprocess] Skipping trace without intent embedding", {
+        traceId: trace.id,
+        capabilityId: trace.capabilityId,
+      });
+      continue;
+    }
 
     const flatPath = await flattenExecutedPath(trace, traceStore);
     const examples = traceToTrainingExamples(trace, flatPath, intentEmbedding, pathFeatures);
@@ -635,9 +626,7 @@ export async function trainSHGATOnPathTracesSubprocess(
   // Ensure first capability includes all tools
   const capsForWorker = capabilities.map((c, i) => ({
     ...c,
-    toolsUsed: i === 0
-      ? [...new Set([...c.toolsUsed, ...allToolsFromExamples])]
-      : c.toolsUsed,
+    toolsUsed: i === 0 ? [...new Set([...c.toolsUsed, ...allToolsFromExamples])] : c.toolsUsed,
   }));
 
   // Step 6: Train in subprocess

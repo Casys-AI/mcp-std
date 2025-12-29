@@ -185,6 +185,22 @@ export interface Capability {
    * - "dangerous": Any tool has mcp-standard scope (threshold ~0.85)
    */
   riskCategory?: "safe" | "moderate" | "dangerous";
+  /**
+   * Hierarchy level for nested compound nodes (Story 10.1)
+   * - 0: Leaf capability (uses only tools, no nested capabilities)
+   * - 1+: Meta-capability (contains other capabilities)
+   */
+  hierarchyLevel?: number;
+  /**
+   * Child capability IDs (via "contains" edges) - Story 10.1
+   * Populated when this capability calls other capabilities.
+   */
+  children?: string[];
+  /**
+   * Parent capability IDs (via "contains" edges) - Story 10.1
+   * Populated when this capability is called by other capabilities.
+   */
+  parents?: string[];
 }
 
 /**
@@ -758,6 +774,7 @@ export interface CapabilityResponseInternal {
   createdAt: string; // ISO timestamp
   lastUsed: string; // ISO timestamp
   source: "emergent" | "manual"; // Learning source
+  hierarchyLevel: number; // 0=leaf, 1+=contains capabilities (Story 10.1)
 }
 
 /**
@@ -799,17 +816,27 @@ export interface CapabilityNode {
     id: string; // "cap-{uuid}"
     type: "capability";
     label: string; // Name or intent preview
+    /** Full description/intent of the capability */
+    description?: string;
     codeSnippet: string;
     successRate: number;
     usageCount: number;
     toolsCount: number; // Number of child tools
     pagerank: number; // Hypergraph PageRank score (0-1)
+    /** Community/cluster ID from spectral clustering (Story 8.2) */
+    communityId?: number;
+    /** Fully qualified domain name (Story 8.2) */
+    fqdn?: string;
     toolsUsed?: string[]; // Unique tools (deduplicated)
     toolInvocations?: CapabilityToolInvocation[]; // Full sequence with timestamps (for invocation mode)
     /** Execution traces (Story 11.4) - included when includeTraces=true */
     traces?: ExecutionTrace[];
     /** Last used timestamp (ISO format) for timeline sorting */
     lastUsed?: string;
+    /** Parent capability ID for nested compound nodes (Story 10.1) */
+    parent?: string;
+    /** Hierarchy level: 0=leaf, 1+=contains other capabilities (Story 10.1) */
+    hierarchyLevel?: number;
   };
 }
 

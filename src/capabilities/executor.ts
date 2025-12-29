@@ -106,6 +106,6 @@ export class CapabilityExecutor {
    * @returns CapabilityMatch or null
    */
   async findMatch(intent: string): Promise<CapabilityMatch | null> {
-    return this.matcher.findMatch(intent);
+    return await this.matcher.findMatch(intent);
   }
 }

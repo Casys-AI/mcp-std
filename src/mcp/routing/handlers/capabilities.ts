@@ -137,7 +137,10 @@ export async function handleListCapabilities(
 
     const result = await ctx.capabilityDataService.listCapabilities(filters);
 
-    // Map to snake_case and include dependencies_count
+    // Get capability pageranks from DAGSuggester (Story 8.2)
+    const pageranks = ctx.dagSuggester?.getCapabilityPageranks() ?? new Map<string, number>();
+
+    // Map to snake_case and include dependencies_count + pagerank
     const capabilitiesWithDeps = await Promise.all(
       result.capabilities.map(async (cap) => {
         const depsCount = ctx.capabilityStore
@@ -154,6 +157,7 @@ export async function handleListCapabilities(
           usage_count: cap.usageCount,
           avg_duration_ms: cap.avgDurationMs,
           community_id: cap.communityId,
+          pagerank: pageranks.get(cap.id) ?? 0,
           intent_preview: cap.intentPreview,
           created_at: cap.createdAt,
           last_used: cap.lastUsed,

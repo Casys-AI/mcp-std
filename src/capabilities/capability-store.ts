@@ -238,7 +238,10 @@ export class CapabilityStore {
     };
 
     // Story 10.1: Add static_structure to dag_structure if available
-    if (finalStaticStructure && (finalStaticStructure.nodes.length > 0 || finalStaticStructure.edges.length > 0)) {
+    if (
+      finalStaticStructure &&
+      (finalStaticStructure.nodes.length > 0 || finalStaticStructure.edges.length > 0)
+    ) {
       dagStructure.static_structure = finalStaticStructure;
     }
 
@@ -378,59 +381,94 @@ export class CapabilityStore {
     }
 
     // Story 10.1: Create CapabilityDependency records for nested capability calls
+    // Capabilities are called via mcp.namespace.action, detected as "task" nodes
+    // We check if each task's tool matches an existing capability in DB
+    // Also calculate hierarchy_level = max(child_levels) + 1
+    let maxChildLevel = -1; // -1 means no children found, final level will be 0
+    const childCapabilityIds: string[] = []; // Track children for SHGAT
+
     if (finalStaticStructure) {
-      const capabilityNodes = finalStaticStructure.nodes.filter(
-        (node): node is { id: string; type: "capability"; capabilityId: string } =>
-          node.type === "capability",
+      const taskNodes = finalStaticStructure.nodes.filter(
+        (node): node is { id: string; type: "task"; tool: string } => node.type === "task",
       );
 
-      for (const capNode of capabilityNodes) {
-        // Try to find the called capability by:
-        // 1. workflow_pattern_id starting with the short hash (e.g., "94ae67b3")
-        // 2. namespace:action containing the name (e.g., "math:array_sum")
-        // Migration 028: display_name removed, use namespace || ':' || action
+      for (const taskNode of taskNodes) {
+        // Tool format is "namespace:action" (e.g., "cap:math_array_sum")
+        // Check if this tool matches an existing capability in DB
+        const toolId = taskNode.tool;
+        const [namespace, action] = toolId.includes(":") ? toolId.split(":", 2) : ["", toolId];
+
         try {
-          // Story 10.1: Find called capability by code_hash prefix or namespace:action
-          // The capabilityId can be:
-          //   - Short hash (8 chars) = prefix of code_hash in workflow_pattern
-          //   - Action name like "math_stats" or "array_sum"
-          //   - namespace:action like "math:array_sum"
-          // Use text-only comparison to avoid UUID type inference issues
-          const searchPattern = `${capNode.capabilityId}%`;
+          // Query DB to check if this tool is an existing capability
+          // Also get its hierarchy_level for recursive level calculation
           const calledCapabilities = await this.db.query(
-            `SELECT wp.pattern_id
+            `SELECT wp.pattern_id, COALESCE(wp.hierarchy_level, 0) as hierarchy_level
              FROM workflow_pattern wp
-             LEFT JOIN capability_records cr ON cr.workflow_pattern_id = wp.pattern_id::text
-             WHERE wp.code_hash LIKE $1
-                OR cr.action ILIKE $2
-                OR (cr.namespace || ':' || cr.action) ILIKE $2
+             INNER JOIN capability_records cr ON cr.workflow_pattern_id = wp.pattern_id
+             WHERE (cr.namespace = $1 AND cr.action = $2)
+                OR (cr.namespace || ':' || cr.action) = $3
              LIMIT 1`,
-            [searchPattern, `%${capNode.capabilityId}%`],
+            [namespace, action, toolId],
           );
 
           if (calledCapabilities.length > 0) {
             const calledCapabilityId = calledCapabilities[0].pattern_id as string;
+            const childLevel = Number(calledCapabilities[0].hierarchy_level) || 0;
+
+            // Track max child level for hierarchy calculation
+            maxChildLevel = Math.max(maxChildLevel, childLevel);
+            // Track child IDs for SHGAT registration
+            childCapabilityIds.push(calledCapabilityId);
+
+            // Create "contains" edge
             await this.addDependency({
               fromCapabilityId: capability.id,
               toCapabilityId: calledCapabilityId,
               edgeType: "contains",
               edgeSource: "inferred",
             });
-            logger.debug("Created CapabilityDependency from static analysis", {
+            logger.info("Created CapabilityDependency (contains edge)", {
               fromCapabilityId: capability.id,
               toCapabilityId: calledCapabilityId,
-              calledCapabilityName: capNode.capabilityId,
+              calledTool: toolId,
+              childLevel,
             });
           }
         } catch (error) {
           logger.warn("Failed to create CapabilityDependency", {
             capabilityId: capability.id,
-            calledCapabilityName: capNode.capabilityId,
+            calledTool: toolId,
             error: error instanceof Error ? error.message : String(error),
           });
         }
       }
     }
+
+    // Update hierarchy_level: parent level = max(child levels) + 1
+    // If no children (maxChildLevel = -1), level stays 0
+    const finalHierarchyLevel = maxChildLevel >= 0 ? maxChildLevel + 1 : 0;
+    if (maxChildLevel >= 0) {
+      try {
+        await this.db.query(
+          `UPDATE workflow_pattern SET hierarchy_level = $1 WHERE pattern_id = $2`,
+          [finalHierarchyLevel, capability.id],
+        );
+        logger.info("Updated capability hierarchy_level", {
+          capabilityId: capability.id,
+          hierarchyLevel: finalHierarchyLevel,
+          maxChildLevel,
+        });
+      } catch (error) {
+        logger.warn("Failed to update hierarchy_level", {
+          capabilityId: capability.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    // Update capability object with hierarchy info for SHGAT registration
+    capability.hierarchyLevel = finalHierarchyLevel;
+    capability.children = childCapabilityIds.length > 0 ? childCapabilityIds : undefined;
 
     // Story 11.2: Optionally save execution trace if traceData provided
     let trace: ExecutionTrace | undefined;
@@ -730,8 +768,14 @@ export class CapabilityStore {
    * @returns Capability if found, null otherwise
    */
   async findById(id: string): Promise<Capability | null> {
+    // JOIN with capability_records to get display name (namespace:action)
     const result = await this.db.query(
-      `SELECT * FROM workflow_pattern WHERE pattern_id = $1`,
+      `SELECT wp.*,
+              COALESCE(cr.namespace || ':' || cr.action, cr.id::text) as display_name,
+              cr.id as fqdn
+       FROM workflow_pattern wp
+       LEFT JOIN capability_records cr ON cr.workflow_pattern_id = wp.pattern_id
+       WHERE wp.pattern_id = $1`,
       [id],
     );
 
@@ -807,8 +851,8 @@ export class CapabilityStore {
       intentEmbedding,
       parametersSchema,
       cacheConfig,
-      // Note: name column removed in migration 022 - naming via capability_records.display_name
-      name: undefined,
+      // Story 7.6: name from capability_records via JOIN (namespace:action)
+      name: (row.display_name as string) || undefined,
       description: (row.description as string) || undefined,
       usageCount: row.usage_count as number,
       successCount: row.success_count as number,
@@ -826,6 +870,8 @@ export class CapabilityStore {
       staticStructure,
       // Story 10.7c: Risk category derived from max(toolsUsed.risk)
       riskCategory: toolsUsed ? calculateCapabilityRisk(toolsUsed) : "safe",
+      // Story 10.1: Hierarchy level from DB (0=leaf, 1+=meta-capability)
+      hierarchyLevel: (row.hierarchy_level as number) ?? 0,
     };
   }
 
@@ -1385,6 +1431,7 @@ export class CapabilityStore {
         id: row.id as string,
         namespace,
         action,
+        displayName: `${namespace}:${action}`,
         description: row.description as string | null,
         parametersSchema,
         usageCount: row.usage_count as number,

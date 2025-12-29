@@ -302,5 +302,9 @@ Deno.test("staticStructureToDag - Story 10.2c fix: preserves executable nodes", 
   const taskTools = dag.tasks.map((t) => t.tool);
   assertEquals(taskTools.includes("fs:read_file"), true, "Should include MCP tool");
   assertEquals(taskTools.includes("code:map"), true, "Should include executable code op");
-  assertEquals(taskTools.includes("code:filter"), false, "Should NOT include non-executable code op");
+  assertEquals(
+    taskTools.includes("code:filter"),
+    false,
+    "Should NOT include non-executable code op",
+  );
 });

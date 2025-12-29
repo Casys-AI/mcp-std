@@ -80,10 +80,10 @@
       "tags": ["recommended"]
     },
     "exclude": [
-      "tests/integration/",
-      "tests/e2e/",
-      "tests/load/",
-      "tests/memory/"
+      "tests/",
+      "benchmarks/",
+      "scripts/",
+      "_bmad/"
     ]
   },
   "imports": {

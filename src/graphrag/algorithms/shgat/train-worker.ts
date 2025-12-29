@@ -99,7 +99,9 @@ async function main() {
       lastEpochTdErrors = epochTdErrors;
 
       console.error(
-        `[SHGAT Worker] Epoch ${epoch}: loss=${finalLoss.toFixed(4)}, acc=${finalAccuracy.toFixed(2)}`,
+        `[SHGAT Worker] Epoch ${epoch}: loss=${finalLoss.toFixed(4)}, acc=${
+          finalAccuracy.toFixed(2)
+        }`,
       );
     }
 

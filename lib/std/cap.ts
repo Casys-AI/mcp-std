@@ -16,13 +16,13 @@
 
 import {
   type CapabilityRegistry,
-  type Scope,
   getCapabilityDisplayName,
   getCapabilityFqdn,
+  type Scope,
 } from "../../src/capabilities/capability-registry.ts";
 import type { DbClient } from "../../src/db/mod.ts";
 import type { EmbeddingModelInterface } from "../../src/vector/embeddings.ts";
-import { isValidMCPName, parseFQDN } from "../../src/capabilities/fqdn.ts";
+import { parseFQDN } from "../../src/capabilities/fqdn.ts";
 import * as log from "@std/log";
 
 // =============================================================================
@@ -102,14 +102,23 @@ export interface CapListResponse {
 
 /**
  * Options for cap:rename tool
+ *
+ * Allows updating namespace, action, description, tags, and visibility.
+ * The UUID (id) remains immutable. FQDN is recomputed from namespace/action.
  */
 export interface CapRenameOptions {
-  /** Current name or FQDN to rename */
+  /** Current name (namespace:action) or UUID to update */
   name: string;
-  /** New display_name (FQDN stays immutable) */
-  newName: string;
+  /** New namespace (e.g., "fs", "api", "data") */
+  namespace?: string;
+  /** New action name (e.g., "read_json", "fetch_user") */
+  action?: string;
   /** Optional description update */
   description?: string;
+  /** Optional tags update */
+  tags?: string[];
+  /** Optional visibility update */
+  visibility?: "private" | "project" | "org" | "public";
 }
 
 /**
@@ -118,10 +127,12 @@ export interface CapRenameOptions {
 export interface CapRenameResponse {
   /** Whether rename succeeded */
   success: boolean;
-  /** FQDN (unchanged - immutable) */
+  /** UUID (immutable) */
+  id: string;
+  /** New FQDN (recomputed if namespace/action changed) */
   fqdn: string;
-  /** Whether an alias was created for the old name (always false - aliases removed) */
-  aliasCreated: boolean;
+  /** New display name (namespace:action) */
+  displayName: string;
   /** Error message if failed */
   error?: string;
 }
@@ -144,6 +155,10 @@ export interface CapLookupResponse {
   fqdn: string;
   /** Display name (namespace:action) */
   displayName: string;
+  /** Namespace */
+  namespace: string;
+  /** Action */
+  action: string;
   /** Description from workflow_pattern */
   description: string | null;
   /** Total usage count */
@@ -212,6 +227,8 @@ export interface CapWhoisResponse {
   routing: "local" | "cloud";
   /** Description from workflow_pattern */
   description?: string | null;
+  /** Input parameters schema (JSON Schema) */
+  parametersSchema?: Record<string, unknown> | null;
 }
 
 /**
@@ -330,24 +347,38 @@ export class CapModule {
       {
         name: "cap:rename",
         description:
-          "Rename a capability by updating its display_name. Old name is overwritten (no alias). FQDN remains immutable.",
+          "Update a capability's namespace, action, description, tags, or visibility. UUID stays immutable. FQDN is recomputed if namespace/action changes.",
         inputSchema: {
           type: "object",
           properties: {
             name: {
               type: "string",
-              description: "Current name or FQDN to rename",
+              description: "Current name (namespace:action) or UUID to update",
             },
-            newName: {
+            namespace: {
               type: "string",
-              description: "New display name",
+              description: "New namespace (e.g., 'fs', 'api', 'data')",
+            },
+            action: {
+              type: "string",
+              description: "New action name (e.g., 'read_json', 'fetch_user')",
             },
             description: {
               type: "string",
-              description: "Optional new description",
+              description: "New description",
+            },
+            tags: {
+              type: "array",
+              items: { type: "string" },
+              description: "New tags array",
+            },
+            visibility: {
+              type: "string",
+              enum: ["private", "project", "org", "public"],
+              description: "New visibility level",
             },
           },
-          required: ["name", "newName"],
+          required: ["name"],
         },
       },
       {
@@ -368,16 +399,16 @@ export class CapModule {
       {
         name: "cap:whois",
         description:
-          "Get complete metadata for a capability by FQDN. Returns full CapabilityRecord with all fields.",
+          "Get complete metadata for a capability by UUID or FQDN. Returns full CapabilityRecord with all fields.",
         inputSchema: {
           type: "object",
           properties: {
-            fqdn: {
+            id: {
               type: "string",
-              description: "FQDN to look up (e.g., 'local.default.fs.read_json.a7f3')",
+              description: "UUID or FQDN to look up",
             },
           },
-          required: ["fqdn"],
+          required: ["id"],
         },
       },
     ];
@@ -504,24 +535,69 @@ export class CapModule {
   }
 
   /**
-   * Handle cap:rename - DEPRECATED: Names are now immutable (namespace:action)
+   * Handle cap:rename - Update capability namespace, action, description, tags, visibility
    *
-   * This function now only updates the description.
-   * The 'newName' parameter is ignored since names are derived from namespace:action.
+   * AC5: cap:rename({ name, namespace?, action?, description?, tags?, visibility? })
+   * - UUID (id) stays immutable
+   * - If namespace/action changes, FQDN is recomputed
+   * - Note: capability_aliases table was removed in migration 028
    */
   private async handleRename(options: CapRenameOptions): Promise<CapToolResult> {
-    const { name, description } = options;
+    const { name, namespace, action, description, tags, visibility } = options;
 
-    // Resolve the capability by name (namespace:action format)
-    const record = await this.registry.resolveByName(name, DEFAULT_SCOPE);
+    // Resolve the capability by name (namespace:action) or UUID
+    let record = await this.registry.resolveByName(name, DEFAULT_SCOPE);
+    if (!record) {
+      // Try by UUID
+      record = await this.registry.getById(name);
+    }
     if (!record) {
       return this.errorResult(`Capability not found: ${name}`);
     }
 
-    const fqdn = getCapabilityFqdn(record);
-    const displayName = getCapabilityDisplayName(record);
+    const oldDisplayName = getCapabilityDisplayName(record);
 
-    // Only update description if provided
+    // Build dynamic UPDATE for capability_records
+    const updates: string[] = [];
+    const params: (string | string[] | number)[] = [];
+    let paramIndex = 1;
+
+    if (namespace !== undefined) {
+      updates.push(`namespace = $${paramIndex++}`);
+      params.push(namespace);
+    }
+    if (action !== undefined) {
+      updates.push(`action = $${paramIndex++}`);
+      params.push(action);
+    }
+    if (tags !== undefined) {
+      updates.push(`tags = $${paramIndex++}`);
+      params.push(tags);
+    }
+    if (visibility !== undefined) {
+      updates.push(`visibility = $${paramIndex++}`);
+      params.push(visibility);
+    }
+
+    // Always update updated_at
+    updates.push(`updated_at = NOW()`);
+    updates.push(`updated_by = $${paramIndex++}`);
+    params.push("system"); // TODO: get actual user from context
+
+    // Execute capability_records update if we have fields to update
+    if (updates.length > 2) {
+      // More than just updated_at and updated_by
+      params.push(record.id);
+      await this.db.query(
+        `UPDATE capability_records
+         SET ${updates.join(", ")}
+         WHERE id = $${paramIndex}`,
+        params,
+      );
+      log.info(`[CapModule] Updated capability_records for ${record.id}`);
+    }
+
+    // Update description in workflow_pattern if provided
     if (description !== undefined && record.workflowPatternId) {
       await this.db.query(
         `UPDATE workflow_pattern
@@ -531,9 +607,13 @@ export class CapModule {
       );
 
       // Recalculate embedding with updated description
+      const newNamespace = namespace ?? record.namespace;
+      const newAction = action ?? record.action;
+      const newDisplayName = `${newNamespace}:${newAction}`;
+
       if (this.embeddingModel) {
         try {
-          const embeddingText = buildEmbeddingText(displayName, description);
+          const embeddingText = buildEmbeddingText(newDisplayName, description);
           const newEmbedding = await this.embeddingModel.encode(embeddingText);
           const embeddingStr = `[${newEmbedding.join(",")}]`;
 
@@ -543,7 +623,7 @@ export class CapModule {
              WHERE pattern_id = $2`,
             [embeddingStr, record.workflowPatternId],
           );
-          log.info(`[CapModule] Embedding updated for ${displayName}`);
+          log.info(`[CapModule] Embedding updated for ${newDisplayName}`);
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           log.warn(`[CapModule] Failed to update embedding: ${msg}`);
@@ -551,13 +631,21 @@ export class CapModule {
       }
     }
 
+    // Compute final values
+    const finalNamespace = namespace ?? record.namespace;
+    const finalAction = action ?? record.action;
+    const newFqdn =
+      `${record.org}.${record.project}.${finalNamespace}.${finalAction}.${record.hash}`;
+    const newDisplayName = `${finalNamespace}:${finalAction}`;
+
     const response: CapRenameResponse = {
       success: true,
-      fqdn,
-      aliasCreated: false,
+      id: record.id,
+      fqdn: newFqdn,
+      displayName: newDisplayName,
     };
 
-    log.info(`[CapModule] Updated description for ${displayName} (FQDN: ${fqdn})`);
+    log.info(`[CapModule] cap:rename ${oldDisplayName} -> ${newDisplayName}`);
     return this.successResult(response);
   }
 
@@ -595,6 +683,8 @@ export class CapModule {
       id: record.id,
       fqdn: getCapabilityFqdn(record),
       displayName: getCapabilityDisplayName(record),
+      namespace: record.namespace,
+      action: record.action,
       description,
       usageCount: record.usageCount,
       successRate: record.usageCount > 0 ? record.successCount / record.usageCount : 0,
@@ -611,6 +701,11 @@ export class CapModule {
    */
   private async handleWhois(options: CapWhoisOptions): Promise<CapToolResult> {
     const { id } = options;
+
+    // Validate id is provided
+    if (!id) {
+      return this.errorResult("id parameter is required");
+    }
 
     // Try to find by UUID first, then parse as FQDN
     let record = await this.registry.getById(id);
@@ -635,18 +730,21 @@ export class CapModule {
       return this.errorResult(`Capability not found: ${id}`);
     }
 
-    // Get description from workflow_pattern
-    interface DescRow {
+    // Get description and parameters_schema from workflow_pattern
+    interface PatternRow {
       description: string | null;
+      parameters_schema: Record<string, unknown> | null;
     }
     let description: string | null = null;
+    let parametersSchema: Record<string, unknown> | null = null;
     if (record.workflowPatternId) {
-      const descRows = (await this.db.query(
-        `SELECT description FROM workflow_pattern WHERE pattern_id = $1`,
+      const patternRows = (await this.db.query(
+        `SELECT description, parameters_schema FROM workflow_pattern WHERE pattern_id = $1`,
         [record.workflowPatternId],
-      )) as unknown as DescRow[];
-      if (descRows.length > 0) {
-        description = descRows[0].description;
+      )) as unknown as PatternRow[];
+      if (patternRows.length > 0) {
+        description = patternRows[0].description;
+        parametersSchema = patternRows[0].parameters_schema;
       }
     }
 
@@ -675,6 +773,7 @@ export class CapModule {
       visibility: record.visibility,
       routing: record.routing,
       description,
+      parametersSchema,
     };
 
     log.info(`[CapModule] cap:whois ${id} -> ${record.id}`);
@@ -769,25 +868,40 @@ export const pmlTools: MiniTool[] = [
   },
   {
     name: "cap_rename",
-    description: "Rename a capability (updates display_name, old name overwritten)",
+    description:
+      "Update a capability's namespace, action, description, tags, or visibility. UUID stays immutable.",
     category: "pml",
     inputSchema: {
       type: "object",
       properties: {
         name: {
           type: "string",
-          description: "Current name or FQDN to rename",
+          description: "Current name (namespace:action) or UUID to update",
         },
-        newName: {
+        namespace: {
           type: "string",
-          description: "New display name",
+          description: "New namespace (e.g., 'fs', 'api', 'data')",
+        },
+        action: {
+          type: "string",
+          description: "New action name (e.g., 'read_json', 'fetch_user')",
         },
         description: {
           type: "string",
-          description: "Optional new description",
+          description: "New description",
+        },
+        tags: {
+          type: "array",
+          items: { type: "string" },
+          description: "New tags array",
+        },
+        visibility: {
+          type: "string",
+          enum: ["private", "project", "org", "public"],
+          description: "New visibility level",
         },
       },
-      required: ["name", "newName"],
+      required: ["name"],
     },
     handler: async (args) => {
       const result = await getCapModule().call("cap:rename", args);
@@ -815,20 +929,31 @@ export const pmlTools: MiniTool[] = [
   },
   {
     name: "cap_whois",
-    description: "Get complete metadata for a capability by FQDN",
+    description: "Get complete metadata for a capability by UUID, FQDN, or name (namespace:action)",
     category: "pml",
     inputSchema: {
       type: "object",
       properties: {
-        fqdn: {
+        name: {
           type: "string",
-          description: "FQDN to look up (e.g., 'local.default.fs.read_json.a7f3')",
+          description: "UUID, FQDN, or display name (namespace:action) to look up",
         },
       },
-      required: ["fqdn"],
+      required: ["name"],
     },
     handler: async (args) => {
-      const result = await getCapModule().call("cap:whois", args);
+      // Support name (namespace:action), UUID, or FQDN
+      const { name } = args as { name: string };
+      // Try lookup by name first (namespace:action), fall back to whois (UUID/FQDN)
+      const lookupResult = await getCapModule().call("cap:lookup", { name });
+      const lookupData = JSON.parse(lookupResult.content[0].text);
+      if (!lookupData.error) {
+        // Found by name, now get full whois by UUID
+        const whoisResult = await getCapModule().call("cap:whois", { id: lookupData.id });
+        return JSON.parse(whoisResult.content[0].text);
+      }
+      // Fall back to whois directly (UUID or FQDN)
+      const result = await getCapModule().call("cap:whois", { id: name });
       return JSON.parse(result.content[0].text);
     },
   },
@@ -848,11 +973,19 @@ export class PmlStdServer {
   readonly serverId = "pml-std";
   private cap: CapModule;
 
-  constructor(registry: CapabilityRegistry, db: DbClient, embeddingModel?: EmbeddingModelInterface) {
+  constructor(
+    registry: CapabilityRegistry,
+    db: DbClient,
+    embeddingModel?: EmbeddingModelInterface,
+  ) {
     this.cap = new CapModule(registry, db, embeddingModel);
     // Set global CapModule for pmlTools discovery
     setCapModule(this.cap);
-    log.info(`[PmlStdServer] Initialized with cap:* tools${embeddingModel ? " (embedding support enabled)" : ""}`);
+    log.info(
+      `[PmlStdServer] Initialized with cap:* tools${
+        embeddingModel ? " (embedding support enabled)" : ""
+      }`,
+    );
   }
 
   /** Get the underlying CapModule */

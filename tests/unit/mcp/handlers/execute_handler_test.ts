@@ -57,8 +57,9 @@ function createMockDependencies(): ExecuteDependencies {
     encode: async () => new Array(1024).fill(0.1), // 1024-dim embedding
   };
 
-  // Story 10.7/11.10: Mock SHGAT v2 - returns empty by default (no capabilities/tools)
+  // Story 10.7/11.10: Mock SHGAT - returns empty by default (no capabilities/tools)
   const mockShgat = {
+    scoreAllCapabilities: () => [], // No matches
     scoreAllCapabilitiesV2: () => [], // No matches (v2)
     scoreAllToolsV2: () => [], // No matches (v2)
     getToolIds: () => [], // No tools registered
@@ -186,8 +187,9 @@ Deno.test("Execute Handler - should return suggestions when no capability match 
 Deno.test("Execute Handler - should return suggestions when SHGAT score is low", async () => {
   const deps = createMockDependencies();
 
-  // Mock SHGAT v2 returning low confidence match (below 0.7 threshold)
+  // Mock SHGAT returning low confidence match (below 0.7 threshold)
   deps.shgat = {
+    scoreAllCapabilities: () => [],
     scoreAllCapabilitiesV2: () => [
       { capabilityId: "low-conf-cap", score: 0.5, headWeights: [0.5, 0.5] },
     ],
@@ -226,8 +228,9 @@ Deno.test("Execute Handler - should return suggestions when SHGAT score is low",
 Deno.test("Execute Handler - should return suggestions when SHGAT score is high but successRate is low", async () => {
   const deps = createMockDependencies();
 
-  // Mock SHGAT v2 returning high score
+  // Mock SHGAT returning high score
   deps.shgat = {
+    scoreAllCapabilities: () => [],
     scoreAllCapabilitiesV2: () => [
       { capabilityId: "unreliable-cap", score: 0.85, headWeights: [0.85, 0.85] },
     ],
@@ -286,8 +289,9 @@ Deno.test("Execute Handler - should include executionTimeMs in response", async 
 Deno.test("Execute Handler - should include suggestions structure with tools", async () => {
   const deps = createMockDependencies();
 
-  // Mock SHGAT v2 to return tool scores
+  // Mock SHGAT to return tool scores
   deps.shgat = {
+    scoreAllCapabilities: () => [],
     scoreAllCapabilitiesV2: () => [],
     scoreAllToolsV2: () => [
       { toolId: "fs:read", score: 0.9 },
@@ -296,9 +300,12 @@ Deno.test("Execute Handler - should include suggestions structure with tools", a
     getCapabilityIds: () => [],
   } as unknown as ExecuteDependencies["shgat"];
 
-  // Mock graphEngine.getToolNode to return tool metadata
+  // Mock graphEngine to return tool results via searchToolsHybrid
   deps.graphEngine = {
     ...deps.graphEngine,
+    searchToolsHybrid: async () => [
+      { toolId: "fs:read", finalScore: 0.9 },
+    ],
     getToolNode: (toolId: string) => {
       if (toolId === "fs:read") {
         return {
@@ -370,8 +377,11 @@ Deno.test("Execute Handler - should accept per_layer_validation option", async (
 Deno.test("Execute Handler - should use DR-DSP backward to build suggestedDag from hyperpath", async () => {
   const deps = createMockDependencies();
 
-  // Mock SHGAT v2 returning a capability match (but below threshold for execution)
+  // Mock SHGAT returning a capability match (but below threshold for execution)
   deps.shgat = {
+    scoreAllCapabilities: () => [
+      { capabilityId: "checkout-cap", score: 0.65, headScores: [0.6, 0.7] }, // Below 0.7 threshold
+    ],
     scoreAllCapabilitiesV2: () => [
       { capabilityId: "checkout-cap", score: 0.65, headWeights: [0.6, 0.7] }, // Below 0.7 threshold
     ],
@@ -404,9 +414,14 @@ Deno.test("Execute Handler - should use DR-DSP backward to build suggestedDag fr
     }],
   } as unknown as ExecuteDependencies["capabilityStore"];
 
-  // Mock graphEngine.getToolNode for tool metadata
+  // Mock graphEngine for tool search and metadata
   deps.graphEngine = {
     ...deps.graphEngine,
+    searchToolsHybrid: async () => [
+      { toolId: "db:getCart", finalScore: 0.8 },
+      { toolId: "inventory:check", finalScore: 0.7 },
+      { toolId: "payment:charge", finalScore: 0.9 },
+    ],
     getToolNode: (toolId: string) => ({
       name: toolId.split(":")[1] ?? toolId,
       serverId: toolId.split(":")[0] ?? "unknown",
@@ -467,8 +482,9 @@ Deno.test("Execute Handler - should use DR-DSP backward to build suggestedDag fr
 Deno.test("Execute Handler - should NOT create suggestedDag without SHGAT bestCapability", async () => {
   const deps = createMockDependencies();
 
-  // Mock SHGAT v2 returning no match
+  // Mock SHGAT returning no match
   deps.shgat = {
+    scoreAllCapabilities: () => [], // No matches
     scoreAllCapabilitiesV2: () => [], // No matches
     scoreAllToolsV2: () => [],
     getToolIds: () => [],

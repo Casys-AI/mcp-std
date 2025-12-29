@@ -169,7 +169,7 @@ Deno.test("handleDiscover - returns tools from hybrid search", async () => {
   ]);
 
   const result = await handleDiscover(
-    { intent: "read a file" },
+    { intent: "read a file", limit: 2 },
     vectorSearch as unknown as VectorSearch,
     graphEngine as unknown as GraphRAGEngine,
     dagSuggester as unknown as DAGSuggester,
@@ -251,7 +251,7 @@ Deno.test("handleDiscover - merges and sorts tools and capabilities by score", a
   });
 
   const result = await handleDiscover(
-    { intent: "create an issue" },
+    { intent: "create an issue", limit: 3 },
     vectorSearch as unknown as VectorSearch,
     graphEngine as unknown as GraphRAGEngine,
     dagSuggester as unknown as DAGSuggester,

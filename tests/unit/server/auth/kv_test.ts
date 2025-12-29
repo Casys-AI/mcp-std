@@ -21,7 +21,7 @@ Deno.test("getKv - returns same instance on multiple calls", async () => {
     // Same instance should be returned (singleton)
     assertEquals(kv1, kv2, "Should return same KV instance");
   } finally {
-    await closeKv();
+    closeKv();
   }
 });
 
@@ -30,12 +30,12 @@ Deno.test("closeKv - allows reopening", async () => {
     const kv1 = await getKv();
     assertExists(kv1);
 
-    await closeKv();
+    closeKv();
 
     const kv2 = await getKv();
     assertExists(kv2, "Should be able to get new KV after close");
   } finally {
-    await closeKv();
+    closeKv();
   }
 });
 
@@ -52,6 +52,6 @@ Deno.test("getKv - can perform basic operations", async () => {
     // Cleanup
     await kv.delete(["test", "kv_singleton_test"]);
   } finally {
-    await closeKv();
+    closeKv();
   }
 });

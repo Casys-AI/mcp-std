@@ -386,6 +386,9 @@ export function createServeCommand() {
           embeddingModel, // Story 10.7: Pass for SHGAT scoring
         );
 
+        // Story 7.6: Wire AlgorithmTracer to gateway for execute observability
+        gateway.setAlgorithmTracer(algorithmTracer);
+
         // Connect gateway to tool tracking callback (Story 3.7)
         gatewayRef = gateway;
 

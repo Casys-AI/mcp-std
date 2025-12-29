@@ -139,7 +139,10 @@ const DEFAULTS = {
  * ```
  */
 export class WorkerBridge {
-  private config: Omit<Required<WorkerBridgeConfig>, "capabilityStore" | "graphRAG" | "capabilityRegistry">;
+  private config: Omit<
+    Required<WorkerBridgeConfig>,
+    "capabilityStore" | "graphRAG" | "capabilityRegistry"
+  >;
   private capabilityStore?: CapabilityStore;
   private graphRAG?: GraphRAGEngine;
   private capabilityRegistry?: import("../capabilities/capability-registry.ts").CapabilityRegistry;
@@ -716,63 +719,73 @@ export class WorkerBridge {
         throw new Error(`Capability UUID not found: ${uuid}`);
       }
 
-      const client = this.mcpClients.get(server);
-      if (!client) {
-        // Try capability routing if registry available
-        if (this.capabilityRegistry && this.capabilityStore) {
-          const capabilityName = `${server}:${tool}`;
-          const record = await this.capabilityRegistry.resolveByName(
-            capabilityName,
-            { org: "local", project: "default" },
-          );
-          if (record && record.workflowPatternId) {
-            // Found capability - execute via NEW WorkerBridge (avoid re-entrance bug)
-            const pattern = await this.capabilityStore.findById(record.workflowPatternId);
-            if (pattern?.codeSnippet) {
-              logger.info("Routing to capability", { server, tool, fqdn: getCapabilityFqdn(record) });
+      // Unified routing: Check capabilities FIRST, then MCP servers
+      // This allows capabilities to use namespaces like "filesystem" without conflict
+      if (this.capabilityRegistry && this.capabilityStore) {
+        const capabilityName = `${server}:${tool}`;
+        const record = await this.capabilityRegistry.resolveByName(
+          capabilityName,
+          { org: "local", project: "default" },
+        );
+        if (record && record.workflowPatternId) {
+          // Found capability - execute via NEW WorkerBridge (avoid re-entrance bug)
+          const pattern = await this.capabilityStore.findById(record.workflowPatternId);
+          if (pattern?.codeSnippet) {
+            logger.info("Routing to capability (unified)", {
+              server,
+              tool,
+              fqdn: getCapabilityFqdn(record),
+            });
 
-              // Create NEW WorkerBridge for capability execution
-              // IMPORTANT: Cannot use this.execute() - it would overwrite this.worker!
-              const capBridge = new WorkerBridge(this.mcpClients, {
-                timeout: this.config.timeout,
-                capabilityStore: this.capabilityStore,
-                graphRAG: this.graphRAG,
-                // Don't pass capabilityRegistry to avoid infinite recursion
+            // Create NEW WorkerBridge for capability execution
+            // IMPORTANT: Cannot use this.execute() - it would overwrite this.worker!
+            // Pass capabilityRegistry to allow nested capability calls
+            const capBridge = new WorkerBridge(this.mcpClients, {
+              timeout: this.config.timeout,
+              capabilityStore: this.capabilityStore,
+              graphRAG: this.graphRAG,
+              capabilityRegistry: this.capabilityRegistry,
+            });
+
+            try {
+              const capResult = await capBridge.execute(
+                pattern.codeSnippet,
+                [], // toolDefinitions - capability code is self-contained
+                { ...args, __capability_id: record.id },
+              );
+              const endTime = Date.now();
+              const durationMs = endTime - startTime;
+              this.traces.push({
+                type: "tool_end",
+                tool: toolId,
+                traceId: id,
+                ts: endTime,
+                success: capResult.success,
+                durationMs,
+                parentTraceId,
+                result: capResult.result,
               });
-
-              try {
-                const capResult = await capBridge.execute(
-                  pattern.codeSnippet,
-                  [], // toolDefinitions - capability code is self-contained
-                  { ...args, __capability_id: record.id },
-                );
-                const endTime = Date.now();
-                const durationMs = endTime - startTime;
-                this.traces.push({
-                  type: "tool_end",
-                  tool: toolId,
-                  traceId: id,
-                  ts: endTime,
-                  success: capResult.success,
-                  durationMs,
-                  parentTraceId,
-                  result: capResult.result,
-                });
-                const response: RPCResultMessage = {
-                  type: "rpc_result",
-                  id,
-                  success: capResult.success,
-                  result: capResult.result as JsonValue,
-                };
-                this.worker?.postMessage(response);
-              } finally {
-                capBridge.cleanup();
-              }
-              return;
+              const response: RPCResultMessage = {
+                type: "rpc_result",
+                id,
+                success: capResult.success,
+                result: capResult.result as JsonValue,
+              };
+              this.worker?.postMessage(response);
+            } finally {
+              capBridge.cleanup();
             }
+            return;
           }
         }
-        throw new Error(`MCP server "${server}" not connected`);
+      }
+
+      // No capability found - route to MCP server
+      const client = this.mcpClients.get(server);
+      if (!client) {
+        throw new Error(
+          `MCP server "${server}" not connected and no capability "${server}:${tool}" found`,
+        );
       }
 
       const result = await client.callTool(tool, args || {});

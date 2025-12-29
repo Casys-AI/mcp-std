@@ -57,7 +57,7 @@ function createTestTrace(overrides: Partial<TraceInput> = {}): TraceInput {
   };
 }
 
-Deno.test("AlgorithmTracer - logTrace() buffers traces and returns traceId", async () => {
+Deno.test("AlgorithmTracer - logTrace() writes to DB and returns traceId", async () => {
   const db = await setupTestDb();
   const tracer = new AlgorithmTracer(db);
 
@@ -66,29 +66,33 @@ Deno.test("AlgorithmTracer - logTrace() buffers traces and returns traceId", asy
   assertExists(traceId);
   assertEquals(typeof traceId, "string");
   assertEquals(traceId.length, 36); // UUID format
-  assertEquals(tracer.getBufferSize(), 1);
+  // Note: logTrace now flushes immediately for SSE real-time updates
+  assertEquals(tracer.getBufferSize(), 0);
+
+  // Verify trace was written to DB
+  const result = await db.query(
+    "SELECT COUNT(*) as count FROM algorithm_traces WHERE trace_id = $1",
+    [traceId],
+  );
+  assertEquals(Number(result[0]?.count), 1);
 
   await tracer.stop();
   await db.close();
 });
 
-Deno.test("AlgorithmTracer - flush() writes buffered traces to database", async () => {
+Deno.test("AlgorithmTracer - logTrace() immediately flushes to database", async () => {
   const db = await setupTestDb();
   const tracer = new AlgorithmTracer(db);
 
-  // Add multiple traces
+  // Add multiple traces - each flushes immediately now
   await tracer.logTrace(createTestTrace({ intent: "Test 1" }));
   await tracer.logTrace(createTestTrace({ intent: "Test 2" }));
   await tracer.logTrace(createTestTrace({ intent: "Test 3" }));
 
-  assertEquals(tracer.getBufferSize(), 3);
-
-  // Flush to database
-  await tracer.flush();
-
+  // Buffer is always empty after logTrace (immediate flush for SSE)
   assertEquals(tracer.getBufferSize(), 0);
 
-  // Verify in database
+  // Verify all traces in database
   const result = await db.query("SELECT COUNT(*) as count FROM algorithm_traces");
   assertEquals(Number(result[0]?.count), 3);
 

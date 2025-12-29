@@ -27,7 +27,7 @@ export async function getKv(): Promise<Deno.Kv> {
 /**
  * Close KV connection (for graceful shutdown/tests)
  */
-export async function closeKv(): Promise<void> {
+export function closeKv(): void {
   if (_kv) {
     _kv.close();
     _kv = null;

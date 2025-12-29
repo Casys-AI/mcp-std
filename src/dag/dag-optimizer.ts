@@ -345,7 +345,9 @@ export function fuseTasks(tasks: Task[]): Task {
     // Preserve variable bindings from first task (for MCP dependencies)
     variableBindings: tasks[0].variableBindings,
     // Merge literal bindings from all fused tasks (Story 10.2c fix)
-    literalBindings: Object.keys(mergedLiteralBindings).length > 0 ? mergedLiteralBindings : undefined,
+    literalBindings: Object.keys(mergedLiteralBindings).length > 0
+      ? mergedLiteralBindings
+      : undefined,
   };
 
   return fusedTask;

@@ -35,6 +35,8 @@ import { createIntentEmbeddingColumnMigration } from "./migrations/025_intent_em
 import { createAlgorithmNameColumnMigration } from "./migrations/026_algorithm_name_column.ts";
 import { createSHGATParamsMigration } from "./migrations/027_shgat_params.ts";
 import { createCapabilityUuidPkMigration } from "./migrations/028_capability_uuid_pk.ts";
+import { createCapabilityHierarchyLevelMigration } from "./migrations/029_capability_hierarchy_level.ts";
+import { createRemoveTraceIntentDuplicationMigration } from "./migrations/030_remove_trace_intent_duplication.ts";
 
 /**
  * Migration definition
@@ -423,5 +425,7 @@ export function getAllMigrations(): Migration[] {
     createAlgorithmNameColumnMigration(), // Story 7.6+: Algorithm name for tracing
     createSHGATParamsMigration(), // Story 10.7b: SHGAT weights persistence
     createCapabilityUuidPkMigration(), // Epic 13 refactor: UUID PK, drop display_name & aliases
+    createCapabilityHierarchyLevelMigration(), // Story 10.1: Capability hierarchy level for compound nodes
+    createRemoveTraceIntentDuplicationMigration(), // Story 11.x: Remove intent duplication, use JOIN
   ];
 }

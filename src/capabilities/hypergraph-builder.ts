@@ -126,19 +126,24 @@ export class HypergraphBuilder {
       const capId = cap.id;
 
       // Create capability node (with pagerank from spectral clustering if available)
+      // Story 10.1: Include hierarchyLevel for nested compound nodes
       const capNode: CapabilityNode = {
         data: {
           id: capId,
           type: "capability",
           label: cap.name || cap.intentPreview.substring(0, 50),
+          description: cap.description || cap.intentPreview,
           codeSnippet: cap.codeSnippet,
           successRate: cap.successRate,
           usageCount: cap.usageCount,
           toolsCount: cap.toolsUsed.length,
           pagerank: capabilityPageranks?.get(cap.id) ?? 0,
+          communityId: cap.communityId ?? undefined, // Story 8.2: Cluster ID
+          fqdn: cap.fqdn ?? undefined, // Story 8.2: Fully qualified name
           toolsUsed: cap.toolsUsed, // Unique tools (deduplicated)
           toolInvocations: cap.toolInvocations, // Full sequence with timestamps (for invocation mode)
           lastUsed: cap.lastUsed, // ISO timestamp for timeline sorting
+          hierarchyLevel: cap.hierarchyLevel, // 0=leaf, 1+=contains capabilities
         },
       };
       nodes.push(capNode);
@@ -219,8 +224,10 @@ export class HypergraphBuilder {
 
   /**
    * Add capability dependency edges from database records
+   * Story 10.1: Also sets parent on child capabilities for "contains" edges
    *
    * @param edges Existing edges array to append to
+   * @param nodes Existing nodes array (modified in place for parent setting)
    * @param dependencies Capability dependencies from DB
    * @param existingCapIds Set of capability IDs that exist in the graph
    */
@@ -234,6 +241,7 @@ export class HypergraphBuilder {
       edge_source: string;
     }>,
     existingCapIds: Set<string>,
+    nodes?: GraphNode[],
   ): void {
     for (const dep of dependencies) {
       const fromCapId = dep.from_capability_id;
@@ -269,6 +277,21 @@ export class HypergraphBuilder {
         },
       };
       edges.push(depEdge);
+
+      // Story 10.1: Set parent on child capability for "contains" edges
+      // This enables nested compound nodes in D3 visualization
+      if (edgeType === "contains" && nodes) {
+        const childNode = nodes.find(
+          (n): n is CapabilityNode => n.data.type === "capability" && n.data.id === toCapId,
+        );
+        if (childNode) {
+          childNode.data.parent = fromCapId;
+          logger.debug("Set parent on child capability", {
+            child: toCapId,
+            parent: fromCapId,
+          });
+        }
+      }
     }
 
     logger.debug("Added capability dependency edges", {

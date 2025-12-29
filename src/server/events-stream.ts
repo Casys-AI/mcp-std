@@ -188,13 +188,34 @@ export class EventsStreamManager {
    * @param event - Event to broadcast
    */
   private async broadcastEvent(event: PmlEvent): Promise<void> {
+    // Debug logging for algorithm events (Story 7.6)
+    if (event.type.startsWith("algorithm.")) {
+      log.info(
+        `[SSE-DEBUG] Received ${event.type} from eventBus, clients: ${this.clients.size}`,
+      );
+    }
+
     const deadClients: string[] = [];
 
     // Send to all clients (with filter check)
     for (const [clientId, client] of this.clients) {
       // Story 6.5 AC#12: Check if event matches client filters
       if (!this.matchesFilters(event.type, client.filters)) {
+        if (event.type.startsWith("algorithm.")) {
+          log.debug(
+            `[SSE-DEBUG] ${event.type} skipped for client ${clientId.substring(0, 8)} (filters: ${
+              client.filters.join(",")
+            })`,
+          );
+        }
         continue; // Skip this client
+      }
+
+      // Debug: event passed filter
+      if (event.type.startsWith("algorithm.")) {
+        log.info(
+          `[SSE-DEBUG] Sending ${event.type} to client ${clientId.substring(0, 8)}`,
+        );
       }
 
       try {

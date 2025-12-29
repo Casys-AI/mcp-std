@@ -59,7 +59,7 @@ export function createMigrateConfigCommand() {
       }
 
       // Step 3: Load YAML config
-      let yamlConfig: any;
+      let yamlConfig: Record<string, unknown>;
       try {
         const yamlContent = await Deno.readTextFile(yamlPath);
         yamlConfig = parseYAML(yamlContent);
@@ -71,19 +71,22 @@ export function createMigrateConfigCommand() {
       // Step 4: Transform to JSON-compatible format
       // YAML format: { servers: [...] }
       // JSON format: { mcpServers: { id: {...} } }
-      let jsonConfig: any;
+      let jsonConfig: Record<string, unknown>;
 
       if (yamlConfig.servers && Array.isArray(yamlConfig.servers)) {
         // Legacy YAML array format → JSON object format
         jsonConfig = {
-          mcpServers: yamlConfig.servers.reduce((acc: any, server: any) => {
-            acc[server.id] = {
-              command: server.command,
-              ...(server.args && { args: server.args }),
-              ...(server.env && { env: server.env }),
-            };
-            return acc;
-          }, {}),
+          mcpServers: (yamlConfig.servers as Array<Record<string, unknown>>).reduce(
+            (acc: Record<string, unknown>, server: Record<string, unknown>) => {
+              acc[server.id] = {
+                command: server.command,
+                ...(server.args && { args: server.args }),
+                ...(server.env && { env: server.env }),
+              };
+              return acc;
+            },
+            {},
+          ),
           context: yamlConfig.context || {
             topK: 10,
             similarityThreshold: 0.7,

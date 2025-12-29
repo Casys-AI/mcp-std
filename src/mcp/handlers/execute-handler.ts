@@ -33,9 +33,9 @@ import type { EmbeddingModelInterface } from "../../vector/embeddings.ts";
 import type { ExecutionTraceStore } from "../../capabilities/execution-trace-store.ts";
 import {
   type CapabilityRegistry,
-  type Scope,
   getCapabilityDisplayName,
   getCapabilityFqdn,
+  type Scope,
 } from "../../capabilities/capability-registry.ts";
 import type { AlgorithmTracer } from "../../telemetry/algorithm-tracer.ts";
 
@@ -576,7 +576,8 @@ async function executeDirectMode(
           const failedResults = physicalResults.results.filter(
             (r) => r.status === "error" || r.status === "failed_safe",
           );
-          const firstError = failedResults[0]?.error ?? physicalResults.errors[0]?.error ?? "Unknown error";
+          const firstError = failedResults[0]?.error ?? physicalResults.errors[0]?.error ??
+            "Unknown error";
 
           log.info("[pml:execute] Execution failed, NOT saving capability", {
             failedSafeTasks,
@@ -647,11 +648,10 @@ async function executeDirectMode(
             const action = `exec_${codeHash.substring(0, 8)}`;
             // 4-char hash for FQDN
             const hash = codeHash.substring(0, 4);
-            // Auto displayName until user names it via cap:name
-            autoDisplayName = `unnamed_${codeHash.substring(0, 8)}`;
+            // Migration 028: displayName removed, use namespace:action instead
+            autoDisplayName = `${namespace}:${action}`;
 
             const record = await deps.capabilityRegistry.create({
-              displayName: autoDisplayName,
               org: DEFAULT_SCOPE.org,
               project: DEFAULT_SCOPE.project,
               namespace,
@@ -664,7 +664,7 @@ async function executeDirectMode(
             capabilityFqdn = record.id;
 
             log.info("[pml:execute] Capability registered with auto FQDN", {
-              displayName: autoDisplayName,
+              name: autoDisplayName,
               fqdn: capabilityFqdn,
             });
           } catch (registryError) {
@@ -1112,11 +1112,19 @@ function updateDRDSP(
  * Register capability and tools in SHGAT graph
  *
  * Adds new nodes to the graph. Training is done separately via PER.
+ * Story 10.1: Also includes children (contained capabilities) for hierarchy.
  */
 async function registerSHGATNodes(
   shgat: SHGAT | undefined,
   embeddingModel: EmbeddingModelInterface | undefined,
-  capability: { id: string; toolsUsed?: string[]; successRate: number },
+  capability: {
+    id: string;
+    toolsUsed?: string[];
+    successRate: number;
+    children?: string[];
+    parents?: string[];
+    hierarchyLevel?: number;
+  },
   toolsCalled: string[],
   intent: string,
 ): Promise<void> {
@@ -1136,22 +1144,33 @@ async function registerSHGATNodes(
       }
     }
 
-    // Register the capability with new SHGAT v1 structure
+    // Build members: tools + child capabilities (Story 10.1)
     const toolMembers = (capability.toolsUsed ?? toolsCalled).map((id) => ({
       type: "tool" as const,
       id,
     }));
+    const capabilityMembers = (capability.children ?? []).map((id) => ({
+      type: "capability" as const,
+      id,
+    }));
+    const allMembers = [...toolMembers, ...capabilityMembers];
+
+    // Register the capability with hierarchy info
     shgat.registerCapability({
       id: capability.id,
       embedding,
-      members: toolMembers,
-      hierarchyLevel: 0, // Tools only = level 0
+      members: allMembers,
+      hierarchyLevel: capability.hierarchyLevel ?? 0,
       successRate: capability.successRate,
+      children: capability.children,
+      parents: capability.parents,
     });
 
     log.debug("[pml:execute] SHGAT nodes registered", {
       capabilityId: capability.id,
       toolsCount: toolsCalled.length,
+      childrenCount: capability.children?.length ?? 0,
+      hierarchyLevel: capability.hierarchyLevel ?? 0,
     });
   } catch (error) {
     log.warn("[pml:execute] Failed to register SHGAT nodes", { error: String(error) });
@@ -1383,7 +1402,8 @@ async function executeSuggestionMode(
         featureContribReliability: cap.featureContributions?.reliability,
         // Target identification
         targetId: cap.capabilityId,
-        targetName: capInfo?.name ?? cap.capabilityId.substring(0, 8),
+        targetName: capInfo?.name ?? capInfo?.description?.substring(0, 30) ??
+          cap.capabilityId.substring(0, 8),
         // Reliability context
         targetSuccessRate: capInfo?.successRate,
         targetUsageCount: capInfo?.usageCount,
@@ -1602,7 +1622,19 @@ async function getSuggestions(
       score: number;
     }
   >;
-  capabilities?: Array<{ id: string; name: string; description: string; score: number }>;
+  capabilities?: Array<{
+    id: string;
+    name: string;
+    description: string;
+    score: number;
+    call_name?: string;
+    input_schema?: Record<string, unknown>;
+    called_capabilities?: Array<{
+      id: string;
+      call_name?: string;
+      input_schema?: Record<string, unknown>;
+    }>;
+  }>;
   suggestedDag?: { tasks: Array<{ id: string; tool: string; dependsOn: string[] }> };
 }> {
   // Build tool suggestions from SEMANTIC SEARCH (not K-head)
@@ -1621,6 +1653,10 @@ async function getSuggestions(
     deps.vectorSearch,
     intent,
     5, // limit
+    [], // contextTools
+    false, // includeRelated
+    undefined, // minScore
+    correlationId, // Story 7.6: Pass correlationId for trace grouping
   );
 
   for (const result of hybridResults) {
@@ -1637,15 +1673,69 @@ async function getSuggestions(
   }
 
   // Build capability suggestions from SHGAT K-head scores (trained for this)
-  const capabilities: Array<{ id: string; name: string; description: string; score: number }> = [];
+  const capabilities: Array<{
+    id: string;
+    name: string;
+    description: string;
+    score: number;
+    call_name?: string;
+    input_schema?: Record<string, unknown>;
+    called_capabilities?: Array<{
+      id: string;
+      call_name?: string;
+      input_schema?: Record<string, unknown>;
+    }>;
+  }> = [];
   for (const c of shgatResults.shgatCapabilities.slice(0, 3)) {
     const cap = await deps.capabilityStore.findById(c.capabilityId);
     if (cap) {
+      // Get namespace:action from capability_records via registry
+      // Note: c.capabilityId is workflow_pattern.pattern_id, not capability_records.id
+      let callName: string | undefined;
+      if (deps.capabilityRegistry) {
+        const record = await deps.capabilityRegistry.getByWorkflowPatternId(c.capabilityId);
+        if (record) {
+          callName = `${record.namespace}:${record.action}`;
+        }
+      }
+
+      // Parse $cap:uuid references from code to find called capabilities
+      const calledCapabilities: Array<{
+        id: string;
+        call_name?: string;
+        input_schema?: Record<string, unknown>;
+      }> = [];
+
+      if (cap.codeSnippet && deps.capabilityRegistry) {
+        const capRefPattern = /\$cap:([a-f0-9-]{36})/g;
+        let capMatch;
+        const seenIds = new Set<string>();
+
+        while ((capMatch = capRefPattern.exec(cap.codeSnippet)) !== null) {
+          const capUuid = capMatch[1];
+          if (seenIds.has(capUuid)) continue;
+          seenIds.add(capUuid);
+
+          const innerRecord = await deps.capabilityRegistry.getByWorkflowPatternId(capUuid);
+          if (innerRecord) {
+            const innerCap = await deps.capabilityStore.findById(capUuid);
+            calledCapabilities.push({
+              id: capUuid,
+              call_name: `${innerRecord.namespace}:${innerRecord.action}`,
+              input_schema: innerCap?.parametersSchema as Record<string, unknown> | undefined,
+            });
+          }
+        }
+      }
+
       capabilities.push({
         id: c.capabilityId,
         name: cap.name ?? c.capabilityId.substring(0, 8),
         description: cap.description ?? "",
         score: c.score,
+        call_name: callName,
+        input_schema: cap.parametersSchema as Record<string, unknown> | undefined,
+        called_capabilities: calledCapabilities.length > 0 ? calledCapabilities : undefined,
       });
     }
   }

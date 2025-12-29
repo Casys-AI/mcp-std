@@ -55,20 +55,29 @@ export const databaseTools: MiniTool[] = [
         port: { type: "number", description: "Port (default: 5432)" },
         database: { type: "string", description: "Database name" },
         user: { type: "string", description: "Username" },
+        password: { type: "string", description: "Password" },
         query: { type: "string", description: "SQL query" },
       },
       required: ["database", "query"],
     },
-    handler: async ({ host = "localhost", port = 5432, database, user, query }) => {
-      const args = ["-h", host as string, "-p", String(port), "-d", database as string];
-      if (user) args.push("-U", user as string);
-      args.push("-t", "-A", "-c", query as string);
+    handler: async (
+      { host = "localhost", port = 5432, database, user = "postgres", password, query },
+    ) => {
+      // Use npm:postgres library instead of CLI
+      const postgres = (await import("postgres")).default;
+      const connectionString = password
+        ? `postgres://${user}:${password}@${host}:${port}/${database}`
+        : `postgres://${user}@${host}:${port}/${database}`;
 
-      const result = await runCommand("psql", args);
-      if (result.code !== 0) {
-        throw new Error(`psql failed: ${result.stderr}`);
+      const sql = postgres(connectionString);
+      try {
+        const result = await sql.unsafe(query as string);
+        // Convert postgres result to plain array (it's a special object)
+        const rows = [...result].map((row) => ({ ...row }));
+        return { rows, rowCount: rows.length };
+      } finally {
+        await sql.end();
       }
-      return { output: result.stdout.trim() };
     },
   },
   {
@@ -222,28 +231,35 @@ export const databaseTools: MiniTool[] = [
         port: { type: "number", description: "Port (default: 5432)" },
         database: { type: "string", description: "Database name" },
         user: { type: "string", description: "Username" },
+        password: { type: "string", description: "Password" },
         schema: { type: "string", description: "Schema filter (default: public)" },
       },
       required: ["database"],
     },
-    handler: async ({ host = "localhost", port = 5432, database, user, schema = "public" }) => {
-      const query =
-        `SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = '${schema}' ORDER BY table_name`;
-      const args = ["-h", host as string, "-p", String(port), "-d", database as string];
-      if (user) args.push("-U", user as string);
-      args.push("-t", "-A", "-F", ",", "-c", query);
+    handler: async (
+      { host = "localhost", port = 5432, database, user = "postgres", password, schema = "public" },
+    ) => {
+      const postgres = (await import("postgres")).default;
+      const connectionString = password
+        ? `postgres://${user}:${password}@${host}:${port}/${database}`
+        : `postgres://${user}@${host}:${port}/${database}`;
 
-      const result = await runCommand("psql", args);
-      if (result.code !== 0) {
-        throw new Error(`psql failed: ${result.stderr}`);
+      const sql = postgres(connectionString);
+      try {
+        const result = await sql`
+          SELECT table_name, table_type
+          FROM information_schema.tables
+          WHERE table_schema = ${schema as string}
+          ORDER BY table_name
+        `;
+        const tables = result.map((row) => ({
+          name: (row as Record<string, unknown>).table_name as string,
+          type: (row as Record<string, unknown>).table_type as string,
+        }));
+        return { tables, schema };
+      } finally {
+        await sql.end();
       }
-
-      const lines = result.stdout.trim().split("\n").filter(Boolean);
-      const tables = lines.map((line) => {
-        const [name, type] = line.split(",");
-        return { name, type };
-      });
-      return { tables, schema };
     },
   },
   {
@@ -258,37 +274,41 @@ export const databaseTools: MiniTool[] = [
         port: { type: "number", description: "Port (default: 5432)" },
         database: { type: "string", description: "Database name" },
         user: { type: "string", description: "Username" },
+        password: { type: "string", description: "Password" },
         table: { type: "string", description: "Table name" },
       },
       required: ["database", "table"],
     },
-    handler: async ({ host = "localhost", port = 5432, database, user, table }) => {
-      const query = `
-        SELECT column_name, data_type, character_maximum_length, is_nullable, column_default
-        FROM information_schema.columns
-        WHERE table_name = '${table}'
-        ORDER BY ordinal_position`;
-      const args = ["-h", host as string, "-p", String(port), "-d", database as string];
-      if (user) args.push("-U", user as string);
-      args.push("-t", "-A", "-F", "|", "-c", query);
+    handler: async (
+      { host = "localhost", port = 5432, database, user = "postgres", password, table },
+    ) => {
+      const postgres = (await import("postgres")).default;
+      const connectionString = password
+        ? `postgres://${user}:${password}@${host}:${port}/${database}`
+        : `postgres://${user}@${host}:${port}/${database}`;
 
-      const result = await runCommand("psql", args);
-      if (result.code !== 0) {
-        throw new Error(`psql failed: ${result.stderr}`);
+      const sql = postgres(connectionString);
+      try {
+        const result = await sql`
+          SELECT column_name, data_type, character_maximum_length, is_nullable, column_default
+          FROM information_schema.columns
+          WHERE table_name = ${table as string}
+          ORDER BY ordinal_position
+        `;
+        const columns = result.map((row) => {
+          const r = row as Record<string, unknown>;
+          return {
+            name: r.column_name as string,
+            type: r.data_type as string,
+            maxLength: r.character_maximum_length as number | null,
+            nullable: r.is_nullable === "YES",
+            default: r.column_default as string | null,
+          };
+        });
+        return { columns, table };
+      } finally {
+        await sql.end();
       }
-
-      const lines = result.stdout.trim().split("\n").filter(Boolean);
-      const columns = lines.map((line) => {
-        const [name, type, maxLength, nullable, defaultVal] = line.split("|");
-        return {
-          name,
-          type,
-          maxLength: maxLength || null,
-          nullable: nullable === "YES",
-          default: defaultVal || null,
-        };
-      });
-      return { columns, table };
     },
   },
   {

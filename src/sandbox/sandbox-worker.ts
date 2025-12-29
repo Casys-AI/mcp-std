@@ -190,8 +190,10 @@ async function __rpcCall(
 function generateToolProxies(
   toolDefinitions: ToolDefinition[],
 ): Record<string, Record<string, (args: Record<string, unknown>) => Promise<unknown>>> {
-  const knownServers: Record<string, Record<string, (args: Record<string, unknown>) => Promise<unknown>>> =
-    {};
+  const knownServers: Record<
+    string,
+    Record<string, (args: Record<string, unknown>) => Promise<unknown>>
+  > = {};
 
   for (const def of toolDefinitions) {
     if (!knownServers[def.server]) {
@@ -217,16 +219,14 @@ function generateToolProxies(
       // Format: mcp["$cap:<uuid>"](args) → direct RPC call with server="$cap", tool=uuid
       if (serverName.startsWith("$cap:")) {
         const uuid = serverName.substring(5); // Remove "$cap:" prefix
-        return (args: Record<string, unknown> = {}) =>
-          __rpcCall("$cap", uuid, args);
+        return (args: Record<string, unknown> = {}) => __rpcCall("$cap", uuid, args);
       }
 
       // For unknown servers, return a Proxy that creates RPC functions on-the-fly
       // These will be routed to capabilities by WorkerBridge if capabilityRegistry is set
       return new Proxy({}, {
         get(_target, toolName: string) {
-          return (args: Record<string, unknown> = {}) =>
-            __rpcCall(serverName, toolName, args);
+          return (args: Record<string, unknown> = {}) => __rpcCall(serverName, toolName, args);
         },
       });
     },

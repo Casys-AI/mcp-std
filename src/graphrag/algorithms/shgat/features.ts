@@ -7,7 +7,7 @@
  * @module graphrag/algorithms/shgat-features
  */
 
-import { adamicAdarBetween, type AdamicAdarGraph, computeAdamicAdar } from "./adamic-adar.ts";
+import { type AdamicAdarGraph, computeAdamicAdar } from "./adamic-adar.ts";
 import type { HypergraphFeatures, ToolGraphFeatures } from "./shgat.ts";
 
 // ============================================================================

@@ -8,6 +8,7 @@
  */
 
 import { EmbeddingModel } from "../../../src/vector/embeddings.ts";
+import process from "node:process";
 
 const FIXTURE_PATH = new URL("./scenarios/medium-graph.json", import.meta.url);
 

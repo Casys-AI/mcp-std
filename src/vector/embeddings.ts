@@ -222,7 +222,8 @@ export function schemaToText(schema: ToolSchema | MCPTool): string {
   // Extract and add input parameters
   const inputSchema = "inputSchema" in schema ? schema.inputSchema : schema.input_schema || {};
   if (typeof inputSchema === "object" && inputSchema !== null) {
-    const properties = (inputSchema as any).properties || {};
+    const properties =
+      (inputSchema as Record<string, unknown>).properties as Record<string, unknown> || {};
 
     for (const [paramName, paramDef] of Object.entries(properties)) {
       if (typeof paramDef === "object" && paramDef !== null) {

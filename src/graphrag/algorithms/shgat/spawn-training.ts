@@ -149,7 +149,9 @@ export async function spawnSHGATTraining(
   try {
     const result: SpawnTrainingResult = JSON.parse(stdout);
     log.info(
-      `[SHGAT] Training complete: loss=${result.finalLoss?.toFixed(4)}, accuracy=${result.finalAccuracy?.toFixed(2)}`,
+      `[SHGAT] Training complete: loss=${result.finalLoss?.toFixed(4)}, accuracy=${
+        result.finalAccuracy?.toFixed(2)
+      }`,
     );
     return result;
   } catch (e) {

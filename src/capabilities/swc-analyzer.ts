@@ -158,8 +158,8 @@ export function toOriginalPosition(astPosition: number): number {
 /**
  * Visit AST node and extract references
  */
-// deno-lint-ignore no-explicit-any
 function visitNode(
+  // deno-lint-ignore no-explicit-any
   node: any,
   capabilities: CapabilityReference[],
   tools: MCPToolReference[],

@@ -14,7 +14,7 @@ import type { VectorSearch } from "../vector/search.ts";
 import type { GraphRAGEngine } from "./graph-engine.ts";
 import type { EpisodicMemoryStore } from "../learning/episodic-memory-store.ts";
 import type { CapabilityMatcher } from "../capabilities/matcher.ts";
-import type { CapabilityMatch } from "../capabilities/types.ts";
+import type { Capability, CapabilityMatch } from "../capabilities/types.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import { SpectralClusteringManager } from "./spectral-clustering.ts";
 import { LocalAlphaCalculator } from "./local-alpha.ts";
@@ -114,6 +114,10 @@ export class DAGSuggester {
     log.debug("[DAGSuggester] Capability store configured for strategic discovery");
   }
 
+  getCapabilityStore(): CapabilityStore | null {
+    return this.capabilityStore;
+  }
+
   getGraphEngine(): GraphRAGEngine {
     return this.graphEngine;
   }
@@ -150,7 +154,51 @@ export class DAGSuggester {
     return getCapabilityPageranks(this.spectralClustering);
   }
 
-  async searchCapabilities(intent: string, correlationId?: string): Promise<CapabilityMatch | null> {
+  /**
+   * Ensure PageRanks are computed for given capabilities
+   * Called by CapabilityDataService.getHypergraph() to populate pagerank on-demand
+   */
+  ensurePageranksComputed(capabilities: Array<{ id: string; toolsUsed: string[] }>): void {
+    // Skip if already computed
+    const existing = this.getCapabilityPageranks();
+    if (existing.size > 0) {
+      return;
+    }
+
+    // Need at least 2 capabilities with tools
+    if (capabilities.length < 2) {
+      return;
+    }
+
+    // Collect all tools from capabilities
+    const allTools = new Set<string>();
+    for (const cap of capabilities) {
+      for (const tool of cap.toolsUsed) {
+        allTools.add(tool);
+      }
+    }
+
+    if (allTools.size < 2) {
+      return;
+    }
+
+    // Cast to Capability[] - computeClusterBoosts only uses id and toolsUsed
+    const clusterResult = computeClusterBoosts(
+      capabilities as unknown as Capability[],
+      Array.from(allTools),
+      {
+        spectralClustering: this.spectralClustering,
+        localAlphaCalculator: this.localAlphaCalculator,
+        config: this.scoringConfig,
+      },
+    );
+    this.spectralClustering = clusterResult.spectralClustering;
+  }
+
+  async searchCapabilities(
+    intent: string,
+    correlationId?: string,
+  ): Promise<CapabilityMatch | null> {
     if (!this.capabilityMatcher) {
       log.debug("[DAGSuggester] searchCapabilities called but CapabilityMatcher not configured");
       return null;

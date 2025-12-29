@@ -71,7 +71,7 @@ export function createCapabilityRecordsFkMigration(): Migration {
         try {
           await db.exec(`ALTER TABLE capability_records DROP COLUMN IF EXISTS ${col}`);
           log.info(`  ✓ Dropped duplicated column: ${col}`);
-        } catch (error) {
+        } catch (_error) {
           log.warn(`  ○ Column ${col} already dropped or doesn't exist`);
         }
       }

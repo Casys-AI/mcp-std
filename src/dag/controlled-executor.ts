@@ -861,12 +861,12 @@ export class ControlledExecutor extends ParallelExecutor {
       if (!this.workerBridge) {
         throw new Error(
           `WorkerBridge required for code_execution task ${task.id}. ` +
-          `Ensure ControlledExecutor is initialized with workerBridge option.`
+            `Ensure ControlledExecutor is initialized with workerBridge option.`,
         );
       }
       if (!task.tool) {
         throw new Error(
-          `Code execution task ${task.id} missing required 'tool' field`
+          `Code execution task ${task.id} missing required 'tool' field`,
         );
       }
       try {

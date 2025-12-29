@@ -114,7 +114,7 @@ export class ConfigMigrator {
             ...(server.env !== undefined && { env: server.env }),
           };
           return acc;
-        }, {} as Record<string, any>),
+        }, {} as Record<string, unknown>),
         context: {
           topK: 10,
           similarityThreshold: 0.7,

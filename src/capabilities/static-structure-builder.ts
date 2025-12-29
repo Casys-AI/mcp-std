@@ -1444,15 +1444,13 @@ export class StaticStructureBuilder {
       // Handle dot notation: capabilities.name → prop.type = "Identifier"
       if (prop?.type === "Identifier" && typeof prop?.value === "string") {
         parts.unshift(prop.value);
-      }
-      // Handle bracket notation: capabilities["name"] → prop.type = "Computed" with StringLiteral expression
+      } // Handle bracket notation: capabilities["name"] → prop.type = "Computed" with StringLiteral expression
       else if (prop?.type === "Computed") {
         const expr = (prop as Record<string, unknown>).expression as Record<string, unknown>;
         if (expr?.type === "StringLiteral" && typeof expr?.value === "string") {
           parts.unshift(expr.value);
         }
-      }
-      // Handle direct StringLiteral (fallback)
+      } // Handle direct StringLiteral (fallback)
       else if (prop?.type === "StringLiteral" && typeof prop?.value === "string") {
         parts.unshift(prop.value);
       }
@@ -1837,7 +1835,9 @@ export class StaticStructureBuilder {
       // Arithmetic (numbers)
       case "+":
         if (typeof left === "number" && typeof right === "number") return left + right;
-        if (typeof left === "string" || typeof right === "string") return String(left) + String(right);
+        if (typeof left === "string" || typeof right === "string") {
+          return String(left) + String(right);
+        }
         return undefined;
       case "-":
         if (typeof left === "number" && typeof right === "number") return left - right;
@@ -1846,10 +1846,14 @@ export class StaticStructureBuilder {
         if (typeof left === "number" && typeof right === "number") return left * right;
         return undefined;
       case "/":
-        if (typeof left === "number" && typeof right === "number" && right !== 0) return left / right;
+        if (typeof left === "number" && typeof right === "number" && right !== 0) {
+          return left / right;
+        }
         return undefined;
       case "%":
-        if (typeof left === "number" && typeof right === "number" && right !== 0) return left % right;
+        if (typeof left === "number" && typeof right === "number" && right !== 0) {
+          return left % right;
+        }
         return undefined;
       case "**":
         if (typeof left === "number" && typeof right === "number") return left ** right;

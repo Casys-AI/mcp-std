@@ -135,7 +135,13 @@ export function staticStructureToDag(
       continue;
     }
 
-    const task = nodeToTask(node, taskIdPrefix, includeDecisionTasks, structure.variableBindings, structure.literalBindings);
+    const task = nodeToTask(
+      node,
+      taskIdPrefix,
+      includeDecisionTasks,
+      structure.variableBindings,
+      structure.literalBindings,
+    );
     if (task) {
       tasks.push(task);
       nodeToTaskId.set(node.id, task.id);

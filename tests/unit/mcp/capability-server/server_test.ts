@@ -98,12 +98,13 @@ function createTestSetup() {
 
   const capabilityUuid = "550e8400-e29b-41d4-a716-446655440001";
 
-  // Setup capability in store listing (no displayName)
+  // Setup capability in store listing
   mockStore.setCapabilities([
     {
       id: "pattern-123",
       namespace: "code",
       action: "analyze",
+      displayName: "code:analyze",
       description: "Analyze code structure",
       parametersSchema: { type: "object", properties: { file: { type: "string" } } },
       usageCount: 10,
