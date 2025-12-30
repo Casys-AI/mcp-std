@@ -48,7 +48,7 @@ async function setupTestDb(): Promise<PGliteClient> {
       output JSONB,
       success BOOLEAN DEFAULT true,
       error_message TEXT,
-      latency_ms INTEGER,
+      duration_ms INTEGER,
       executed_at TIMESTAMPTZ DEFAULT NOW(),
       parent_trace_id UUID
     );
@@ -89,16 +89,35 @@ async function setupTestDb(): Promise<PGliteClient> {
       id SERIAL PRIMARY KEY,
       version INTEGER NOT NULL,
       params JSONB NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT NOW()
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
     );
 
     -- Algorithm traces table (for analytics)
     CREATE TABLE IF NOT EXISTS algorithm_traces (
       id SERIAL PRIMARY KEY,
       algorithm_name TEXT NOT NULL,
+      algorithm_mode TEXT,
+      target_type TEXT,
+      decision TEXT,
+      final_score REAL,
+      threshold_used REAL,
       input JSONB,
       output JSONB,
       latency_ms INTEGER,
+      timestamp TIMESTAMPTZ DEFAULT NOW(),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    -- Capability records table (for analytics)
+    CREATE TABLE IF NOT EXISTS capability_records (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      name TEXT NOT NULL,
+      verified BOOLEAN DEFAULT false,
+      visibility TEXT DEFAULT 'private',
+      routing TEXT DEFAULT 'local',
+      usage_count INTEGER DEFAULT 0,
+      success_count INTEGER DEFAULT 0,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
@@ -145,7 +164,7 @@ async function seedTestData(db: PGliteClient): Promise<void> {
 
   // Create execution traces with various timestamps
   await db.query(`
-    INSERT INTO execution_trace (id, user_id, tool_name, success, latency_ms, executed_at)
+    INSERT INTO execution_trace (id, user_id, tool_name, success, duration_ms, executed_at)
     VALUES
       -- Today's executions
       (gen_random_uuid(), 'admin_user', 'test_tool', true, 100, NOW() - INTERVAL '1 hour'),

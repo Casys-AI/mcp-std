@@ -16,9 +16,8 @@
  */
 
 import { parse } from "https://deno.land/x/swc@0.2.1/mod.ts";
-import { parse as parseYaml } from "@std/yaml";
 import { getLogger } from "../telemetry/logger.ts";
-import type { ApprovalMode, PermissionConfig, PermissionScope, PermissionSet } from "./types.ts";
+import type { PermissionConfig, PermissionSet } from "./types.ts";
 
 const logger = getLogger("default");
 
@@ -54,211 +53,178 @@ export interface InferredPermissions {
   detectedPatterns: string[];
 }
 
-/**
- * MCP tool permission config entry (from YAML)
- *
- * Supports two formats:
- * 1. Shorthand (legacy): { permissionSet: "network-api", isReadOnly: true }
- * 2. Explicit (new): { scope: "network-api", approvalMode: "auto" }
- */
-interface McpPermissionConfigLegacy {
-  permissionSet: PermissionSet;
-  isReadOnly: boolean;
-}
+// =============================================================================
+// New simplified permission model (Claude Code style: allow/deny/ask)
+// =============================================================================
 
 /**
- * Explicit permission config (simplified model)
+ * Simplified permissions structure (loaded from config/mcp-permissions.json)
  */
-interface McpPermissionConfigExplicit {
-  scope: PermissionScope;
-  approvalMode?: ApprovalMode;
-  isReadOnly?: boolean;
-}
-
-/**
- * Union type for YAML config - supports both formats
- */
-type McpPermissionConfigYaml = McpPermissionConfigLegacy | McpPermissionConfigExplicit;
-
-/**
- * Check if config is in explicit format (new model)
- */
-function isExplicitConfig(config: McpPermissionConfigYaml): config is McpPermissionConfigExplicit {
-  return "scope" in config;
-}
-
-/**
- * Convert YAML config entry to PermissionConfig
- */
-function toPermissionConfig(config: McpPermissionConfigYaml): PermissionConfig {
-  if (isExplicitConfig(config)) {
-    return {
-      scope: config.scope,
-      approvalMode: config.approvalMode ?? "auto",
-    };
-  }
-  // Legacy format - convert shorthand to explicit
-  const scope: PermissionScope = config.permissionSet === "trusted"
-    ? "mcp-standard"
-    : config.permissionSet;
-  return {
-    scope,
-    approvalMode: "auto",
+interface McpPermissionsJson {
+  permissions: {
+    allow: string[];
+    deny: string[];
+    ask: string[];
   };
 }
 
 /**
- * Internal cache entry with both legacy and new formats
+ * Cached permissions from JSON config
  */
-interface McpPermissionCacheEntry {
-  legacy: McpPermissionConfigLegacy;
-  config: PermissionConfig;
-}
+let PERMISSIONS_CACHE: McpPermissionsJson | null = null;
 
 /**
- * MCP tool prefix to permission mapping
- * Loaded from config/mcp-permissions.yaml at runtime
+ * Default permissions if config not found
  */
-let MCP_TOOL_PERMISSIONS: Record<string, McpPermissionCacheEntry> | null = null;
-
-/**
- * Default fallback permissions (used if config file not found)
- */
-const DEFAULT_MCP_PERMISSIONS: Record<string, McpPermissionCacheEntry> = {
-  "filesystem": {
-    legacy: { permissionSet: "filesystem", isReadOnly: false },
-    config: { scope: "filesystem", approvalMode: "auto" },
-  },
-  "fs": {
-    legacy: { permissionSet: "filesystem", isReadOnly: false },
-    config: { scope: "filesystem", approvalMode: "auto" },
-  },
-  "github": {
-    legacy: { permissionSet: "network-api", isReadOnly: false },
-    config: { scope: "network-api", approvalMode: "auto" },
-  },
-  "slack": {
-    legacy: { permissionSet: "network-api", isReadOnly: false },
-    config: { scope: "network-api", approvalMode: "auto" },
-  },
-  "tavily": {
-    legacy: { permissionSet: "network-api", isReadOnly: false },
-    config: { scope: "network-api", approvalMode: "auto" },
-  },
-  "api": {
-    legacy: { permissionSet: "network-api", isReadOnly: false },
-    config: { scope: "network-api", approvalMode: "auto" },
-  },
-  "kubernetes": {
-    legacy: { permissionSet: "mcp-standard", isReadOnly: false },
-    config: { scope: "mcp-standard", approvalMode: "auto" },
-  },
-  "docker": {
-    legacy: { permissionSet: "mcp-standard", isReadOnly: false },
-    config: { scope: "mcp-standard", approvalMode: "auto" },
+const DEFAULT_PERMISSIONS: McpPermissionsJson = {
+  permissions: {
+    allow: [
+      "json:*", "math:*", "datetime:*", "crypto:*", "collections:*",
+      "validation:*", "format:*", "transform:*", "string:*", "path:*",
+    ],
+    deny: [],
+    ask: [
+      "process:*", "ssh:*", "database:*", "cloud:*", "packages:*",
+      "kubernetes:*", "docker:*",
+    ],
   },
 };
 
 /**
- * Load MCP permissions from YAML config file
- * Falls back to defaults if file not found
- *
- * Supports both formats:
- * - Shorthand: { permissionSet: "network-api", isReadOnly: true }
- * - Explicit: { scope: "network-api", approvalMode: "auto" }
+ * Load permissions from JSON config file
  */
-async function loadMcpPermissions(): Promise<Record<string, McpPermissionCacheEntry>> {
-  if (MCP_TOOL_PERMISSIONS !== null) {
-    return MCP_TOOL_PERMISSIONS;
+async function loadPermissionsJson(): Promise<McpPermissionsJson> {
+  if (PERMISSIONS_CACHE !== null) {
+    return PERMISSIONS_CACHE;
   }
 
-  try {
-    // Try multiple possible config paths
-    const configPaths = [
-      "./config/mcp-permissions.yaml",
-      "../config/mcp-permissions.yaml",
-      "../../config/mcp-permissions.yaml",
-    ];
+  const configPaths = [
+    "./config/mcp-permissions.json",
+    "../config/mcp-permissions.json",
+    "../../config/mcp-permissions.json",
+  ];
 
-    for (const configPath of configPaths) {
-      try {
-        const content = await Deno.readTextFile(configPath);
-        const parsed = parseYaml(content) as Record<string, McpPermissionConfigYaml>;
-
-        // Convert to cache entries with both legacy and config formats
-        const cacheEntries: Record<string, McpPermissionCacheEntry> = {};
-        for (const [key, value] of Object.entries(parsed)) {
-          const config = toPermissionConfig(value);
-          const isReadOnly = isExplicitConfig(value)
-            ? (value.isReadOnly ?? false)
-            : value.isReadOnly;
-
-          cacheEntries[key] = {
-            legacy: {
-              permissionSet: config.scope,
-              isReadOnly,
-            },
-            config,
-          };
-        }
-
-        MCP_TOOL_PERMISSIONS = cacheEntries;
-        logger.debug("MCP permissions loaded from config", {
-          path: configPath,
-          toolCount: Object.keys(cacheEntries).length,
-        });
-        return MCP_TOOL_PERMISSIONS;
-      } catch {
-        // Try next path
-      }
+  for (const configPath of configPaths) {
+    try {
+      const content = await Deno.readTextFile(configPath);
+      PERMISSIONS_CACHE = JSON.parse(content) as McpPermissionsJson;
+      logger.debug("MCP permissions loaded from JSON config", {
+        path: configPath,
+        allowCount: PERMISSIONS_CACHE.permissions.allow.length,
+        denyCount: PERMISSIONS_CACHE.permissions.deny.length,
+        askCount: PERMISSIONS_CACHE.permissions.ask.length,
+      });
+      return PERMISSIONS_CACHE;
+    } catch {
+      // Try next path
     }
-
-    // No config file found, use defaults
-    logger.debug("MCP permissions config not found, using defaults");
-    MCP_TOOL_PERMISSIONS = DEFAULT_MCP_PERMISSIONS;
-    return MCP_TOOL_PERMISSIONS;
-  } catch (error) {
-    logger.warn("Failed to load MCP permissions config, using defaults", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    MCP_TOOL_PERMISSIONS = DEFAULT_MCP_PERMISSIONS;
-    return MCP_TOOL_PERMISSIONS;
   }
+
+  logger.debug("MCP permissions config not found, using defaults");
+  PERMISSIONS_CACHE = DEFAULT_PERMISSIONS;
+  return PERMISSIONS_CACHE;
 }
 
 /**
- * Get MCP tool permissions (sync version for internal use)
- * Returns cached permissions or defaults
+ * Get cached permissions (sync)
  */
-function getMcpPermissions(): Record<string, McpPermissionCacheEntry> {
-  return MCP_TOOL_PERMISSIONS ?? DEFAULT_MCP_PERMISSIONS;
+function getPermissions(): McpPermissionsJson {
+  return PERMISSIONS_CACHE ?? DEFAULT_PERMISSIONS;
 }
 
 /**
- * Get PermissionConfig for a specific tool prefix
- *
- * @param toolPrefix - MCP tool prefix (e.g., "fermat", "github")
- * @returns PermissionConfig or null if not found
+ * Check if a tool matches a pattern (supports wildcards)
+ * e.g., "filesystem:read" matches "filesystem:*"
  */
-export function getToolPermissionConfig(toolPrefix: string): PermissionConfig | null {
-  const cache = getMcpPermissions();
-  return cache[toolPrefix]?.config ?? null;
+function matchesPattern(toolId: string, pattern: string): boolean {
+  if (pattern.endsWith(":*")) {
+    const prefix = pattern.slice(0, -2);
+    return toolId.startsWith(prefix + ":") || toolId === prefix;
+  }
+  return toolId === pattern;
+}
+
+/**
+ * Check if tool is in a permission list
+ */
+function isInList(toolId: string, list: string[]): boolean {
+  // Extract prefix (e.g., "filesystem" from "filesystem:read_file")
+  const prefix = toolId.split(":")[0];
+
+  return list.some(pattern =>
+    matchesPattern(toolId, pattern) || matchesPattern(prefix, pattern)
+  );
+}
+
+/**
+ * Check if a tool is explicitly allowed (no HIL needed)
+ */
+export function isToolAllowed(toolId: string): boolean {
+  const perms = getPermissions();
+  return isInList(toolId, perms.permissions.allow);
+}
+
+/**
+ * Check if a tool is explicitly denied (blocked)
+ */
+export function isToolDenied(toolId: string): boolean {
+  const perms = getPermissions();
+  return isInList(toolId, perms.permissions.deny);
+}
+
+/**
+ * Check if a tool requires HIL (Human-in-the-Loop) approval
+ * Returns true if tool is in 'ask' list OR if tool is unknown (not in any list)
+ */
+export function toolRequiresHil(toolId: string): boolean {
+  const perms = getPermissions();
+
+  // Explicitly in ask list
+  if (isInList(toolId, perms.permissions.ask)) {
+    return true;
+  }
+
+  // Unknown tool (not in allow, deny, or ask) → requires HIL for safety
+  if (!isInList(toolId, perms.permissions.allow) &&
+      !isInList(toolId, perms.permissions.deny)) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
  * Force reload of MCP permissions config
- * Useful for testing or when config file changes
  */
 export function reloadMcpPermissions(): void {
-  MCP_TOOL_PERMISSIONS = null;
+  PERMISSIONS_CACHE = null;
 }
 
 /**
  * Initialize MCP permissions by loading from config file
- * Call this at server startup to ensure config is loaded before use
  */
 export async function initMcpPermissions(): Promise<void> {
-  await loadMcpPermissions();
+  await loadPermissionsJson();
+}
+
+// =============================================================================
+// Legacy compatibility layer (for code that still uses old API)
+// =============================================================================
+
+/**
+ * Get PermissionConfig for a specific tool prefix (legacy API)
+ * Maps to new allow/ask model:
+ * - allow → approvalMode: "auto"
+ * - ask/unknown → approvalMode: "hil"
+ */
+export function getToolPermissionConfig(toolPrefix: string): PermissionConfig | null {
+  const requiresHil = toolRequiresHil(toolPrefix);
+
+  // Return a PermissionConfig that maps to the new model
+  return {
+    scope: "mcp-standard", // Scope is now just metadata, not used for decisions
+    approvalMode: requiresHil ? "hil" : "auto",
+  };
 }
 
 /**
@@ -598,41 +564,32 @@ export class PermissionInferrer {
     const operation = chainParts.length > 2 ? chainParts[2] : undefined;
     const pattern = chainParts.join(".");
 
-    // Check known MCP tool prefixes (loaded from config/mcp-permissions.yaml)
-    const toolEntry = getMcpPermissions()[toolPrefix];
+    // Determine category based on tool prefix name
+    let category: PatternCategory;
+    let isReadOnly = false;
 
-    if (toolEntry) {
-      let isReadOnly = toolEntry.legacy.isReadOnly;
+    // Network tools
+    const networkTools = ["github", "slack", "tavily", "api", "fetch", "exa", "network"];
+    // Filesystem tools
+    const filesystemTools = ["filesystem", "fs", "git", "archive", "media"];
 
+    if (networkTools.includes(toolPrefix)) {
+      category = "network";
+    } else if (filesystemTools.includes(toolPrefix)) {
+      category = "filesystem";
       // For filesystem tools, check if operation is read-only
       if ((toolPrefix === "filesystem" || toolPrefix === "fs") && operation) {
         isReadOnly = FILESYSTEM_READ_OPS.has(operation);
       }
-
-      // Determine category based on permission scope
-      let category: PatternCategory;
-      const scope = toolEntry.config.scope;
-      if (scope === "network-api") {
-        category = "network";
-      } else if (scope === "filesystem" || scope === "readonly") {
-        category = "filesystem";
-      } else {
-        // mcp-standard or minimal tools → unknown category
-        category = "unknown";
-      }
-
-      return {
-        pattern,
-        category,
-        isReadOnly,
-      };
+    } else {
+      // Other tools (json, math, docker, etc.) → unknown category for inference
+      category = "unknown";
     }
 
-    // Unknown MCP tool - default to mcp-standard
     return {
       pattern,
-      category: "unknown",
-      isReadOnly: false,
+      category,
+      isReadOnly,
     };
   }
 

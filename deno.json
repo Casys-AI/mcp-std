@@ -67,7 +67,9 @@
     "mock:api": "deno run --allow-all tests/mocks/api-mock.ts",
     "db:restore": "rm -rf .pml-dev.db && cp -r .pml-dev.db.last .pml-dev.db && echo '✓ Database restored from .pml-dev.db.last'",
     "db:backup:prod": "cp -r ~/.pml/.pml.db ~/.pml/.pml.db.backup && echo '✓ Production DB backed up to ~/.pml/.pml.db.backup'",
-    "db:restore:prod": "rm -rf ~/.pml/.pml.db && cp -r ~/.pml/.pml.db.backup ~/.pml/.pml.db && echo '✓ Production DB restored'"
+    "db:restore:prod": "rm -rf ~/.pml/.pml.db && cp -r ~/.pml/.pml.db.backup ~/.pml/.pml.db && echo '✓ Production DB restored'",
+    "test:arch": "deno test --allow-read --allow-run tests/architecture/",
+    "test:all": "deno task test && deno task test:arch"
   },
   "fmt": {
     "useTabs": false,
