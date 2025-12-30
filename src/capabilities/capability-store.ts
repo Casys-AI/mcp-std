@@ -31,7 +31,6 @@ import { ExecutionTraceStore } from "./execution-trace-store.ts";
 import { hashCode } from "./hash.ts";
 import { getLogger } from "../telemetry/logger.ts";
 import type { SchemaInferrer } from "./schema-inferrer.ts";
-import type { PermissionInferrer } from "./permission-inferrer.ts";
 import type { StaticStructureBuilder } from "./static-structure-builder.ts";
 import type { CapabilityRegistry } from "./capability-registry.ts";
 import { transformCapabilityRefs, transformLiteralsToArgs } from "./code-transformer.ts";
