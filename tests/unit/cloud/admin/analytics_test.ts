@@ -63,25 +63,24 @@ async function setupTestDb(): Promise<PGliteClient> {
       last_used TIMESTAMPTZ DEFAULT NOW()
     );
 
-    -- MCP tool table
-    CREATE TABLE IF NOT EXISTS mcp_tool (
+    -- Tool schema table (mcp_tool was merged here in migration 019)
+    CREATE TABLE IF NOT EXISTS tool_schema (
       id SERIAL PRIMARY KEY,
       server_id TEXT NOT NULL,
       tool_name TEXT NOT NULL,
-      tool_schema JSONB NOT NULL DEFAULT '{}',
+      schema JSONB NOT NULL DEFAULT '{}',
       created_at TIMESTAMPTZ DEFAULT NOW(),
       UNIQUE (server_id, tool_name)
     );
 
-    -- Tool edge table
-    CREATE TABLE IF NOT EXISTS tool_edge (
+    -- Tool dependency table (graph edges)
+    CREATE TABLE IF NOT EXISTS tool_dependency (
       id SERIAL PRIMARY KEY,
-      source_tool_id INTEGER NOT NULL,
-      target_tool_id INTEGER NOT NULL,
+      source_tool TEXT NOT NULL,
+      target_tool TEXT NOT NULL,
       confidence REAL DEFAULT 0.5,
-      observed_count INTEGER DEFAULT 1,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      UNIQUE (source_tool_id, target_tool_id)
+      edge_source TEXT DEFAULT 'learned',
+      created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
     -- SHGAT params table (for analytics)
@@ -144,23 +143,20 @@ async function seedTestData(db: PGliteClient): Promise<void> {
       (gen_random_uuid(), 'hash2', '{"nodes": [], "edges": []}', 5, 4)
   `);
 
-  // Create mcp_tool entries for graph nodes
+  // Create tool_schema entries for graph nodes
   await db.query(`
-    INSERT INTO mcp_tool (tool_name, server_id, tool_schema)
+    INSERT INTO tool_schema (tool_name, server_id, schema)
     VALUES
       ('read_file', 'filesystem', '{}'),
       ('write_file', 'filesystem', '{}'),
       ('search', 'tavily', '{}')
   `);
 
-  // Create tool_edge entries for graph edges
-  const toolIds = await db.query<{ id: number }>(`SELECT id FROM mcp_tool LIMIT 2`);
-  if (toolIds.length >= 2) {
-    await db.query(`
-      INSERT INTO tool_edge (source_tool_id, target_tool_id, confidence, observed_count)
-      VALUES ($1, $2, 0.8, 5)
-    `, [toolIds[0].id, toolIds[1].id]);
-  }
+  // Create tool_dependency entries for graph edges
+  await db.query(`
+    INSERT INTO tool_dependency (source_tool, target_tool, confidence, edge_source)
+    VALUES ('read_file', 'write_file', 0.8, 'learned')
+  `);
 
   // Create execution traces with various timestamps
   await db.query(`

@@ -299,7 +299,6 @@ export function createServeCommand() {
           db,
           embeddingModel,
           schemaInferrer,
-          undefined, // permissionInferrer - not used currently
           staticStructureBuilder,
         );
         const adaptiveThresholdManager = new AdaptiveThresholdManager({}, db);

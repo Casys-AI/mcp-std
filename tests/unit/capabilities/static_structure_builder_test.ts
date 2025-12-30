@@ -384,7 +384,6 @@ Deno.test({
       db,
       mockEmbeddingModel as any, // Cast to bypass EmbeddingModel class type (interface satisfied)
       undefined, // schemaInferrer
-      undefined, // permissionInferrer
       builder, // staticStructureBuilder - AC10
     );
 

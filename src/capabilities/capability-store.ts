@@ -78,14 +78,12 @@ export class CapabilityStore {
     private db: DbClient,
     private embeddingModel: EmbeddingModel,
     private schemaInferrer?: SchemaInferrer,
-    private permissionInferrer?: PermissionInferrer,
     private staticStructureBuilder?: StaticStructureBuilder,
   ) {
     // Story 11.2: Initialize trace store for optional trace storage
     this.traceStore = new ExecutionTraceStore(db);
     logger.debug("CapabilityStore initialized", {
       schemaInferrerEnabled: !!schemaInferrer,
-      permissionInferrerEnabled: !!permissionInferrer,
       staticStructureBuilderEnabled: !!staticStructureBuilder,
       traceStoreEnabled: true,
     });
@@ -235,26 +233,9 @@ export class CapabilityStore {
       }
     }
 
-    // Infer permissions from code (Story 7.7a, ADR-035)
-    let permissionSet: PermissionSet = "minimal";
-    let permissionConfidence = 0.0;
-    if (this.permissionInferrer) {
-      try {
-        const permissions = await this.permissionInferrer.inferPermissions(code);
-        permissionSet = permissions.permissionSet;
-        permissionConfidence = permissions.confidence;
-        logger.debug("Permissions inferred for capability", {
-          codeHash,
-          permissionSet,
-          permissionConfidence,
-          detectedPatterns: permissions.detectedPatterns,
-        });
-      } catch (error) {
-        logger.warn("Permission inference failed, using minimal", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
+    // Permissions: sandbox always runs with "none", HIL is controlled by allow/ask/deny config
+    const permissionSet: PermissionSet = "minimal";
+    const permissionConfidence = 1.0; // No inference, static config
 
     // Build static structure from code (Story 10.1)
     // Use passed staticStructure if available, otherwise generate from builder

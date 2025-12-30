@@ -15,12 +15,10 @@ export { StaticStructureBuilder } from "./static-structure-builder.ts";
 export {
   getToolPermissionConfig,
   initMcpPermissions,
-  PermissionInferrer,
-} from "./permission-inferrer.ts";
-export type {
-  DetectedPattern,
-  InferredPermissions,
-  PatternCategory,
+  isToolAllowed,
+  isToolDenied,
+  reloadMcpPermissions,
+  toolRequiresHil,
 } from "./permission-inferrer.ts";
 export { CapabilityCodeGenerator } from "./code-generator.ts";
 export { CapabilityExecutor } from "./executor.ts";
