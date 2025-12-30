@@ -43,10 +43,36 @@ export interface Recommendation {
 }
 
 /**
+ * Tensor entropy metrics from graph analysis
+ * Based on Chen & Rajapakse (2020) and arxiv:2503.18852
+ */
+export interface TensorEntropyMetrics {
+  /** Von Neumann entropy from Laplacian spectrum (0-1) */
+  vonNeumann: number;
+  /** Structural entropy from degree distribution (0-1) */
+  structural: number;
+  /** Weighted combination of all entropy measures (0-1) */
+  normalized: number;
+  /** Health classification based on size-adjusted thresholds */
+  health: "rigid" | "healthy" | "chaotic";
+  /** Size-adjusted thresholds used for health classification */
+  thresholds: {
+    low: number;
+    high: number;
+  };
+  /** Graph size context */
+  graphSize: {
+    nodes: number;
+    edges: number;
+    hyperedges: number;
+  };
+}
+
+/**
  * Current metric values
  */
 export interface EmergenceCurrentMetrics {
-  /** Shannon entropy of edge weight distribution (0-1) */
+  /** Von Neumann graph entropy (0-1) - replaces old Shannon entropy */
   graphEntropy: number;
   /** Louvain community consistency via Jaccard similarity (0-1) */
   clusterStability: number;
@@ -62,6 +88,8 @@ export interface EmergenceCurrentMetrics {
   capabilityCount: number;
   /** Parallel workflow rate (0-1) */
   parallelizationRate: number;
+  /** Full tensor entropy analysis */
+  tensorEntropy?: TensorEntropyMetrics;
 }
 
 /**
@@ -96,12 +124,14 @@ export interface EmergenceTimeseries {
  * Health thresholds for metrics
  */
 export interface EmergenceThresholds {
-  /** [min, max] healthy range for entropy */
+  /** [min, max] healthy range for entropy (size-adjusted) */
   entropyHealthy: [number, number];
   /** Minimum healthy stability value */
   stabilityHealthy: number;
   /** Minimum healthy diversity value */
   diversityHealthy: number;
+  /** Whether thresholds are size-adjusted (vs static defaults) */
+  isAdjusted?: boolean;
 }
 
 /**

@@ -91,7 +91,138 @@ export type EventType =
   | "metrics.snapshot"
   | "system.startup"
   | "system.shutdown"
-  | "heartbeat";
+  | "heartbeat"
+  // ──────────────────────────────────────────────────────────────────────────
+  // MCP SERVER EVENTS (Phase 2.5)
+  // ──────────────────────────────────────────────────────────────────────────
+  | "mcp.server.connecting"
+  | "mcp.server.connected"
+  | "mcp.server.disconnected"
+  | "mcp.server.error"
+  | "mcp.server.reconnecting"
+  | "mcp.server.tools.listed"
+  | "mcp.server.tools.changed"
+  // ──────────────────────────────────────────────────────────────────────────
+  // WORKFLOW CONTROL EVENTS (Phase 2.5)
+  // ──────────────────────────────────────────────────────────────────────────
+  | "workflow.created"
+  | "workflow.started"
+  | "workflow.paused"
+  | "workflow.resumed"
+  | "workflow.aborted"
+  | "workflow.completed"
+  | "workflow.failed"
+  | "workflow.checkpoint.created"
+  | "workflow.checkpoint.restored"
+  | "workflow.approval.requested"
+  | "workflow.approval.granted"
+  | "workflow.approval.denied"
+  // ──────────────────────────────────────────────────────────────────────────
+  // SANDBOX EVENTS (Phase 2.5)
+  // ──────────────────────────────────────────────────────────────────────────
+  | "sandbox.worker.spawned"
+  | "sandbox.worker.terminated"
+  | "sandbox.execution.started"
+  | "sandbox.execution.completed"
+  | "sandbox.execution.timeout"
+  | "sandbox.execution.error"
+  | "sandbox.memory.exceeded"
+  // ──────────────────────────────────────────────────────────────────────────
+  // SECURITY & PII EVENTS (Phase 2.5)
+  // ──────────────────────────────────────────────────────────────────────────
+  | "security.pii.detected"
+  | "security.pii.tokenized"
+  | "security.pii.detokenized"
+  | "security.permission.requested"
+  | "security.permission.granted"
+  | "security.permission.denied"
+  | "security.risk.elevated"
+  // ──────────────────────────────────────────────────────────────────────────
+  // VECTOR & EMBEDDING EVENTS (Phase 2.5)
+  // ──────────────────────────────────────────────────────────────────────────
+  | "vector.embedding.generated"
+  | "vector.search.started"
+  | "vector.search.completed"
+  | "vector.index.updated"
+  | "vector.model.loaded"
+  | "vector.model.error"
+  // ──────────────────────────────────────────────────────────────────────────
+  // API & HTTP EVENTS (Phase 2.5)
+  // ──────────────────────────────────────────────────────────────────────────
+  | "api.request.received"
+  | "api.request.completed"
+  | "api.request.error"
+  | "api.rate.limited"
+  | "api.auth.success"
+  | "api.auth.failure"
+  // ──────────────────────────────────────────────────────────────────────────
+  // CONFIG & MIGRATION EVENTS (Phase 2.5)
+  // ──────────────────────────────────────────────────────────────────────────
+  | "config.loaded"
+  | "config.changed"
+  | "config.error"
+  | "migration.started"
+  | "migration.completed"
+  | "migration.failed"
+  // ──────────────────────────────────────────────────────────────────────────
+  // ERROR & RECOVERY EVENTS (Phase 2.5)
+  // ──────────────────────────────────────────────────────────────────────────
+  | "error.unhandled"
+  | "error.recovered"
+  | "error.fatal"
+  | "retry.started"
+  | "retry.succeeded"
+  | "retry.exhausted"
+  // ──────────────────────────────────────────────────────────────────────────
+  // LLM & AI EVENTS (Phase 2.5)
+  // ──────────────────────────────────────────────────────────────────────────
+  | "llm.request.started"
+  | "llm.request.completed"
+  | "llm.request.error"
+  | "llm.request.streaming"
+  | "llm.tokens.counted"
+  | "llm.context.truncated"
+  | "llm.fallback.triggered"
+  // ──────────────────────────────────────────────────────────────────────────
+  // DATABASE EVENTS (Phase 2.5)
+  // ──────────────────────────────────────────────────────────────────────────
+  | "db.query.started"
+  | "db.query.completed"
+  | "db.query.slow"
+  | "db.connection.opened"
+  | "db.connection.closed"
+  | "db.connection.error"
+  | "db.transaction.started"
+  | "db.transaction.committed"
+  | "db.transaction.rolledback"
+  // ──────────────────────────────────────────────────────────────────────────
+  // REALTIME & SSE EVENTS (Phase 2.5)
+  // ──────────────────────────────────────────────────────────────────────────
+  | "sse.client.connected"
+  | "sse.client.disconnected"
+  | "sse.message.sent"
+  | "sse.broadcast.sent"
+  | "ws.client.connected"
+  | "ws.client.disconnected"
+  | "ws.message.received"
+  | "ws.message.sent"
+  // ──────────────────────────────────────────────────────────────────────────
+  // RESOURCE LIFECYCLE EVENTS (Phase 2.5)
+  // ──────────────────────────────────────────────────────────────────────────
+  | "resource.created"
+  | "resource.updated"
+  | "resource.deleted"
+  | "resource.accessed"
+  | "resource.locked"
+  | "resource.unlocked"
+  // ──────────────────────────────────────────────────────────────────────────
+  // PERFORMANCE & TELEMETRY EVENTS (Phase 2.5)
+  // ──────────────────────────────────────────────────────────────────────────
+  | "perf.gc.triggered"
+  | "perf.memory.warning"
+  | "perf.cpu.high"
+  | "perf.latency.spike"
+  | "perf.throughput.degraded";
 
 // ══════════════════════════════════════════════════════════════════════════════
 // CORE EVENT INTERFACE

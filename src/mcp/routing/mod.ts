@@ -2,16 +2,10 @@
  * Routing Module
  *
  * Central routing system for the MCP Gateway HTTP server.
- * Consolidates all routing logic per tech-spec-large-files-refactoring.md Phase 1.
+ * Uses Hono for routing (QW-4 migration).
  *
  * @module mcp/routing
  */
-
-// Router
-export { logRoutes, routeRequest } from "./router.ts";
-
-// Dispatcher (for custom route registration)
-export { RequestDispatcher, type RouteDefinition } from "./dispatcher.ts";
 
 // Middleware utilities
 export {
@@ -19,6 +13,7 @@ export {
   getAllowedOrigin,
   handleCorsPrelight,
   isPublicRoute,
+  PUBLIC_ROUTES,
   rateLimitResponse,
   unauthorizedResponse,
 } from "./middleware.ts";
@@ -30,8 +25,12 @@ export { errorResponse, jsonResponse } from "./types.ts";
 // Re-export handlers for direct access if needed
 export {
   handleCapabilitiesRoutes,
+  handleEmergenceRoutes,
   handleGraphRoutes,
   handleHealthRoutes,
   handleMetricsRoutes,
   handleToolsRoutes,
 } from "./handlers/mod.ts";
+
+// Note: router.ts and dispatcher.ts are deprecated (QW-4)
+// Routing is now handled by Hono in src/mcp/server/app.ts

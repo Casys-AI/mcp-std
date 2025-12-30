@@ -9,49 +9,22 @@
  * @module domain/interfaces/graph-engine
  */
 
-import type { DAGStructure } from "./dag-executor.ts";
+import type {
+  DAGStructure,
+  GraphMetricsResponse,
+  GraphStats,
+  MetricsTimeRange,
+} from "../../graphrag/types.ts";
+import type { GraphSnapshot } from "../../graphrag/core/graph-store.ts";
 
-/**
- * Statistics about the graph
- */
-export interface GraphStats {
-  nodeCount: number;
-  edgeCount: number;
-  density: number;
-  communities: number;
-}
-
-/**
- * Snapshot of the graph state
- */
-export interface GraphSnapshot {
-  nodes: Array<{
-    id: string;
-    pagerank: number;
-    degree: number;
-    community?: string;
-  }>;
-  edges: Array<{
-    source: string;
-    target: string;
-    weight: number;
-  }>;
-  timestamp: Date;
-}
-
-/**
- * Time range for metrics queries
- */
-export type MetricsTimeRange = "hour" | "day" | "week" | "month";
-
-/**
- * Graph metrics response
- */
-export interface GraphMetricsResponse {
-  toolUsage: Record<string, number>;
-  successRates: Record<string, number>;
-  avgLatencies: Record<string, number>;
-}
+// Re-export for consumers
+export type {
+  DAGStructure,
+  GraphMetricsResponse,
+  GraphSnapshot,
+  GraphStats,
+  MetricsTimeRange,
+};
 
 /**
  * Interface for GraphRAG operations
@@ -88,6 +61,7 @@ export interface IGraphEngine {
 
   /**
    * Build a DAG from candidate tools
+   * @param candidateTools - Tools to include in the DAG
    */
   buildDAG(candidateTools: string[]): DAGStructure;
 

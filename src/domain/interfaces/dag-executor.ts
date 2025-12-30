@@ -10,32 +10,10 @@
  */
 
 import type { JsonValue } from "../../capabilities/types/mod.ts";
+import type { DAGStructure, Task } from "../../graphrag/types.ts";
 
-/**
- * DAG structure for execution
- */
-export interface DAGStructure {
-  tasks: DAGTask[];
-  dependencies: DAGDependency[];
-}
-
-/**
- * A task in a DAG
- */
-export interface DAGTask {
-  id: string;
-  tool: string;
-  args?: Record<string, JsonValue>;
-  dependencies?: string[];
-}
-
-/**
- * A dependency between tasks
- */
-export interface DAGDependency {
-  from: string;
-  to: string;
-}
+// Re-export for consumers
+export type { DAGStructure, Task as DAGTask };
 
 /**
  * Context for DAG execution

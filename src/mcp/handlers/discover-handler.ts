@@ -57,9 +57,15 @@ interface RelatedToolResponse {
 
 /**
  * Unified discover result item
+ *
+ * Story 13.8: Added record_type field for pml_registry VIEW compatibility.
+ * - type: Original field for backward compatibility ('tool' | 'capability')
+ * - record_type: New field matching pml_registry VIEW ('mcp-tool' | 'capability')
  */
 interface DiscoverResultItem {
   type: "tool" | "capability";
+  /** Record type matching pml_registry VIEW (Story 13.8) */
+  record_type: "mcp-tool" | "capability";
   id: string;
   name: string;
   description: string;
@@ -288,6 +294,7 @@ async function searchTools(
 
     const item: DiscoverResultItem = {
       type: "tool",
+      record_type: "mcp-tool", // Story 13.8: pml_registry VIEW compatibility
       id: result.toolId,
       name: extractToolName(result.toolId),
       description: result.description,
@@ -390,6 +397,7 @@ async function searchCapability(
 
   return {
     type: "capability",
+    record_type: "capability", // Story 13.8: pml_registry VIEW compatibility
     id: match.capability.id,
     name: match.capability.name ?? match.capability.id.substring(0, 8),
     description: match.capability.description ?? "Learned capability",

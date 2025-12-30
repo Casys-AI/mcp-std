@@ -223,3 +223,54 @@ export interface ListWithSchemasOptions {
   /** Order by field (default: usageCount) */
   orderBy?: "usageCount" | "displayName" | "createdAt";
 }
+
+// ============================================
+// PML Registry Types (Story 13.8)
+// ============================================
+
+/**
+ * Record type in the unified pml_registry VIEW (Story 13.8)
+ *
+ * - 'mcp-tool': Tool from tool_schema (MCP server tools)
+ * - 'capability': Learned capability from capability_records
+ */
+export type PmlRegistryRecordType = "mcp-tool" | "capability";
+
+/**
+ * Unified registry record from pml_registry VIEW (Story 13.8)
+ *
+ * This VIEW combines tool_schema and capability_records for unified discovery.
+ * Each record has a record_type to distinguish between MCP tools and capabilities.
+ *
+ * @example
+ * ```sql
+ * SELECT * FROM pml_registry WHERE name ILIKE '%file%';
+ * SELECT * FROM pml_registry WHERE record_type = 'mcp-tool';
+ * ```
+ */
+export interface PmlRegistryRecord {
+  /** Record type: 'mcp-tool' or 'capability' */
+  recordType: PmlRegistryRecordType;
+  /** Unique identifier (tool_id for tools, UUID for capabilities) */
+  id: string;
+  /** Name (tool name or namespace:action for capabilities) */
+  name: string;
+  /** Description from tool_schema or workflow_pattern */
+  description: string | null;
+  /** URL for dynamic import (MCP tools only) */
+  codeUrl: string | null;
+  /** Execution routing: 'local' or 'cloud' */
+  routing: CapabilityRouting;
+  /** MCP server ID (tools only) */
+  serverId: string | null;
+  /** Workflow pattern ID (capabilities only) */
+  workflowPatternId: string | null;
+  /** Organization (capabilities only) */
+  org: string | null;
+  /** Project (capabilities only) */
+  project: string | null;
+  /** Namespace (capabilities only) */
+  namespace: string | null;
+  /** Action (capabilities only) */
+  action: string | null;
+}

@@ -1,0 +1,38 @@
+{
+  "$schema": "./mcp-routing.schema.json",
+  "routing": {
+    "cloud": [
+      "memory:*",
+      "tavily:*",
+      "brave_search:*",
+      "exa:*",
+      "github:*",
+      "slack:*",
+      "api:*",
+      "http:*",
+      "fetch:*",
+      "sequential-thinking:*",
+      "context7:*",
+      "magic:*",
+      "json:*",
+      "math:*",
+      "datetime:*",
+      "crypto:*",
+      "collections:*",
+      "validation:*",
+      "format:*",
+      "transform:*",
+      "algo:*",
+      "string:*",
+      "color:*",
+      "geo:*",
+      "resilience:*",
+      "schema:*",
+      "diff:*",
+      "state:*",
+      "plots:*",
+      "pml:*"
+    ]
+  },
+  "_comment": "Only cloud servers listed. Everything else defaults to LOCAL for security."
+}

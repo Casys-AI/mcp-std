@@ -23,5 +23,6 @@
 
 export * from "./capability-repository.ts";
 export * from "./dag-executor.ts";
+export * from "./event-bus.ts";
 export * from "./graph-engine.ts";
 export * from "./mcp-client-registry.ts";

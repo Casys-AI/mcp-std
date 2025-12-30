@@ -591,3 +591,108 @@ Deno.test("handleDiscover - AC13: low successRate capability gets penalty", asyn
   // Low success rate results in penalized score
   assertEquals(response.results[0].score, 0.08);
 });
+
+// =============================================================================
+// Story 13.8: pml_registry VIEW compatibility
+// =============================================================================
+
+Deno.test("handleDiscover - Story 13.8: record_type 'mcp-tool' for tools", async () => {
+  const graphEngine = new MockGraphEngine();
+  const vectorSearch = new MockVectorSearch();
+  const dagSuggester = new MockDAGSuggester();
+
+  graphEngine.setHybridResults([
+    createToolResult("filesystem:read_file", 0.9),
+  ]);
+
+  const result = await handleDiscover(
+    { intent: "read a file" },
+    vectorSearch as unknown as VectorSearch,
+    graphEngine as unknown as GraphRAGEngine,
+    dagSuggester as unknown as DAGSuggester,
+  ) as MCPToolResponse;
+
+  const response = parseResponse(result) as {
+    results: Array<{ type: string; record_type: string; id: string }>;
+  };
+
+  assertEquals(response.results.length, 1);
+  assertEquals(response.results[0].type, "tool");
+  assertEquals(response.results[0].record_type, "mcp-tool");
+  assertEquals(response.results[0].id, "filesystem:read_file");
+});
+
+Deno.test("handleDiscover - Story 13.8: record_type 'capability' for capabilities", async () => {
+  const graphEngine = new MockGraphEngine();
+  const vectorSearch = new MockVectorSearch();
+  const dagSuggester = new MockDAGSuggester();
+
+  const capability = createCapability("cap-123", 0.95);
+  dagSuggester.setCapabilityMatch({
+    capability,
+    score: 0.85,
+    semanticScore: 0.9,
+    thresholdUsed: 0.7,
+    parametersSchema: null,
+  });
+
+  const result = await handleDiscover(
+    { intent: "create an issue", filter: { type: "capability" } },
+    vectorSearch as unknown as VectorSearch,
+    graphEngine as unknown as GraphRAGEngine,
+    dagSuggester as unknown as DAGSuggester,
+  ) as MCPToolResponse;
+
+  const response = parseResponse(result) as {
+    results: Array<{ type: string; record_type: string; id: string }>;
+  };
+
+  assertEquals(response.results.length, 1);
+  assertEquals(response.results[0].type, "capability");
+  assertEquals(response.results[0].record_type, "capability");
+  assertEquals(response.results[0].id, "cap-123");
+});
+
+Deno.test("handleDiscover - Story 13.8: mixed results have correct record_type", async () => {
+  const graphEngine = new MockGraphEngine();
+  const vectorSearch = new MockVectorSearch();
+  const dagSuggester = new MockDAGSuggester();
+
+  // Setup tool
+  graphEngine.setHybridResults([
+    createToolResult("github:create_issue", 0.85),
+  ]);
+
+  // Setup capability
+  const capability = createCapability("cap-create-issue", 0.92);
+  dagSuggester.setCapabilityMatch({
+    capability,
+    score: 0.80,
+    semanticScore: 0.85,
+    thresholdUsed: 0.7,
+    parametersSchema: null,
+  });
+
+  const result = await handleDiscover(
+    { intent: "create an issue", limit: 5 },
+    vectorSearch as unknown as VectorSearch,
+    graphEngine as unknown as GraphRAGEngine,
+    dagSuggester as unknown as DAGSuggester,
+  ) as MCPToolResponse;
+
+  const response = parseResponse(result) as {
+    results: Array<{ type: string; record_type: string }>;
+  };
+
+  assertEquals(response.results.length, 2);
+
+  // Find tool result
+  const toolResult = response.results.find((r) => r.type === "tool");
+  assertExists(toolResult);
+  assertEquals(toolResult.record_type, "mcp-tool");
+
+  // Find capability result
+  const capResult = response.results.find((r) => r.type === "capability");
+  assertExists(capResult);
+  assertEquals(capResult.record_type, "capability");
+});

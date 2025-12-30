@@ -18,78 +18,31 @@ import type {
   ArgumentValue,
   BranchDecision,
   JsonValue,
-  ProvidesCoverage,
   StaticStructure,
   StaticStructureEdge,
   StaticStructureNode,
 } from "./types.ts";
 import { getLogger } from "../telemetry/logger.ts";
 import { getToolPermissionConfig } from "./permission-inferrer.ts";
+// Phase 2.5: Import refactored modules
+import {
+  createStaticStructureVisitor,
+  evaluateBinaryOp,
+  evaluateUnaryOp,
+  extractArrayLiteral as extractArrayLiteralUtil,
+  extractConditionText as extractConditionTextUtil,
+  extractMemberChain as extractMemberChainUtil,
+  extractObjectLiteral as extractObjectLiteralUtil,
+  extractTemplateLiteralText as extractTemplateLiteralTextUtil,
+  generateAllEdges,
+} from "./static-structure/mod.ts";
+import type { InternalNode, NodeMetadata, VisitorResult } from "./static-structure/mod.ts";
+import { BuilderContextAdapter } from "./static-structure/builder-context-adapter.ts";
+import { ASTVisitor } from "../infrastructure/patterns/visitor/mod.ts";
+
 const logger = getLogger("default");
 
-/**
- * Tool schema from database for provides edge calculation
- */
-interface ToolSchema {
-  toolId: string;
-  inputSchema: {
-    properties?: Record<string, unknown>;
-    required?: string[];
-  };
-  outputSchema?: {
-    properties?: Record<string, unknown>;
-  };
-}
-
-/**
- * Internal node representation for AST traversal and edge generation
- *
- * This type extends StaticStructureNode with position information needed
- * during the analysis phase. The position field tracks AST traversal order
- * for generating sequence edges, and parentScope tracks containment for
- * conditional branches and parallel blocks.
- *
- * Uses TypeScript discriminated union pattern:
- * - `type: "task"` → MCP tool call with `tool` field (e.g., "filesystem:read_file")
- * - `type: "decision"` → Control flow (if/switch/ternary) with `condition` string
- * - `type: "capability"` → Nested capability call with `capabilityId` field
- * - `type: "fork"` → Start of Promise.all/allSettled parallel block
- * - `type: "join"` → End of parallel block
- *
- * @internal This type is not exported - use StaticStructureNode for external APIs
- */
-/**
- * Metadata for Option B: executable tracking
- */
-interface NodeMetadata {
-  /** Whether this task is executable standalone (false if nested in callback) */
-  executable?: boolean;
-  /** Nesting level: 0 = top-level, 1+ = inside callback */
-  nestingLevel?: number;
-  /** Parent operation that contains this nested op (e.g., "code:map") */
-  parentOperation?: string;
-  /** Story 10.2c: Node ID of the chained input (for method chaining) */
-  chainedFrom?: string;
-}
-
-type InternalNode =
-  & {
-    /** Unique node identifier (e.g., "n1", "d1", "f1") */
-    id: string;
-    /** AST traversal position for ordering sequence edges */
-    position: number;
-    /** Parent scope for conditional/parallel containment (e.g., "d1:true", "f1") */
-    parentScope?: string;
-    /** Option B: Execution metadata for nested operation tracking */
-    metadata?: NodeMetadata;
-  }
-  & (
-    | { type: "task"; tool: string; arguments?: ArgumentsStructure; code?: string }
-    | { type: "decision"; condition: string }
-    | { type: "capability"; capabilityId: string }
-    | { type: "fork" }
-    | { type: "join" }
-  );
+// Types ToolSchema, NodeMetadata, InternalNode are now imported from ./static-structure/mod.ts
 
 /**
  * StaticStructureBuilder - Analyzes code to extract control flow and data flow
@@ -142,7 +95,7 @@ export class StaticStructureBuilder {
    * This allows us to convert references like `file.content` to `n1.content`
    * in extracted arguments, making them resolvable at runtime.
    */
-  private variableToNodeId = new Map<string, string>();
+  public variableToNodeId = new Map<string, string>();
 
   /**
    * Maps variable names to literal values (Story 10.2b - Option B)
@@ -153,7 +106,7 @@ export class StaticStructureBuilder {
    * This allows us to resolve shorthand arguments like `{ numbers }`
    * where `numbers` is a local variable with a literal value.
    */
-  private literalBindings = new Map<string, JsonValue>();
+  public literalBindings = new Map<string, JsonValue>();
 
   /**
    * Tracks processed CallExpression spans to prevent double-processing
@@ -167,7 +120,7 @@ export class StaticStructureBuilder {
    * This set stores "start-end" keys to return the existing nodeId instead
    * of creating duplicates.
    */
-  private processedSpans = new Map<string, string>();
+  public processedSpans = new Map<string, string>();
 
   /**
    * Original source code for span extraction
@@ -182,11 +135,35 @@ export class StaticStructureBuilder {
   private spanBaseOffset = 0;
 
   /**
+   * AST Visitor for node type dispatch (Phase 2.5)
+   *
+   * Lazily initialized to ensure builder methods are bound correctly.
+   * Uses the Visitor pattern for clean node type dispatch.
+   */
+  private _visitor: ASTVisitor<
+    import("./static-structure/ast-handlers.ts").HandlerContext,
+    VisitorResult
+  > | null = null;
+
+  /**
+   * Get or create the AST visitor
+   */
+  private get visitor(): ASTVisitor<
+    import("./static-structure/ast-handlers.ts").HandlerContext,
+    VisitorResult
+  > {
+    if (!this._visitor) {
+      this._visitor = createStaticStructureVisitor(ASTVisitor);
+    }
+    return this._visitor;
+  }
+
+  /**
    * Extract code from SWC span
    * SWC spans use 1-based byte offsets that accumulate globally,
    * so we subtract the base offset to get the relative position
    */
-  private extractCodeFromSpan(
+  public extractCodeFromSpan(
     span: { start: number; end: number } | undefined,
   ): string | undefined {
     if (!span || !this.originalCode) return undefined;
@@ -210,7 +187,7 @@ export class StaticStructureBuilder {
    * @param node The CallExpression AST node
    * @returns Full chain span { start, end } or undefined
    */
-  private extractFullChainSpan(
+  public extractFullChainSpan(
     node: Record<string, unknown>,
   ): { start: number; end: number } | undefined {
     const nodeSpan = node.span as { start: number; end: number } | undefined;
@@ -363,7 +340,7 @@ export class StaticStructureBuilder {
   /**
    * Generate unique node ID
    */
-  private generateNodeId(type: keyof typeof this.nodeCounters): string {
+  public generateNodeId(type: keyof typeof this.nodeCounters): string {
     this.nodeCounters[type]++;
     const prefixes = {
       task: "n",
@@ -404,7 +381,7 @@ export class StaticStructureBuilder {
    * @param nestingLevel Current callback nesting depth (default 0 = top-level)
    * @param currentParentOp Parent operation name if inside callback (e.g., "code:map")
    */
-  private findNodes(
+  public findNodes(
     node: unknown,
     nodes: InternalNode[],
     position: number,
@@ -418,75 +395,34 @@ export class StaticStructureBuilder {
 
     const n = node as Record<string, unknown>;
 
-    // Option B: Detect callback functions and increment nestingLevel
-    if (n.type === "ArrowFunctionExpression" || n.type === "FunctionExpression") {
-      // Recurse into callback body with incremented nesting level
-      const body = n.body as Record<string, unknown> | undefined;
-      if (body) {
-        this.findNodes(
-          body,
-          nodes,
-          position,
-          parentScope,
-          nestingLevel + 1, // Increment for callback context
-          currentParentOp,
-        );
-      }
-      return; // Don't continue normal recursion
-    }
+    // Phase 2.5: Use Visitor pattern for node type dispatch
+    // The visitor handles all node types via registered handlers:
+    // - Control flow: IfStatement, SwitchStatement, ConditionalExpression
+    // - Operations: BinaryExpression, CallExpression
+    // - Scope: ArrowFunctionExpression, FunctionExpression, VariableDeclarator
+    // - Default: recursive traversal for unhandled node types
+    const ctx = new BuilderContextAdapter(
+      this,
+      nodes,
+      position,
+      parentScope,
+      nestingLevel,
+      currentParentOp,
+    );
 
-    // Story 10.5: Track variable declarations for reference resolution
-    // Pattern: const file = await mcp.fs.read(...) → track "file" → node ID
-    if (n.type === "VariableDeclarator") {
-      this.handleVariableDeclarator(n, nodes, position, parentScope, nestingLevel, currentParentOp);
-      return; // Handled, don't recurse normally
-    }
+    // Visit the node - the visitor dispatches to the appropriate handler
+    // Handlers return { handled: true } to prevent default recursion
+    const result = this.visitor.visit(n as { type: string; [key: string]: unknown }, ctx);
 
-    // Check for MCP tool calls: mcp.server.tool()
-    if (n.type === "CallExpression") {
-      const result = this.handleCallExpression(
-        n,
-        nodes,
-        position,
-        parentScope,
-        nestingLevel,
-        currentParentOp,
-      );
-      if (result.handled) return; // Promise.all etc. handle their own children
-    }
-
-    // Check for binary operations (arithmetic, comparison, logical)
-    if (n.type === "BinaryExpression") {
-      this.handleBinaryExpression(n, nodes, position, parentScope, nestingLevel, currentParentOp);
-      return; // Handled, don't recurse normally
-    }
-
-    // Check for if statements
-    if (n.type === "IfStatement") {
-      this.handleIfStatement(n, nodes, position, parentScope, nestingLevel, currentParentOp);
-      return; // Don't recurse normally, handled in handleIfStatement
-    }
-
-    // Check for switch statements
-    if (n.type === "SwitchStatement") {
-      this.handleSwitchStatement(n, nodes, position, parentScope, nestingLevel, currentParentOp);
+    // If a handler processed this node, we're done
+    // Note: The default handler does recursion, so this should always be true
+    // unless visiting an unknown node type without a type field
+    if (result?.handled) {
       return;
     }
 
-    // Check for ternary operators
-    if (n.type === "ConditionalExpression") {
-      this.handleConditionalExpression(
-        n,
-        nodes,
-        position,
-        parentScope,
-        nestingLevel,
-        currentParentOp,
-      );
-      return;
-    }
-
-    // Recurse through AST (pass nestingLevel unchanged)
+    // Fallback: If no handler matched (e.g., node has no type field),
+    // do manual recursion through children
     let childPosition = position;
     for (const key of Object.keys(n)) {
       const val = n[key];
@@ -513,7 +449,7 @@ export class StaticStructureBuilder {
    *   - nodeId: ID of the created task node (undefined if no task created)
    *   - handled: true if children were fully handled (don't recurse further)
    */
-  private handleCallExpression(
+  public handleCallExpression(
     n: Record<string, unknown>,
     nodes: InternalNode[],
     position: number,
@@ -862,7 +798,7 @@ export class StaticStructureBuilder {
    * Pattern 2: const numbers = [10, 20, 30];
    * → Tracks "numbers" → [10, 20, 30] so that { numbers } resolves to the literal value
    */
-  private handleVariableDeclarator(
+  public handleVariableDeclarator(
     n: Record<string, unknown>,
     nodes: InternalNode[],
     position: number,
@@ -1171,344 +1107,29 @@ export class StaticStructureBuilder {
     return true;
   }
 
-  /**
-   * Handle if/else statements
-   */
-  private handleIfStatement(
-    n: Record<string, unknown>,
-    nodes: InternalNode[],
-    position: number,
-    parentScope?: string,
-    nestingLevel: number = 0,
-    currentParentOp?: string,
-  ): void {
-    // Extract condition
-    const test = n.test as Record<string, unknown> | undefined;
-    const condition = this.extractConditionText(test);
-
-    // Create decision node
-    const decisionId = this.generateNodeId("decision");
-    nodes.push({
-      id: decisionId,
-      type: "decision",
-      condition,
-      position,
-      parentScope,
-    });
-
-    // Process consequent (if true)
-    const consequent = n.consequent as Record<string, unknown> | undefined;
-    if (consequent) {
-      this.findNodes(
-        consequent,
-        nodes,
-        position + 1,
-        `${decisionId}:true`,
-        nestingLevel,
-        currentParentOp,
-      );
-    }
-
-    // Process alternate (else)
-    const alternate = n.alternate as Record<string, unknown> | undefined;
-    if (alternate) {
-      this.findNodes(
-        alternate,
-        nodes,
-        position + 100,
-        `${decisionId}:false`,
-        nestingLevel,
-        currentParentOp,
-      );
-    }
-  }
-
-  /**
-   * Handle switch statements
-   */
-  private handleSwitchStatement(
-    n: Record<string, unknown>,
-    nodes: InternalNode[],
-    position: number,
-    parentScope?: string,
-    nestingLevel: number = 0,
-    currentParentOp?: string,
-  ): void {
-    // Extract discriminant
-    const discriminant = n.discriminant as Record<string, unknown> | undefined;
-    const condition = this.extractConditionText(discriminant);
-
-    // Create decision node
-    const decisionId = this.generateNodeId("decision");
-    nodes.push({
-      id: decisionId,
-      type: "decision",
-      condition: `switch(${condition})`,
-      position,
-      parentScope,
-    });
-
-    // Process cases
-    const cases = n.cases as Array<Record<string, unknown>> | undefined;
-    if (cases) {
-      let casePosition = position + 1;
-      for (const caseClause of cases) {
-        const testNode = caseClause.test as Record<string, unknown> | undefined;
-        const caseValue = testNode ? this.extractConditionText(testNode) : "default";
-        const caseScope = `${decisionId}:case:${caseValue}`;
-
-        const consequent = caseClause.consequent as Array<Record<string, unknown>> | undefined;
-        if (consequent) {
-          for (const stmt of consequent) {
-            this.findNodes(stmt, nodes, casePosition++, caseScope, nestingLevel, currentParentOp);
-          }
-        }
-      }
-    }
-  }
-
-  /**
-   * Handle ternary conditional expressions
-   */
-  private handleConditionalExpression(
-    n: Record<string, unknown>,
-    nodes: InternalNode[],
-    position: number,
-    parentScope?: string,
-    nestingLevel: number = 0,
-    currentParentOp?: string,
-  ): void {
-    const test = n.test as Record<string, unknown> | undefined;
-    const condition = this.extractConditionText(test);
-
-    // Create decision node
-    const decisionId = this.generateNodeId("decision");
-    nodes.push({
-      id: decisionId,
-      type: "decision",
-      condition,
-      position,
-      parentScope,
-    });
-
-    // Process consequent (true branch)
-    const consequent = n.consequent as Record<string, unknown> | undefined;
-    if (consequent) {
-      this.findNodes(
-        consequent,
-        nodes,
-        position + 1,
-        `${decisionId}:true`,
-        nestingLevel,
-        currentParentOp,
-      );
-    }
-
-    // Process alternate (false branch)
-    const alternate = n.alternate as Record<string, unknown> | undefined;
-    if (alternate) {
-      this.findNodes(
-        alternate,
-        nodes,
-        position + 100,
-        `${decisionId}:false`,
-        nestingLevel,
-        currentParentOp,
-      );
-    }
-  }
-
-  /**
-   * Handle binary expressions (arithmetic, comparison, logical operators)
-   *
-   * Creates pseudo-tool tasks for operators to enable complete SHGAT learning.
-   * Example: a + b becomes a task with tool: "code:add"
-   *
-   * Option B: Binary operations inside callbacks have executable=false
-   */
-  private handleBinaryExpression(
-    n: Record<string, unknown>,
-    nodes: InternalNode[],
-    position: number,
-    parentScope?: string,
-    nestingLevel: number = 0,
-    currentParentOp?: string,
-  ): void {
-    const operator = n.operator as string;
-
-    // Map operators to operation names
-    const operatorMap: Record<string, string> = {
-      // Arithmetic
-      "+": "add",
-      "-": "subtract",
-      "*": "multiply",
-      "/": "divide",
-      "%": "modulo",
-      "**": "power",
-      // Comparison
-      "==": "equal",
-      "===": "strictEqual",
-      "!=": "notEqual",
-      "!==": "strictNotEqual",
-      "<": "lessThan",
-      "<=": "lessThanOrEqual",
-      ">": "greaterThan",
-      ">=": "greaterThanOrEqual",
-      // Logical
-      "&&": "and",
-      "||": "or",
-      // Bitwise
-      "&": "bitwiseAnd",
-      "|": "bitwiseOr",
-      "^": "bitwiseXor",
-      "<<": "leftShift",
-      ">>": "rightShift",
-      ">>>": "unsignedRightShift",
-    };
-
-    const operation = operatorMap[operator];
-    if (!operation) {
-      // Unknown operator, skip but recurse into children
-      const left = n.left as Record<string, unknown> | undefined;
-      const right = n.right as Record<string, unknown> | undefined;
-      if (left) this.findNodes(left, nodes, position, parentScope, nestingLevel, currentParentOp);
-      if (right) {
-        this.findNodes(right, nodes, position + 1, parentScope, nestingLevel, currentParentOp);
-      }
-      return;
-    }
-
-    // Process left and right operands first (to capture their nodes)
-    const left = n.left as Record<string, unknown> | undefined;
-    const right = n.right as Record<string, unknown> | undefined;
-
-    if (left) {
-      this.findNodes(left, nodes, position, parentScope, nestingLevel, currentParentOp);
-    }
-    if (right) {
-      this.findNodes(right, nodes, position + 1, parentScope, nestingLevel, currentParentOp);
-    }
-
-    // Create a task for the operator
-    const nodeId = this.generateNodeId("task");
-
-    // Extract code via SWC span
-    const span = n.span as { start: number; end: number } | undefined;
-    const code = span ? this.extractCodeFromSpan(span) : undefined;
-
-    // Option B: Binary operations inside callbacks are NOT executable standalone
-    // e.g., "n * 2" inside map callback - the 'n' variable doesn't exist outside the callback
-    const isExecutable = nestingLevel === 0;
-
-    nodes.push({
-      id: nodeId,
-      type: "task",
-      tool: `code:${operation}`,
-      position: position + 2,
-      parentScope,
-      code,
-      // Option B: Add execution metadata
-      metadata: {
-        executable: isExecutable,
-        nestingLevel,
-        parentOperation: currentParentOp,
-      },
-    });
-
-    logger.debug("Detected binary operation", {
-      operation,
-      operator,
-      nodeId,
-      codeExtracted: !!code,
-      executable: isExecutable,
-      nestingLevel,
-      parentOperation: currentParentOp,
-    });
-  }
+  // Phase 2.5: Handler methods moved to ./static-structure/ast-handlers.ts
+  // - handleIfStatement
+  // - handleSwitchStatement
+  // - handleConditionalExpression
+  // - handleBinaryExpression
 
   /**
    * Extract member expression chain: mcp.filesystem.read → ["mcp", "filesystem", "read"]
+   * Phase 2.5: Delegates to extracted utility
    */
-  private extractMemberChain(
+  public extractMemberChain(
     node: Record<string, unknown>,
     parts: string[] = [],
   ): string[] {
-    if (node.type === "Identifier") {
-      return [node.value as string, ...parts];
-    }
-
-    if (node.type === "MemberExpression") {
-      const obj = node.object as Record<string, unknown>;
-      const prop = node.property as Record<string, unknown>;
-
-      // Handle dot notation: capabilities.name → prop.type = "Identifier"
-      if (prop?.type === "Identifier" && typeof prop?.value === "string") {
-        parts.unshift(prop.value);
-      } // Handle bracket notation: capabilities["name"] → prop.type = "Computed" with StringLiteral expression
-      else if (prop?.type === "Computed") {
-        const expr = (prop as Record<string, unknown>).expression as Record<string, unknown>;
-        if (expr?.type === "StringLiteral" && typeof expr?.value === "string") {
-          parts.unshift(expr.value);
-        }
-      } // Handle direct StringLiteral (fallback)
-      else if (prop?.type === "StringLiteral" && typeof prop?.value === "string") {
-        parts.unshift(prop.value);
-      }
-
-      return this.extractMemberChain(obj, parts);
-    }
-
-    return parts;
+    return extractMemberChainUtil(node, parts);
   }
 
   /**
    * Extract condition text from AST node
+   * Phase 2.5: Delegates to extracted utility
    */
-  private extractConditionText(node: Record<string, unknown> | undefined): string {
-    if (!node) return "unknown";
-
-    // Simple identifier
-    if (node.type === "Identifier") {
-      return node.value as string;
-    }
-
-    // Member expression: obj.prop
-    if (node.type === "MemberExpression") {
-      const chain = this.extractMemberChain(node);
-      return chain.join(".");
-    }
-
-    // Binary expression: a === b
-    if (node.type === "BinaryExpression") {
-      const left = this.extractConditionText(node.left as Record<string, unknown>);
-      const op = node.operator as string;
-      const right = this.extractConditionText(node.right as Record<string, unknown>);
-      return `${left} ${op} ${right}`;
-    }
-
-    // Unary expression: !a
-    if (node.type === "UnaryExpression") {
-      const op = node.operator as string;
-      const arg = this.extractConditionText(node.argument as Record<string, unknown>);
-      return `${op}${arg}`;
-    }
-
-    // Literal values
-    if (node.type === "BooleanLiteral") {
-      return String(node.value);
-    }
-    if (node.type === "NumericLiteral" || node.type === "StringLiteral") {
-      return String(node.value);
-    }
-
-    // Call expression
-    if (node.type === "CallExpression") {
-      const callee = node.callee as Record<string, unknown>;
-      const calleeText = this.extractConditionText(callee);
-      return `${calleeText}()`;
-    }
-
-    return "...";
+  public extractConditionText(node: Record<string, unknown> | undefined): string {
+    return extractConditionTextUtil(node);
   }
 
   // ===========================================================================
@@ -1564,6 +1185,20 @@ export class StaticStructureBuilder {
           const argValue = this.extractArgumentValue(valueNode);
           if (argValue) {
             result[keyName] = argValue;
+
+            // Story 10.2d: Track inline literals for parameterization
+            // This makes capabilities reusable by extracting hardcoded values
+            if (argValue.type === "literal" && argValue.value !== null) {
+              // Only track primitive values (not nested objects/arrays)
+              const val = argValue.value;
+              if (typeof val === "string" || typeof val === "number" || typeof val === "boolean") {
+                this.literalBindings.set(keyName, val);
+                logger.debug("Tracked inline literal for parameterization", {
+                  keyName,
+                  valueType: typeof val,
+                });
+              }
+            }
           }
         }
       } // Handle spread operator: { ...obj } - skip with warning
@@ -1689,68 +1324,18 @@ export class StaticStructureBuilder {
 
   /**
    * Extract object literal as a plain JavaScript object
-   *
-   * @param node ObjectExpression AST node
-   * @returns Plain object with extracted values
+   * Phase 2.5: Delegates to extracted utility
    */
   private extractObjectLiteral(node: Record<string, unknown>): Record<string, JsonValue> {
-    const result: Record<string, JsonValue> = {};
-    const properties = node.properties as Array<Record<string, unknown>> | undefined;
-
-    if (!properties) {
-      return result;
-    }
-
-    for (const prop of properties) {
-      if (prop.type === "KeyValueProperty") {
-        const keyNode = prop.key as Record<string, unknown>;
-        const valueNode = prop.value as Record<string, unknown>;
-
-        let keyName: string | undefined;
-        if (keyNode?.type === "Identifier") {
-          keyName = keyNode.value as string;
-        } else if (keyNode?.type === "StringLiteral") {
-          keyName = keyNode.value as string;
-        }
-
-        if (keyName && valueNode) {
-          const extractedValue = this.extractLiteralValue(valueNode);
-          if (extractedValue !== undefined) {
-            result[keyName] = extractedValue;
-          }
-        }
-      }
-    }
-
-    return result;
+    return extractObjectLiteralUtil(node, (n) => this.extractLiteralValue(n));
   }
 
   /**
    * Extract array literal as a plain JavaScript array
-   *
-   * @param node ArrayExpression AST node
-   * @returns Plain array with extracted values
+   * Phase 2.5: Delegates to extracted utility
    */
   private extractArrayLiteral(node: Record<string, unknown>): JsonValue[] {
-    const result: JsonValue[] = [];
-    const elements = node.elements as Array<Record<string, unknown>> | undefined;
-
-    if (!elements) {
-      return result;
-    }
-
-    for (const element of elements) {
-      // SWC wraps array elements in { spread, expression } structure
-      const expr = (element?.expression as Record<string, unknown>) ?? element;
-      if (expr) {
-        const extractedValue = this.extractLiteralValue(expr);
-        if (extractedValue !== undefined) {
-          result.push(extractedValue);
-        }
-      }
-    }
-
-    return result;
+    return extractArrayLiteralUtil(node, (n) => this.extractLiteralValue(n));
   }
 
   /**
@@ -1762,7 +1347,7 @@ export class StaticStructureBuilder {
    * @param node AST node
    * @returns The literal value, or undefined for non-literal nodes
    */
-  private extractLiteralValue(node: Record<string, unknown>): JsonValue | undefined {
+  public extractLiteralValue(node: Record<string, unknown>): JsonValue | undefined {
     if (!node || !node.type) {
       return undefined;
     }
@@ -1817,500 +1402,45 @@ export class StaticStructureBuilder {
 
   /**
    * Evaluate a binary expression statically (Story 10.2b)
-   *
-   * Supports: +, -, *, /, %, **, &&, ||, ==, ===, !=, !==, <, >, <=, >=
-   * Only works if both operands can be resolved to literal values.
+   * Phase 2.5: Delegates to extracted utility
    */
   private evaluateBinaryExpression(node: Record<string, unknown>): JsonValue | undefined {
     const left = this.extractLiteralValue(node.left as Record<string, unknown>);
     const right = this.extractLiteralValue(node.right as Record<string, unknown>);
     const operator = node.operator as string;
-
-    if (left === undefined || right === undefined) {
-      return undefined;
-    }
-
-    // Type-safe evaluation of binary operations
-    switch (operator) {
-      // Arithmetic (numbers)
-      case "+":
-        if (typeof left === "number" && typeof right === "number") return left + right;
-        if (typeof left === "string" || typeof right === "string") {
-          return String(left) + String(right);
-        }
-        return undefined;
-      case "-":
-        if (typeof left === "number" && typeof right === "number") return left - right;
-        return undefined;
-      case "*":
-        if (typeof left === "number" && typeof right === "number") return left * right;
-        return undefined;
-      case "/":
-        if (typeof left === "number" && typeof right === "number" && right !== 0) {
-          return left / right;
-        }
-        return undefined;
-      case "%":
-        if (typeof left === "number" && typeof right === "number" && right !== 0) {
-          return left % right;
-        }
-        return undefined;
-      case "**":
-        if (typeof left === "number" && typeof right === "number") return left ** right;
-        return undefined;
-
-      // Comparison
-      case "==":
-        return left == right;
-      case "===":
-        return left === right;
-      case "!=":
-        return left != right;
-      case "!==":
-        return left !== right;
-      case "<":
-        if (typeof left === "number" && typeof right === "number") return left < right;
-        if (typeof left === "string" && typeof right === "string") return left < right;
-        return undefined;
-      case ">":
-        if (typeof left === "number" && typeof right === "number") return left > right;
-        if (typeof left === "string" && typeof right === "string") return left > right;
-        return undefined;
-      case "<=":
-        if (typeof left === "number" && typeof right === "number") return left <= right;
-        if (typeof left === "string" && typeof right === "string") return left <= right;
-        return undefined;
-      case ">=":
-        if (typeof left === "number" && typeof right === "number") return left >= right;
-        if (typeof left === "string" && typeof right === "string") return left >= right;
-        return undefined;
-
-      // Logical
-      case "&&":
-        return left && right;
-      case "||":
-        return left || right;
-
-      default:
-        return undefined;
-    }
+    return evaluateBinaryOp(left, right, operator);
   }
 
   /**
    * Evaluate a unary expression statically (Story 10.2b)
-   *
-   * Supports: -, +, !, typeof
+   * Phase 2.5: Delegates to extracted utility
    */
   private evaluateUnaryExpression(node: Record<string, unknown>): JsonValue | undefined {
     const argument = this.extractLiteralValue(node.argument as Record<string, unknown>);
     const operator = node.operator as string;
-
-    if (argument === undefined) {
-      return undefined;
-    }
-
-    switch (operator) {
-      case "-":
-        if (typeof argument === "number") return -argument;
-        return undefined;
-      case "+":
-        if (typeof argument === "number") return +argument;
-        return undefined;
-      case "!":
-        return !argument;
-      case "typeof":
-        return typeof argument;
-      default:
-        return undefined;
-    }
+    return evaluateUnaryOp(argument, operator);
   }
 
   /**
    * Extract text representation of a template literal
-   *
-   * @param node TemplateLiteral AST node
-   * @returns String representation with ${...} placeholders
+   * Phase 2.5: Delegates to extracted utility
    */
   private extractTemplateLiteralText(node: Record<string, unknown>): string {
-    const quasis = node.quasis as Array<Record<string, unknown>> | undefined;
-    const expressions = node.expressions as Array<Record<string, unknown>> | undefined;
-
-    if (!quasis || quasis.length === 0) {
-      return "`...template...`";
-    }
-
-    let result = "`";
-    for (let i = 0; i < quasis.length; i++) {
-      const quasi = quasis[i];
-      const cooked = (quasi.cooked as Record<string, unknown>)?.value as string | undefined;
-      result += cooked ?? "";
-
-      if (expressions && i < expressions.length) {
-        const exprText = this.extractConditionText(expressions[i]);
-        result += `\${${exprText}}`;
-      }
-    }
-    result += "`";
-
-    return result;
+    return extractTemplateLiteralTextUtil(node);
   }
 
   /**
    * Generate edges between nodes
+   * Phase 2.5: Delegates to extracted module
    */
   private async generateEdges(
     nodes: InternalNode[],
     edges: StaticStructureEdge[],
   ): Promise<void> {
-    // Sort nodes by position
-    const sortedNodes = [...nodes].sort((a, b) => a.position - b.position);
-
-    // Track already created edges to prevent duplicates
-    const edgeSet = new Set<string>();
-
-    // Story 10.2c: Generate chained edges FIRST (before sequence edges)
-    // These take priority over position-based sequence edges
-    this.generateChainedEdges(sortedNodes, edges, edgeSet);
-
-    // Generate sequence edges (between sequential nodes in same scope)
-    this.generateSequenceEdges(sortedNodes, edges, edgeSet);
-
-    // Generate conditional edges (from decision nodes to their branches)
-    this.generateConditionalEdges(sortedNodes, edges);
-
-    // Generate fork/join edges
-    this.generateForkJoinEdges(sortedNodes, edges);
-
-    // Generate provides edges (data flow based on schemas)
-    await this.generateProvidesEdges(sortedNodes, edges);
+    await generateAllEdges(nodes, edges, this.db);
   }
 
-  /**
-   * Generate edges for method chaining (Story 10.2c)
-   *
-   * Creates sequence edges based on the chainedFrom metadata set during
-   * CallExpression processing. These edges represent data flow in
-   * chained method calls like: numbers.filter().map().sort()
-   */
-  private generateChainedEdges(
-    nodes: InternalNode[],
-    edges: StaticStructureEdge[],
-    edgeSet: Set<string>,
-  ): void {
-    for (const node of nodes) {
-      if (node.type === "task" && node.metadata?.chainedFrom) {
-        const fromNodeId = node.metadata.chainedFrom;
-        const toNodeId = node.id;
-        const edgeKey = `${fromNodeId}->${toNodeId}:sequence`;
-
-        // Skip if already exists
-        if (edgeSet.has(edgeKey)) continue;
-
-        // Verify the source node exists
-        const sourceExists = nodes.some((n) => n.id === fromNodeId);
-        if (sourceExists) {
-          edges.push({
-            from: fromNodeId,
-            to: toNodeId,
-            type: "sequence",
-          });
-          edgeSet.add(edgeKey);
-
-          logger.debug("Created chained edge", {
-            from: fromNodeId,
-            to: toNodeId,
-          });
-        }
-      }
-    }
-  }
-
-  /**
-   * Generate sequence edges between consecutive await statements
-   */
-  private generateSequenceEdges(
-    nodes: InternalNode[],
-    edges: StaticStructureEdge[],
-    edgeSet: Set<string>,
-  ): void {
-    // Group nodes by scope
-    const scopeGroups = new Map<string | undefined, InternalNode[]>();
-
-    for (const node of nodes) {
-      const scope = node.parentScope;
-      if (!scopeGroups.has(scope)) {
-        scopeGroups.set(scope, []);
-      }
-      scopeGroups.get(scope)!.push(node);
-    }
-
-    // Create sequence edges within each scope
-    for (const [_scope, scopeNodes] of scopeGroups) {
-      // Filter to executable nodes only (skip nested operations in callbacks)
-      const taskNodes = scopeNodes.filter(
-        (n) =>
-          (n.type === "task" || n.type === "capability" || n.type === "decision") &&
-          (n.metadata?.executable !== false), // Skip non-executable nested operations
-      );
-
-      for (let i = 0; i < taskNodes.length - 1; i++) {
-        const from = taskNodes[i];
-        const to = taskNodes[i + 1];
-
-        // Don't create sequence edge if "to" is inside a different decision branch
-        if (to.parentScope?.includes(":") && !from.parentScope?.includes(":")) {
-          continue;
-        }
-
-        // Skip if already exists (e.g., from chained edges)
-        const edgeKey = `${from.id}->${to.id}:sequence`;
-        if (edgeSet.has(edgeKey)) continue;
-
-        edges.push({
-          from: from.id,
-          to: to.id,
-          type: "sequence",
-        });
-        edgeSet.add(edgeKey);
-      }
-    }
-  }
-
-  /**
-   * Generate conditional edges from decision nodes to their branches
-   */
-  private generateConditionalEdges(
-    nodes: InternalNode[],
-    edges: StaticStructureEdge[],
-  ): void {
-    const decisionNodes = nodes.filter((n) => n.type === "decision");
-
-    for (const decision of decisionNodes) {
-      // Find nodes in true and false branches
-      const trueBranchNodes = nodes.filter(
-        (n) => n.parentScope === `${decision.id}:true`,
-      );
-      const falseBranchNodes = nodes.filter(
-        (n) => n.parentScope === `${decision.id}:false`,
-      );
-
-      // Connect decision to first node in each branch
-      if (trueBranchNodes.length > 0) {
-        const firstTrue = trueBranchNodes.sort((a, b) => a.position - b.position)[0];
-        edges.push({
-          from: decision.id,
-          to: firstTrue.id,
-          type: "conditional",
-          outcome: "true",
-        });
-      }
-
-      if (falseBranchNodes.length > 0) {
-        const firstFalse = falseBranchNodes.sort((a, b) => a.position - b.position)[0];
-        edges.push({
-          from: decision.id,
-          to: firstFalse.id,
-          type: "conditional",
-          outcome: "false",
-        });
-      }
-
-      // Handle switch case branches
-      const caseScopes = new Set(
-        nodes
-          .filter((n) => n.parentScope?.startsWith(`${decision.id}:case:`))
-          .map((n) => n.parentScope),
-      );
-
-      for (const caseScope of caseScopes) {
-        const caseNodes = nodes.filter((n) => n.parentScope === caseScope);
-        if (caseNodes.length > 0) {
-          const firstCase = caseNodes.sort((a, b) => a.position - b.position)[0];
-          const caseValue = caseScope!.split(":case:")[1];
-          edges.push({
-            from: decision.id,
-            to: firstCase.id,
-            type: "conditional",
-            outcome: `case:${caseValue}`,
-          });
-        }
-      }
-    }
-  }
-
-  /**
-   * Generate fork/join edges for parallel execution
-   */
-  private generateForkJoinEdges(
-    nodes: InternalNode[],
-    edges: StaticStructureEdge[],
-  ): void {
-    const forkNodes = nodes.filter((n) => n.type === "fork");
-    const joinNodes = nodes.filter((n) => n.type === "join");
-
-    for (const fork of forkNodes) {
-      // Find nodes inside this fork
-      const parallelNodes = nodes.filter((n) => n.parentScope === fork.id);
-
-      // Connect fork to each parallel node
-      for (const parallel of parallelNodes) {
-        edges.push({
-          from: fork.id,
-          to: parallel.id,
-          type: "sequence",
-        });
-      }
-
-      // Find matching join (next join after fork by position)
-      const matchingJoin = joinNodes.find(
-        (j) => j.position > fork.position && j.parentScope === fork.parentScope,
-      );
-
-      if (matchingJoin) {
-        // Connect each parallel node to join
-        for (const parallel of parallelNodes) {
-          edges.push({
-            from: parallel.id,
-            to: matchingJoin.id,
-            type: "sequence",
-          });
-        }
-      }
-    }
-  }
-
-  /**
-   * Generate provides edges based on tool schema data flow
-   */
-  private async generateProvidesEdges(
-    nodes: InternalNode[],
-    edges: StaticStructureEdge[],
-  ): Promise<void> {
-    // Get all task nodes
-    const taskNodes = nodes.filter((n) => n.type === "task") as Array<
-      InternalNode & { type: "task"; tool: string }
-    >;
-
-    if (taskNodes.length < 2) return;
-
-    // Load schemas for all tools
-    const schemas = new Map<string, ToolSchema>();
-    for (const node of taskNodes) {
-      const schema = await this.loadToolSchema(node.tool);
-      if (schema) {
-        schemas.set(node.tool, schema);
-      }
-    }
-
-    // Check each pair of nodes for provides relationship
-    for (let i = 0; i < taskNodes.length; i++) {
-      for (let j = i + 1; j < taskNodes.length; j++) {
-        const provider = taskNodes[i];
-        const consumer = taskNodes[j];
-
-        const providerSchema = schemas.get(provider.tool);
-        const consumerSchema = schemas.get(consumer.tool);
-
-        if (!providerSchema?.outputSchema || !consumerSchema?.inputSchema) {
-          continue;
-        }
-
-        const coverage = this.computeCoverage(
-          providerSchema.outputSchema,
-          consumerSchema.inputSchema,
-        );
-
-        if (coverage) {
-          edges.push({
-            from: provider.id,
-            to: consumer.id,
-            type: "provides",
-            coverage,
-          });
-        }
-      }
-    }
-  }
-
-  /**
-   * Load tool schema from database
-   */
-  private async loadToolSchema(toolId: string): Promise<ToolSchema | null> {
-    try {
-      const result = await this.db.query(
-        `SELECT tool_id, input_schema, output_schema FROM tool_schema WHERE tool_id = $1`,
-        [toolId],
-      );
-
-      if (result.length === 0) {
-        return null;
-      }
-
-      const row = result[0];
-      return {
-        toolId: row.tool_id as string,
-        inputSchema: (row.input_schema as ToolSchema["inputSchema"]) || {},
-        outputSchema: row.output_schema as ToolSchema["outputSchema"] | undefined,
-      };
-    } catch (error) {
-      logger.debug("Failed to load tool schema", {
-        toolId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return null;
-    }
-  }
-
-  /**
-   * Compute coverage level for provides edge
-   *
-   * Based on intersection of provider outputs and consumer inputs:
-   * - strict: All required inputs are covered
-   * - partial: Some required inputs are covered
-   * - optional: Only optional inputs are covered
-   * - null: No intersection
-   */
-  private computeCoverage(
-    providerOutput: { properties?: Record<string, unknown> },
-    consumerInput: { properties?: Record<string, unknown>; required?: string[] },
-  ): ProvidesCoverage | null {
-    const outputProps = new Set(Object.keys(providerOutput.properties || {}));
-    const inputProps = new Set(Object.keys(consumerInput.properties || {}));
-    const requiredInputs = new Set(consumerInput.required || []);
-
-    // Calculate intersections
-    const allIntersection = new Set(
-      [...outputProps].filter((p) => inputProps.has(p)),
-    );
-    const requiredIntersection = new Set(
-      [...outputProps].filter((p) => requiredInputs.has(p)),
-    );
-    const optionalIntersection = new Set(
-      [...allIntersection].filter((p) => !requiredInputs.has(p)),
-    );
-
-    // No intersection = no edge
-    if (allIntersection.size === 0) {
-      return null;
-    }
-
-    // All required covered = strict
-    if (requiredInputs.size > 0 && requiredIntersection.size === requiredInputs.size) {
-      return "strict";
-    }
-
-    // Some required covered = partial
-    if (requiredIntersection.size > 0) {
-      return "partial";
-    }
-
-    // Only optional covered
-    if (optionalIntersection.size > 0) {
-      return "optional";
-    }
-
-    return null;
-  }
+  // Edge generation methods moved to ./static-structure/edge-generators.ts
 
   /**
    * Infer branch decisions from executed path by matching against static structure

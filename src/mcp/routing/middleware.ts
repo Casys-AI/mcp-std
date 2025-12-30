@@ -10,14 +10,16 @@ import * as log from "@std/log";
 
 /**
  * Public routes that don't require authentication
+ * Centralized definition - used by Hono app middleware
  */
-const PUBLIC_ROUTES = ["/health"];
+export const PUBLIC_ROUTES = ["/health", "/events/stream", "/dashboard"];
 
 /**
  * Check if a route is public (no auth required)
+ * Supports exact matches and prefix matches (e.g., /dashboard/*)
  */
 export function isPublicRoute(pathname: string): boolean {
-  return PUBLIC_ROUTES.includes(pathname);
+  return PUBLIC_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`));
 }
 
 /**
@@ -32,13 +34,14 @@ export function getAllowedOrigin(): string {
 
 /**
  * Build CORS headers
+ * Centralized definition - used by Hono app CORS middleware
  */
 export function buildCorsHeaders(allowedOrigin?: string): Record<string, string> {
   const origin = allowedOrigin ?? getAllowedOrigin();
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS, DELETE",
-    "Access-Control-Allow-Headers": "Content-Type, x-api-key",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, Cache-Control, x-api-key",
   };
 }
 

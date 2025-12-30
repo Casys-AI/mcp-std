@@ -12,7 +12,6 @@
 import type {
   Capability,
   CapabilityDependency,
-  CapabilityMatch,
   CreateCapabilityDependencyInput,
   SaveCapabilityInput,
   StaticStructure,
@@ -22,17 +21,16 @@ import type {
  * Result from saving a capability
  */
 export interface SaveCapabilityResult {
-  capabilityId: string;
-  isNew: boolean;
-  traceId?: string;
+  capability: Capability;
+  trace?: unknown; // ExecutionTrace - avoid circular import
 }
 
 /**
  * Statistics about capability storage
  */
 export interface CapabilityStats {
-  total: number;
-  successful: number;
+  totalCapabilities: number;
+  totalExecutions: number;
   avgSuccessRate: number;
   avgDurationMs: number;
 }
@@ -64,10 +62,11 @@ export interface ICapabilityRepository {
   /**
    * Search capabilities by semantic intent
    */
-  findByIntent(
+  searchByIntent(
     intent: string,
     limit?: number,
-  ): Promise<CapabilityMatch[]>;
+    minSemanticScore?: number,
+  ): Promise<Array<{ capability: Capability; semanticScore: number }>>;
 
   /**
    * Update usage statistics after execution

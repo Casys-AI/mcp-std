@@ -84,8 +84,9 @@ export class CapabilityDataService {
       minUsage = 0,
       limit = 50,
       offset = 0,
-      sort = "usageCount",
+      sort = "lastUsed",
       order = "desc",
+      userId, // Story 9.8
     } = filters;
 
     // Validate and cap limit
@@ -128,6 +129,20 @@ export class CapabilityDataService {
 
       conditions.push(`wp.usage_count >= $${paramIndex++}`);
       params.push(minUsage);
+
+      // Story 9.8 AC #5: Filter by userId (created_by OR executed by user)
+      if (userId) {
+        const createdByParam = paramIndex++;
+        const userIdParam = paramIndex++;
+        conditions.push(`(
+          wp.created_by = $${createdByParam}::text
+          OR wp.pattern_id IN (
+            SELECT DISTINCT capability_id FROM execution_trace
+            WHERE user_id = $${userIdParam}::text AND capability_id IS NOT NULL
+          )
+        )`);
+        params.push(userId, userId);
+      }
 
       const whereClause = conditions.join(" AND ");
 

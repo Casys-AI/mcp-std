@@ -29,10 +29,12 @@ import type { ToolExecutor } from "../../dag/types.ts";
 import { CapabilityMatcher } from "../../capabilities/matcher.ts";
 import { CapabilityStore } from "../../capabilities/capability-store.ts";
 import { SchemaInferrer } from "../../capabilities/schema-inferrer.ts";
+import { checkAndSyncRouting } from "../../capabilities/routing-resolver.ts";
 import { StaticStructureBuilder } from "../../capabilities/static-structure-builder.ts";
 import { AdaptiveThresholdManager } from "../../mcp/adaptive-threshold.ts";
 import { AlgorithmTracer } from "../../telemetry/algorithm-tracer.ts";
 import { ensureStdBundle } from "../../lib/std-loader.ts";
+import { bootstrapDI } from "../../infrastructure/di/mod.ts";
 
 /**
  * Find and validate config file
@@ -253,6 +255,14 @@ export function createServeCommand() {
         // Run Drizzle migrations (users table, etc.)
         await runDrizzleMigrationsAuto();
 
+        // Story 13.9: Sync capability routing if config changed
+        const routingResult = await checkAndSyncRouting(db);
+        if (routingResult.synced) {
+          log.info(
+            `✓ Routing sync: ${routingResult.updated} capabilities updated`,
+          );
+        }
+
         // 2.5 Auto-init if config changed (discovers tools & generates embeddings)
         const autoInitResult = await autoInitIfConfigChanged(configPath, db, {
           forceReindex: options.forceReindex,
@@ -321,6 +331,19 @@ export function createServeCommand() {
         dagSuggester.setAlgorithmTracer(algorithmTracer);
         graphEngine.setAlgorithmTracer(algorithmTracer);
         log.info("✓ Algorithm tracing enabled");
+
+        // Phase 2.2: Bootstrap DI container with real implementations
+        // Container available for future DI-aware components
+        const { container: _diContainer, mcpRegistry } = bootstrapDI({
+          db,
+          embeddingModel,
+          vectorSearch,
+          graphEngine,
+          capabilityStore,
+          mcpClients,
+        });
+        await mcpRegistry.refreshTools();
+        log.info(`✓ DI container initialized (${mcpRegistry.getAllTools().length} tools registered)`);
 
         // Create tool executor with tracking callback (Story 3.7)
         // Gateway reference will be set after gateway is created

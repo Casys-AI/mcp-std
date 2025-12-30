@@ -235,32 +235,10 @@ Deno.test("StaticStructureBuilder - parse nested structures in Promise.all", asy
 });
 
 // =============================================================================
-// AC12 Test 7: Parse capability call → capability node
-// =============================================================================
-
-Deno.test("StaticStructureBuilder - parse capability call creates capability node", async () => {
-  const db = await setupTestDb();
-  const builder = new StaticStructureBuilder(db);
-
-  const code = `
-    const result = await capabilities.analyzeData({ input: data });
-  `;
-
-  const structure = await builder.buildStaticStructure(code);
-
-  assertExists(structure);
-  assertEquals(structure.nodes.length, 1);
-  assertEquals(structure.nodes[0].type, "capability");
-  if (structure.nodes[0].type === "capability") {
-    assertEquals(structure.nodes[0].capabilityId, "analyzeData");
-  }
-
-  await db.close();
-});
-
-// =============================================================================
 // Additional Tests: Error handling and edge cases
 // =============================================================================
+// Note: AC12 Test 7 (capability call) removed - capabilities.name pattern
+// was deprecated in commit 23bcf26. Capabilities use mcp.namespace.action() syntax.
 
 Deno.test("StaticStructureBuilder - graceful error handling for invalid code", async () => {
   const db = await setupTestDb();

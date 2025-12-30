@@ -91,6 +91,11 @@ export class GraphRAGEngine {
   private localAlphaCalculator: LocalAlphaCalculator | null = null;
   private algorithmTracer: AlgorithmTracer | null = null;
 
+  /** Counter for incremental node additions - triggers metrics recalc at threshold */
+  private pendingMetricsCount = 0;
+  /** Recalc after every addition for now (graph is small ~200 nodes, takes ~5ms) */
+  private static readonly METRICS_RECALC_THRESHOLD = 1;
+
   constructor(private db: DbClient) {
     this.graph = new DirectedGraph({ allowSelfLoops: false });
     this.eventEmitter = new GraphEventEmitter();
@@ -141,6 +146,77 @@ export class GraphRAGEngine {
       edgeCount: result.edgeCount,
       syncDurationMs: result.syncDurationMs,
     });
+  }
+
+  /**
+   * Add a capability node and its "contains" edges to tools incrementally.
+   *
+   * Called when a new capability is created (via GraphSyncController).
+   * Uses threshold-based metrics recalculation (every 10 additions).
+   *
+   * @param capabilityId - The capability UUID
+   * @param toolIds - Tool IDs used by this capability (from tools_used)
+   * @param children - Optional child capability IDs (for cap→cap edges)
+   */
+  addCapabilityNode(capabilityId: string, toolIds: string[], children?: string[]): void {
+    const nodeId = `capability:${capabilityId}`;
+
+    // Add capability node if not exists
+    if (!this.graph.hasNode(nodeId)) {
+      this.graph.addNode(nodeId, { type: "capability" });
+      this.pendingMetricsCount++;
+    }
+
+    // Add "contains" edges to tools
+    for (const toolId of toolIds) {
+      // Ensure tool node exists (may not if tool hasn't been synced yet)
+      if (!this.graph.hasNode(toolId)) {
+        const isOp = toolId.startsWith("code:");
+        this.graph.addNode(toolId, {
+          type: isOp ? "operation" : "tool",
+          name: toolId.split(":").pop() ?? toolId,
+        });
+      }
+
+      if (!this.graph.hasEdge(nodeId, toolId)) {
+        this.graph.addEdge(nodeId, toolId, {
+          weight: 0.8,
+          count: 1,
+          edge_type: "contains",
+          edge_source: "structural",
+        });
+      }
+    }
+
+    // Add "contains" edges to child capabilities
+    if (children) {
+      for (const childId of children) {
+        const childNodeId = `capability:${childId}`;
+
+        // Ensure child capability node exists
+        if (!this.graph.hasNode(childNodeId)) {
+          this.graph.addNode(childNodeId, { type: "capability" });
+        }
+
+        if (!this.graph.hasEdge(nodeId, childNodeId)) {
+          this.graph.addEdge(nodeId, childNodeId, {
+            weight: 0.8,
+            count: 1,
+            edge_type: "contains",
+            edge_source: "inferred",
+          });
+        }
+      }
+    }
+
+    // Threshold-based metrics recalculation
+    if (this.pendingMetricsCount >= GraphRAGEngine.METRICS_RECALC_THRESHOLD) {
+      this.precomputeMetrics().catch((err) => {
+        // Log but don't fail - metrics will be recalculated on next threshold
+        console.warn("[GraphRAGEngine] Background metrics recalc failed:", err);
+      });
+      this.pendingMetricsCount = 0;
+    }
   }
 
   private async precomputeMetrics(): Promise<void> {

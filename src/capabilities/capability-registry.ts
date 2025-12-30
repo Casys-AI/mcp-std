@@ -15,6 +15,7 @@ import type { DbClient } from "../db/types.ts";
 import type { CapabilityRecord, CapabilityRouting, CapabilityVisibility, Scope } from "./types.ts";
 import { getCapabilityDisplayName, getCapabilityFqdn } from "./types.ts";
 import { isValidMCPName } from "./fqdn.ts";
+import { resolveRouting } from "./routing-resolver.ts";
 import * as log from "@std/log";
 
 // Re-export for convenience
@@ -45,8 +46,10 @@ export interface CreateCapabilityRecordInput {
   tags?: string[];
   /** Visibility level (default: private) */
   visibility?: CapabilityVisibility;
-  /** Execution routing (default: local) */
+  /** Explicit routing override (if not set, inferred from toolsUsed) */
   routing?: CapabilityRouting;
+  /** Tools used by this capability (Story 13.9 - routing inference) */
+  toolsUsed?: string[];
 }
 
 /**
@@ -113,7 +116,7 @@ export class CapabilityRegistry {
         createdBy,
         now.toISOString(),
         input.visibility || "private",
-        input.routing || "local",
+        resolveRouting(input.toolsUsed || [], input.routing),
         input.tags || [],
       ],
     );

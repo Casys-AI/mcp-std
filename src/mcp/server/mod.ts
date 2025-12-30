@@ -54,9 +54,11 @@ export {
 
 // HTTP server
 export {
-  createHttpRequestHandler,
   handleJsonRpcRequest,
   type HttpServerDependencies,
   type HttpServerState,
   startHttpServer,
 } from "./http.ts";
+
+// Hono application (QW-4)
+export { createApp, type AppEnv, type HonoAppDependencies } from "./app.ts";

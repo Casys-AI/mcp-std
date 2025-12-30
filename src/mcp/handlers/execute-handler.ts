@@ -659,6 +659,7 @@ async function executeDirectMode(
               workflowPatternId: capability.id,
               hash,
               createdBy: "pml_execute",
+              toolsUsed: toolsCalled, // Story 13.9: routing inference
             });
 
             capabilityFqdn = record.id;

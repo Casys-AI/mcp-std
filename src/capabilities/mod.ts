@@ -20,6 +20,18 @@ export {
   reloadMcpPermissions,
   toolRequiresHil,
 } from "./permission-inferrer.ts";
+// Story 13.9: Routing inference from tools_used
+export {
+  checkAndSyncRouting,
+  extractServerName,
+  getToolRouting,
+  initRoutingConfig,
+  isCloudServer,
+  isLocalServer,
+  reloadRoutingConfig,
+  resolveRouting,
+  syncCapabilityRouting,
+} from "./routing-resolver.ts";
 export { CapabilityCodeGenerator } from "./code-generator.ts";
 export { CapabilityExecutor } from "./executor.ts";
 export { CapabilityDataService } from "./data-service.ts";

@@ -43,6 +43,8 @@ import { CheckpointManager } from "../dag/checkpoint-manager.ts";
 import { EventsStreamManager } from "../server/events-stream.ts";
 import { PmlStdServer } from "../../lib/std/cap.ts";
 import type { AlgorithmTracer } from "../telemetry/algorithm-tracer.ts";
+import { buildHyperedgesFromSHGAT, cacheHyperedges, updateHyperedge } from "../cache/hyperedge-cache.ts";
+import { eventBus } from "../events/mod.ts";
 
 // Server types, constants, lifecycle, and HTTP server
 import {
@@ -97,6 +99,165 @@ import { samplingRelay } from "./sampling/mod.ts";
 // Re-export for backward compatibility
 export type { GatewayServerConfig };
 
+// ============================================================================
+// GraphSyncController - Event-driven incremental graph updates
+// ============================================================================
+
+/**
+ * Controller for event-driven incremental graph updates.
+ *
+ * Listens to capability.zone.created/updated events and updates:
+ * - GraphRAGEngine (in-memory graph)
+ * - Hyperedge KV cache
+ * - SHGAT (capability registration)
+ */
+class GraphSyncController {
+  private unsubscribeCreated: (() => void) | null = null;
+  private unsubscribeUpdated: (() => void) | null = null;
+
+  constructor(
+    private graphEngine: GraphRAGEngine | null,
+    private db: DbClient,
+    private getSHGAT: () => SHGAT | null,
+  ) {}
+
+  /**
+   * Start listening for capability events
+   */
+  start(): void {
+    this.unsubscribeCreated = eventBus.on("capability.zone.created", (event) => {
+      const payload = event.payload as { capabilityId: string; toolIds: string[]; label?: string };
+      this.handleCapabilityCreated(payload).catch((err) => {
+        log.error("[GraphSyncController] Error handling capability.zone.created:", err);
+      });
+    });
+
+    this.unsubscribeUpdated = eventBus.on("capability.zone.updated", (event) => {
+      const payload = event.payload as { capabilityId: string; toolIds: string[] };
+      this.handleCapabilityUpdated(payload).catch((err) => {
+        log.error("[GraphSyncController] Error handling capability.zone.updated:", err);
+      });
+    });
+
+    log.info("[GraphSyncController] Started listening for capability events");
+  }
+
+  /**
+   * Stop listening for events
+   */
+  stop(): void {
+    if (this.unsubscribeCreated) {
+      this.unsubscribeCreated();
+      this.unsubscribeCreated = null;
+    }
+    if (this.unsubscribeUpdated) {
+      this.unsubscribeUpdated();
+      this.unsubscribeUpdated = null;
+    }
+    log.info("[GraphSyncController] Stopped listening for capability events");
+  }
+
+  private async handleCapabilityCreated(payload: {
+    capabilityId: string;
+    toolIds: string[];
+    label?: string;
+  }): Promise<void> {
+    const { capabilityId, toolIds } = payload;
+
+    log.debug(`[GraphSyncController] New capability created: ${capabilityId} with ${toolIds.length} tools`);
+
+    // 1. Update graph engine incrementally
+    if (this.graphEngine) {
+      this.graphEngine.addCapabilityNode(capabilityId, toolIds);
+    }
+
+    // 2. Update hyperedge cache (children will be empty for new capabilities)
+    await updateHyperedge(capabilityId, toolIds);
+
+    // 3. Register in SHGAT if available (need to fetch embedding)
+    const shgat = this.getSHGAT();
+    if (shgat) {
+      await this.registerInSHGAT(shgat, capabilityId, toolIds);
+    }
+  }
+
+  private async handleCapabilityUpdated(payload: {
+    capabilityId: string;
+    toolIds: string[];
+  }): Promise<void> {
+    const { capabilityId, toolIds } = payload;
+
+    log.debug(`[GraphSyncController] Capability updated: ${capabilityId}`);
+
+    // 1. Update graph engine (idempotent - adds edges if not exist)
+    if (this.graphEngine) {
+      this.graphEngine.addCapabilityNode(capabilityId, toolIds);
+    }
+
+    // 2. Update hyperedge cache
+    await updateHyperedge(capabilityId, toolIds);
+  }
+
+  private async registerInSHGAT(
+    shgat: SHGAT,
+    capabilityId: string,
+    toolsUsed: string[],
+  ): Promise<void> {
+    try {
+      // Fetch embedding from DB
+      const result = await this.db.query(
+        `SELECT intent_embedding FROM workflow_pattern WHERE pattern_id = $1`,
+        [capabilityId],
+      );
+
+      if (result.length === 0 || !result[0].intent_embedding) {
+        log.debug(`[GraphSyncController] No embedding for capability ${capabilityId}, skipping SHGAT registration`);
+        return;
+      }
+
+      // Parse embedding
+      let embedding: number[];
+      const raw = result[0].intent_embedding;
+      if (Array.isArray(raw)) {
+        embedding = raw;
+      } else if (typeof raw === "string") {
+        try {
+          embedding = JSON.parse(raw);
+        } catch {
+          log.warn(`[GraphSyncController] Failed to parse embedding for ${capabilityId}`);
+          return;
+        }
+      } else {
+        return;
+      }
+
+      // Build members array from toolsUsed
+      const members: Array<{ type: "tool"; id: string }> = toolsUsed.map((toolId) => ({
+        type: "tool" as const,
+        id: toolId,
+      }));
+
+      // Register in SHGAT with full CapabilityNode
+      shgat.registerCapability({
+        id: capabilityId,
+        embedding,
+        members,
+        hierarchyLevel: 0, // Level 0 = only tools, no child capabilities
+        successRate: 1.0, // New capabilities start at 100%
+        toolsUsed, // Keep legacy field for compatibility
+      });
+
+      log.debug(`[GraphSyncController] Registered capability ${capabilityId} in SHGAT`);
+    } catch (err) {
+      log.warn(`[GraphSyncController] Failed to register in SHGAT: ${err}`);
+    }
+  }
+}
+
+// ============================================================================
+// PMLGatewayServer
+// ============================================================================
+
 /**
  * MCP Gateway Server
  *
@@ -123,6 +284,7 @@ export class PMLGatewayServer {
   // traceFeatureExtractor removed - V1 uses message passing, not TraceFeatures
   private pmlStdServer: PmlStdServer | null = null; // Story 13.5: cap:* management tools
   private algorithmTracer: AlgorithmTracer | null = null; // Story 7.6: Observability
+  private graphSyncController: GraphSyncController | null = null; // Incremental graph updates
 
   constructor(
     // @ts-ignore: db kept for future use (direct queries)
@@ -714,6 +876,23 @@ export class PMLGatewayServer {
         `[Gateway] SHGAT initialized with ${capabilitiesWithEmbeddings.length} capabilities`,
       );
 
+      // Cache hyperedges in KV for tensor-entropy and other consumers
+      const hyperedges = buildHyperedgesFromSHGAT(capabilitiesWithEmbeddings);
+      if (hyperedges.length > 0) {
+        await cacheHyperedges(hyperedges);
+        log.info(
+          `[Gateway] Cached ${hyperedges.length} hyperedges in KV`,
+        );
+      }
+
+      // Start GraphSyncController for incremental updates
+      this.graphSyncController = new GraphSyncController(
+        this.graphEngine,
+        this.db,
+        () => this.shgat,
+      );
+      this.graphSyncController.start();
+
       // Story 10.7b: Load persisted SHGAT params if available
       const { loaded: paramsLoaded } = await this.loadSHGATParams();
 
@@ -1104,6 +1283,7 @@ export class PMLGatewayServer {
         capabilityDataService: this.capabilityDataService,
         healthChecker: this.healthChecker,
         mcpClients: this.mcpClients,
+        db: this.db, // Story 9.8: Add db for scope filtering
       },
       handleListTools: (request: unknown) => this.handleListTools(request),
       handleCallTool: (request: unknown, userId?: string) => this.handleCallTool(request, userId),
@@ -1138,6 +1318,12 @@ export class PMLGatewayServer {
     if (this.eventsStream) {
       this.eventsStream.close();
       this.eventsStream = null;
+    }
+
+    // Stop GraphSyncController
+    if (this.graphSyncController) {
+      this.graphSyncController.stop();
+      this.graphSyncController = null;
     }
 
     // Delegate core shutdown to lifecycle module

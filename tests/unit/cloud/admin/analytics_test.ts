@@ -19,6 +19,7 @@ import {
   queryErrorHealth,
   queryResources,
   querySystemUsage,
+  queryTechnical,
   queryUserActivity,
 } from "../../../../src/cloud/admin/analytics-queries.ts";
 // Test setup helper - creates minimal schema for analytics tests
@@ -179,6 +180,35 @@ async function seedTestData(db: PGliteClient): Promise<void> {
     UPDATE execution_trace
     SET error_message = 'Permission denied for this resource'
     WHERE success = false
+  `);
+
+  // Seed SHGAT params for technical metrics
+  await db.query(`
+    INSERT INTO shgat_params (version, params, created_at, updated_at)
+    VALUES
+      (1, '{"learning_rate": 0.001}', NOW() - INTERVAL '5 days', NOW() - INTERVAL '2 days'),
+      (2, '{"learning_rate": 0.0005}', NOW() - INTERVAL '1 day', NOW() - INTERVAL '1 hour')
+  `);
+
+  // Seed algorithm traces for technical metrics
+  await db.query(`
+    INSERT INTO algorithm_traces (algorithm_name, algorithm_mode, target_type, decision, final_score, threshold_used, latency_ms, timestamp)
+    VALUES
+      ('spectral_clustering', 'fast', 'capability', 'accepted', 0.85, 0.7, 120, NOW() - INTERVAL '1 hour'),
+      ('spectral_clustering', 'fast', 'capability', 'accepted', 0.92, 0.7, 95, NOW() - INTERVAL '2 hours'),
+      ('spectral_clustering', 'accurate', 'tool', 'filtered', 0.65, 0.7, 200, NOW() - INTERVAL '3 hours'),
+      ('pagerank', 'standard', 'capability', 'rejected', 0.45, 0.7, 80, NOW() - INTERVAL '4 hours'),
+      ('pagerank', 'standard', 'tool', 'accepted', 0.88, 0.7, 150, NOW() - INTERVAL '5 hours')
+  `);
+
+  // Seed capability records for technical metrics
+  await db.query(`
+    INSERT INTO capability_records (name, verified, visibility, routing, usage_count, success_count)
+    VALUES
+      ('math_operations', true, 'public', 'cloud', 150, 145),
+      ('file_utils', true, 'public', 'local', 80, 75),
+      ('data_transform', false, 'private', 'local', 25, 20),
+      ('api_caller', true, 'unlisted', 'cloud', 200, 180)
   `);
 }
 
@@ -509,6 +539,120 @@ Deno.test("queryErrorHealth - handles empty database", async () => {
   assertEquals(health.totalExecutions, 0);
   assertEquals(health.failedExecutions, 0);
   assertEquals(health.errorRate, 0);
+
+  await db.close();
+});
+
+// ============================================
+// queryTechnical Tests (L3, H4)
+// ============================================
+
+Deno.test("queryTechnical - returns SHGAT metrics", async () => {
+  const db = await setupTestDb();
+  await seedTestData(db);
+
+  const technical = await queryTechnical(db, "24h");
+
+  // SHGAT should have 2 users with params
+  assertEquals(technical.shgat.usersWithParams, 2);
+  assert(technical.shgat.lastUpdated !== null);
+
+  await db.close();
+});
+
+Deno.test("queryTechnical - returns algorithm metrics", async () => {
+  const db = await setupTestDb();
+  await seedTestData(db);
+
+  const technical = await queryTechnical(db, "24h");
+
+  // Algorithm traces: 5 total
+  assertEquals(technical.algorithms.totalTraces, 5);
+  assertGreater(technical.algorithms.avgFinalScore, 0);
+
+  // By decision - check array structure
+  const decisions = technical.algorithms.byDecision;
+  assert(Array.isArray(decisions));
+  const accepted = decisions.find((d) => d.decision === "accepted");
+  const filtered = decisions.find((d) => d.decision === "filtered");
+  const rejected = decisions.find((d) => d.decision === "rejected");
+  assertEquals(accepted?.count, 3);
+  assertEquals(filtered?.count, 1);
+  assertEquals(rejected?.count, 1);
+
+  await db.close();
+});
+
+Deno.test("queryTechnical - returns capability registry metrics", async () => {
+  const db = await setupTestDb();
+  await seedTestData(db);
+
+  const technical = await queryTechnical(db, "24h");
+
+  // Capability records: 4 total, 3 verified
+  assertEquals(technical.capabilities.totalRecords, 4);
+  assertEquals(technical.capabilities.verifiedCount, 3);
+
+  // By visibility - check array structure: 2 public, 1 private, 1 unlisted
+  const visibility = technical.capabilities.byVisibility;
+  assert(Array.isArray(visibility));
+  const publicVis = visibility.find((v) => v.visibility === "public");
+  const privateVis = visibility.find((v) => v.visibility === "private");
+  const unlistedVis = visibility.find((v) => v.visibility === "unlisted");
+  assertEquals(publicVis?.count, 2);
+  assertEquals(privateVis?.count, 1);
+  assertEquals(unlistedVis?.count, 1);
+
+  // By routing - check array structure: 2 cloud, 2 local
+  const routing = technical.capabilities.byRouting;
+  assert(Array.isArray(routing));
+  const cloudRouting = routing.find((r) => r.routing === "cloud");
+  const localRouting = routing.find((r) => r.routing === "local");
+  assertEquals(cloudRouting?.count, 2);
+  assertEquals(localRouting?.count, 2);
+
+  await db.close();
+});
+
+Deno.test("queryTechnical - handles empty database", async () => {
+  const db = await setupTestDb();
+  // No seed data
+
+  const technical = await queryTechnical(db, "24h");
+
+  assertEquals(technical.shgat.usersWithParams, 0);
+  assertEquals(technical.algorithms.totalTraces, 0);
+  assertEquals(technical.capabilities.totalRecords, 0);
+
+  await db.close();
+});
+
+// ============================================
+// Cache TTL Test (L4)
+// ============================================
+
+Deno.test("getAdminAnalytics - cache expires after TTL", async () => {
+  const db = await setupTestDb();
+  await seedTestData(db);
+  clearAnalyticsCache();
+
+  // First call - should populate cache
+  const result1 = await getAdminAnalytics(db, "admin_user", { timeRange: "24h" });
+  const stats1 = getCacheStats();
+  assertEquals(stats1.entries, 1);
+
+  // Simulate cache expiration by clearing and verifying fresh fetch
+  clearAnalyticsCache();
+  const statsCleared = getCacheStats();
+  assertEquals(statsCleared.entries, 0);
+
+  // Second call after clear - should repopulate cache
+  const result2 = await getAdminAnalytics(db, "admin_user", { timeRange: "24h" });
+  const stats2 = getCacheStats();
+  assertEquals(stats2.entries, 1);
+
+  // Results should be equivalent (fresh data)
+  assertEquals(result1.userActivity.activeUsers, result2.userActivity.activeUsers);
 
   await db.close();
 });

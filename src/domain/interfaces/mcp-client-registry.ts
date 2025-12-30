@@ -2,41 +2,17 @@
  * MCP Client Registry Interface
  *
  * Defines the contract for MCP client management.
- * Implementations: MCPClientRegistry (to be created)
+ * Uses MCPClientBase from mcp/types.ts as the client type.
  *
  * Phase 2.1: Foundation for DI with diod
  *
  * @module domain/interfaces/mcp-client-registry
  */
 
-/**
- * MCP tool definition
- */
-export interface MCPToolDefinition {
-  name: string;
-  description?: string;
-  inputSchema?: Record<string, unknown>;
-}
+import type { MCPClientBase, MCPTool } from "../../mcp/types.ts";
 
-/**
- * MCP client interface
- */
-export interface IMCPClient {
-  /** Server identifier */
-  serverId: string;
-  /** Server name (human-readable) */
-  serverName: string;
-  /** Whether the client is connected */
-  isConnected(): boolean;
-  /** Get available tools */
-  getTools(): MCPToolDefinition[];
-  /** Call a tool */
-  callTool(name: string, args: Record<string, unknown>): Promise<unknown>;
-  /** Connect to the server */
-  connect(): Promise<void>;
-  /** Disconnect from the server */
-  disconnect(): Promise<void>;
-}
+// Re-export for consumers
+export type { MCPClientBase, MCPTool };
 
 /**
  * Client registration options
@@ -59,12 +35,12 @@ export interface IMCPClientRegistry {
   /**
    * Get a client by server ID
    */
-  getClient(serverId: string): IMCPClient | undefined;
+  getClient(serverId: string): MCPClientBase | undefined;
 
   /**
    * Get all registered clients
    */
-  getAllClients(): IMCPClient[];
+  getAllClients(): MCPClientBase[];
 
   /**
    * Get all connected client IDs
@@ -76,7 +52,7 @@ export interface IMCPClientRegistry {
    */
   register(
     serverId: string,
-    client: IMCPClient,
+    client: MCPClientBase,
     options?: ClientRegistrationOptions,
   ): void;
 
@@ -98,12 +74,12 @@ export interface IMCPClientRegistry {
   /**
    * Get all available tools across all clients
    */
-  getAllTools(): MCPToolDefinition[];
+  getAllTools(): MCPTool[];
 
   /**
    * Find which client provides a specific tool
    */
-  findToolProvider(toolName: string): IMCPClient | undefined;
+  findToolProvider(toolName: string): MCPClientBase | undefined;
 
   /**
    * Call a tool on any connected client

@@ -1,108 +1,184 @@
 /**
- * Architecture Test: Interface Coverage
+ * Architecture Test: Interface Implementations
  *
- * Tracks interface usage and implementation coverage.
- * Goal: All major services should have interfaces for DI.
- *
- * Phase 2 Quick Win QW-5
+ * Ensures that interfaces defined in domain/interfaces have implementations.
+ * This supports the Dependency Inversion Principle.
  */
-
 import { assertEquals } from "@std/assert";
 import { walk } from "@std/fs";
 
-Deno.test("Architecture: Track interface definitions", async () => {
-  const interfaces: Array<{ name: string; file: string }> = [];
+Deno.test("Architecture: Interfaces in domain/interfaces have implementations", async () => {
+  const interfaces: string[] = [];
+  const implementations: string[] = [];
 
-  for await (const entry of walk("src", { exts: [".ts"], skip: [/_test\.ts$/, /\.d\.ts$/] })) {
+  // Find all interfaces
+  try {
+    for await (
+      const entry of walk("src/domain/interfaces", {
+        exts: [".ts"],
+        skip: [/mod\.ts$/],
+      })
+    ) {
+      const content = await Deno.readTextFile(entry.path);
+      const matches = [...content.matchAll(/export interface (I\w+)/g)];
+      for (const [, name] of matches) {
+        interfaces.push(name);
+      }
+    }
+  } catch {
+    // Domain interfaces folder doesn't exist yet - expected
+    console.log("ℹ️ src/domain/interfaces/ not found - will be created in QW-3");
+    return;
+  }
+
+  // Find all implementations
+  for await (
+    const entry of walk("src", {
+      exts: [".ts"],
+      skip: [/_test\.ts$/, /\.d\.ts$/, /interfaces\//],
+    })
+  ) {
     const content = await Deno.readTextFile(entry.path);
-    const matches = content.matchAll(/export\s+interface\s+(I[A-Z]\w+)/g);
-
+    const matches = [...content.matchAll(/class \w+ implements (I\w+)/g)];
     for (const [, name] of matches) {
-      const relativePath = entry.path.replace(/^.*?\/src\//, "src/");
-      interfaces.push({ name, file: relativePath });
+      implementations.push(name);
     }
   }
 
-  console.log("\n=== Interface Definitions (I* pattern) ===");
-  if (interfaces.length === 0) {
-    console.log("No interfaces found. Phase 2.1 will add domain interfaces.");
-  } else {
-    interfaces.forEach(({ name, file }) => console.log(`${name} in ${file}`));
+  const missing = interfaces.filter((i) => !implementations.includes(i));
+
+  // Informational until Phase 2.1 completes (adding implements to existing classes)
+  if (missing.length > 0) {
+    console.log("\n⏳ Interfaces without implementations (Phase 2.1 work):");
+    missing.forEach((m) => console.log(`   ${m}`));
   }
 
-  // Currently informational - goal is 80% coverage after Phase 2.1
+  // Pass for now - will become blocking after Phase 2.1
   assertEquals(true, true);
 });
 
-Deno.test("Architecture: Track class implementations", async () => {
-  const implementations: Array<{ className: string; interfaceName: string; file: string }> = [];
+Deno.test("Architecture: Core services have interfaces", async () => {
+  const coreServices = [
+    { name: "CapabilityStore", expectedInterface: "ICapabilityRepository" },
+    { name: "ControlledExecutor", expectedInterface: "IDAGExecutor" },
+    { name: "GraphEngine", expectedInterface: "IGraphEngine" },
+    { name: "MCPClientRegistry", expectedInterface: "IMCPClientRegistry" },
+    { name: "VectorSearch", expectedInterface: "IVectorSearch" },
+  ];
 
-  for await (const entry of walk("src", { exts: [".ts"], skip: [/_test\.ts$/, /\.d\.ts$/] })) {
-    const content = await Deno.readTextFile(entry.path);
-    const matches = content.matchAll(/class\s+(\w+)\s+implements\s+(I\w+)/g);
+  const foundInterfaces: string[] = [];
 
-    for (const [, className, interfaceName] of matches) {
-      const relativePath = entry.path.replace(/^.*?\/src\//, "src/");
-      implementations.push({ className, interfaceName, file: relativePath });
-    }
-  }
-
-  console.log("\n=== Interface Implementations ===");
-  if (implementations.length === 0) {
-    console.log("No implementations found. Phase 2.1 will add interface bindings.");
-  } else {
-    implementations.forEach(({ className, interfaceName, file }) =>
-      console.log(`${className} implements ${interfaceName} in ${file}`)
-    );
-  }
-
-  assertEquals(true, true);
-});
-
-Deno.test("Architecture: Constructor parameter count", async () => {
-  const largeConstructors: Array<{ className: string; paramCount: number; file: string }> = [];
-  const MAX_PARAMS = 5;
-
-  for await (const entry of walk("src", { exts: [".ts"], skip: [/_test\.ts$/, /\.d\.ts$/] })) {
-    const content = await Deno.readTextFile(entry.path);
-
-    // Find class declarations
-    const classMatches = content.matchAll(/class\s+(\w+)[^{]*\{/g);
-
-    for (const classMatch of classMatches) {
-      const className = classMatch[1];
-      const classStart = classMatch.index!;
-
-      // Find constructor in this class
-      const classContent = content.slice(classStart);
-      const constructorMatch = classContent.match(/constructor\s*\(([^)]*)\)/);
-
-      if (constructorMatch) {
-        const params = constructorMatch[1]
-          .split(",")
-          .filter((p) => p.trim().length > 0);
-
-        if (params.length > MAX_PARAMS) {
-          const relativePath = entry.path.replace(/^.*?\/src\//, "src/");
-          largeConstructors.push({
-            className,
-            paramCount: params.length,
-            file: relativePath,
-          });
+  try {
+    for await (
+      const entry of walk("src/domain/interfaces", { exts: [".ts"] })
+    ) {
+      const content = await Deno.readTextFile(entry.path);
+      for (const service of coreServices) {
+        if (content.includes(`interface ${service.expectedInterface}`)) {
+          foundInterfaces.push(service.expectedInterface);
         }
       }
     }
+  } catch {
+    console.log("ℹ️ src/domain/interfaces/ not found - will be created in QW-3");
+    console.log("\n📋 Interfaces to create:");
+    coreServices.forEach((s) =>
+      console.log(`   ${s.expectedInterface} for ${s.name}`)
+    );
+    return;
   }
 
-  if (largeConstructors.length > 0) {
-    console.log(`\n=== Constructors with > ${MAX_PARAMS} parameters ===`);
-    largeConstructors
-      .sort((a, b) => b.paramCount - a.paramCount)
-      .forEach(({ className, paramCount, file }) =>
-        console.log(`${className}: ${paramCount} params in ${file}`)
-      );
+  const missing = coreServices
+    .filter((s) => !foundInterfaces.includes(s.expectedInterface))
+    .map((s) => `${s.expectedInterface} for ${s.name}`);
+
+  if (missing.length > 0) {
+    console.log("\n📋 Missing interfaces:");
+    missing.forEach((m) => console.log(`   ${m}`));
   }
 
-  // Currently informational - Phase 2.2 will address these
+  // Informational - shows progress
+  assertEquals(true, true);
+});
+
+Deno.test("Architecture: No concrete class imports in handlers", async () => {
+  const violations: string[] = [];
+
+  const concreteClasses = [
+    "CapabilityStore",
+    "ControlledExecutor",
+    "GraphEngine",
+    "MCPClientRegistry",
+  ];
+
+  try {
+    for await (
+      const entry of walk("src/mcp/handlers", {
+        exts: [".ts"],
+        skip: [/_test\.ts$/],
+      })
+    ) {
+      const content = await Deno.readTextFile(entry.path);
+      const relativePath = entry.path.replace(/^.*?\/src\//, "src/");
+
+      for (const className of concreteClasses) {
+        // Check if importing concrete class (not interface)
+        const importRegex = new RegExp(
+          `import.*\\b${className}\\b.*from`,
+          "g",
+        );
+        if (importRegex.test(content)) {
+          // Check if it's importing the interface version
+          const interfaceRegex = new RegExp(`I${className}`, "g");
+          if (!interfaceRegex.test(content)) {
+            violations.push(`${relativePath}: imports concrete ${className}`);
+          }
+        }
+      }
+    }
+  } catch {
+    // Handlers folder might not exist in expected location
+  }
+
+  // Currently informational - will enforce after QW-3
+  if (violations.length > 0) {
+    console.log("\n⚠️ Handlers importing concrete classes (fix after QW-3):");
+    violations.forEach((v) => console.log(`   ${v}`));
+  }
+
+  assertEquals(true, true);
+});
+
+Deno.test("Architecture: Generate interface coverage report", async () => {
+  let totalClasses = 0;
+  let classesWithInterfaces = 0;
+
+  for await (
+    const entry of walk("src", {
+      exts: [".ts"],
+      skip: [/_test\.ts$/, /\.d\.ts$/, /types\.ts$/],
+    })
+  ) {
+    const content = await Deno.readTextFile(entry.path);
+
+    // Count classes
+    const classMatches = [...content.matchAll(/export class (\w+)/g)];
+    totalClasses += classMatches.length;
+
+    // Count classes with implements
+    const implementsMatches = [
+      ...content.matchAll(/export class \w+ implements/g),
+    ];
+    classesWithInterfaces += implementsMatches.length;
+  }
+
+  const coverage = totalClasses > 0
+    ? ((classesWithInterfaces / totalClasses) * 100).toFixed(1)
+    : 0;
+
+  console.log("\n📊 Interface Coverage Report:");
+  console.log(`   Classes with interfaces: ${classesWithInterfaces}/${totalClasses} (${coverage}%)`);
+  console.log(`   Target: 80%`);
+
   assertEquals(true, true);
 });

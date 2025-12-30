@@ -111,7 +111,7 @@
     "@cliffy/command": "jsr:@cliffy/command@1.0.0-rc.8",
     "@electric-sql/pglite": "npm:@electric-sql/pglite@0.3.14",
     "@electric-sql/pglite/vector": "npm:@electric-sql/pglite@0.3.14/vector",
-    "postgres": "npm:postgres@^3.4.7",
+    "postgres": "npm:postgres@3.4.4",
     "@huggingface/transformers": "npm:@huggingface/transformers@3.7.6",
     "graphology": "npm:graphology@^0.25.4",
     "graphology-metrics": "npm:graphology-metrics@^2.2.0",
@@ -128,8 +128,8 @@
     "pako": "npm:pako@^2.1.0",
     "@types/pako": "npm:@types/pako@^2.0.0",
     "@seontechnologies/playwright-utils": "npm:@seontechnologies/playwright-utils@^3.10.1",
-    "drizzle-orm": "npm:drizzle-orm@^0.39.1",
-    "drizzle-kit": "npm:drizzle-kit@^0.30.4",
+    "drizzle-orm": "npm:drizzle-orm@^0.45.1",
+    "drizzle-kit": "npm:drizzle-kit@^0.31.8",
     "@ts-rex/argon2": "jsr:@ts-rex/argon2@^1.0.0",
     "@deno/kv-oauth": "jsr:@deno/kv-oauth@^0.11.0",
     "ml-matrix": "npm:ml-matrix@^6.11.1",
@@ -156,7 +156,7 @@
     "hono": "jsr:@hono/hono@^4",
     "hono/": "jsr:@hono/hono@^4/",
     "diod": "npm:diod@^3.0.0",
-    "fastmcp": "npm:fastmcp@^3.26.7"
+    "xstate": "npm:xstate@^5.19.2"
   },
   "compilerOptions": {
     "strict": true,
@@ -164,7 +164,9 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "jsx": "react-jsx",
-    "jsxImportSource": "preact"
+    "jsxImportSource": "preact",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
   },
   "_sandboxPermissions": {
     "_comment": "Sandbox permission set definitions (Story 7.7b, ADR-035). These profiles are enforced by DenoSandboxExecutor via explicit flags. Deno 2.5+ permission sets (--permission-set) not yet available, using flag fallback.",

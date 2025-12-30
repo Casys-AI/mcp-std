@@ -37,6 +37,7 @@ import { createSHGATParamsMigration } from "./migrations/027_shgat_params.ts";
 import { createCapabilityUuidPkMigration } from "./migrations/028_capability_uuid_pk.ts";
 import { createCapabilityHierarchyLevelMigration } from "./migrations/029_capability_hierarchy_level.ts";
 import { createRemoveTraceIntentDuplicationMigration } from "./migrations/030_remove_trace_intent_duplication.ts";
+import { createPmlRegistryViewMigration } from "./migrations/031_pml_registry_view.ts";
 
 /**
  * Migration definition
@@ -427,5 +428,6 @@ export function getAllMigrations(): Migration[] {
     createCapabilityUuidPkMigration(), // Epic 13 refactor: UUID PK, drop display_name & aliases
     createCapabilityHierarchyLevelMigration(), // Story 10.1: Capability hierarchy level for compound nodes
     createRemoveTraceIntentDuplicationMigration(), // Story 11.x: Remove intent duplication, use JOIN
+    createPmlRegistryViewMigration(), // Story 13.8: Unified pml_registry VIEW (tool_schema + capability_records)
   ];
 }
