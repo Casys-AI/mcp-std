@@ -535,23 +535,25 @@ export async function handleEmergenceMetrics(
           }
         }
 
-        // 2. Fetch capability embeddings (from workflow_pattern)
-        // Capability IDs in graph are prefixed with "capability:"
+        // 2. Fetch capability embeddings (from workflow_pattern via capability_records)
+        // Capability IDs in graph are prefixed with "capability:" and use capability_records.id
+        // We need to join to workflow_pattern to get the embeddings
         const capabilityIds = nodeIds
           .filter((id) => id.startsWith("capability:"))
           .map((id) => id.replace("capability:", ""));
 
         if (capabilityIds.length > 0) {
           const capEmbeddings = await ctx.db.query(
-            `SELECT pattern_id, intent_embedding
-             FROM workflow_pattern
-             WHERE pattern_id = ANY($1)
-             AND intent_embedding IS NOT NULL`,
+            `SELECT cr.id as capability_id, wp.intent_embedding
+             FROM capability_records cr
+             JOIN workflow_pattern wp ON cr.workflow_pattern_id = wp.pattern_id
+             WHERE cr.id = ANY($1::uuid[])
+             AND wp.intent_embedding IS NOT NULL`,
             [capabilityIds],
           );
 
           for (const row of capEmbeddings) {
-            const capId = `capability:${row.pattern_id as string}`;
+            const capId = `capability:${row.capability_id as string}`;
             let embedding = row.intent_embedding;
             if (typeof embedding === "string") {
               try { embedding = JSON.parse(embedding); } catch { continue; }

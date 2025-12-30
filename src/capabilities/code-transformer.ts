@@ -249,17 +249,7 @@ export async function transformLiteralsToArgs(
 ): Promise<LiteralTransformResult> {
   const extractedLiterals: Record<string, JsonValue> = { ...literalBindings };
 
-  // No literals to transform
-  if (Object.keys(literalBindings).length === 0) {
-    return {
-      code,
-      replacedCount: 0,
-      parametersSchema: { type: "object", properties: {} },
-      extractedLiterals: {},
-    };
-  }
-
-  // Parse code with SWC
+  // Parse code with SWC first - we need AST to discover MCP call literals
   const wrappedCode = `(async () => { ${code} })()`;
   let ast;
   try {
@@ -295,6 +285,29 @@ export async function transformLiteralsToArgs(
   const inlineLiteralPositions: InlineLiteralPosition[] = [];
   findInlineLiteralPositions(ast, literalBindings, inlineLiteralPositions);
 
+  // Story 10.2e: Discover ALL inline literals in MCP call arguments
+  // e.g., mcp.std.cap_rename({ name: "xxx", namespace: "api" })
+  // These are discovered even if not in literalBindings
+  const mcpCallLiterals = findMcpCallInlineLiterals(ast);
+
+  // Merge discovered MCP call literals into our collections
+  // Filter out positions already covered by findInlineLiteralPositions
+  const existingSpans = new Set(inlineLiteralPositions.map((p) => `${p.start}-${p.end}`));
+  for (const pos of mcpCallLiterals.positions) {
+    const spanKey = `${pos.start}-${pos.end}`;
+    if (!existingSpans.has(spanKey)) {
+      inlineLiteralPositions.push(pos);
+      existingSpans.add(spanKey);
+    }
+  }
+
+  // Merge discovered literals into extractedLiterals
+  for (const [key, value] of Object.entries(mcpCallLiterals.discoveredLiterals)) {
+    if (!(key in extractedLiterals)) {
+      extractedLiterals[key] = value;
+    }
+  }
+
   if (identifierPositions.length === 0 && inlineLiteralPositions.length === 0) {
     return {
       code,
@@ -307,7 +320,9 @@ export async function transformLiteralsToArgs(
   logger.debug("Found positions for literal transformation", {
     identifierCount: identifierPositions.length,
     inlineLiteralCount: inlineLiteralPositions.length,
+    mcpCallLiteralCount: mcpCallLiterals.positions.length,
     literals: Array.from(literalNames),
+    discoveredLiterals: Object.keys(mcpCallLiterals.discoveredLiterals),
   });
 
   // Sort by position descending to replace from end to start
@@ -377,13 +392,13 @@ export async function transformLiteralsToArgs(
     .join("\n")
     .trim();
 
-  // Generate parameter schema
-  const parametersSchema = generateSchemaFromLiterals(literalBindings);
+  // Generate parameter schema from all extracted literals (including discovered ones)
+  const parametersSchema = generateSchemaFromLiterals(extractedLiterals);
 
   logger.info("Literal-to-args transformation complete", {
     replacedCount,
     removedDeclarations: declarationsToRemove.length,
-    parameters: Object.keys(literalBindings),
+    parameters: Object.keys(extractedLiterals),
   });
 
   return {
@@ -604,6 +619,156 @@ function findInlineLiteralPositions(
       findInlineLiteralPositions(value, literalBindings, results, processedSpans);
     }
   }
+}
+
+/**
+ * Result of finding MCP call inline literals
+ */
+interface McpCallLiteralsResult {
+  positions: InlineLiteralPosition[];
+  discoveredLiterals: Record<string, JsonValue>;
+}
+
+/**
+ * Find ALL inline literals in MCP call arguments
+ *
+ * Unlike findInlineLiteralPositions which only matches known literalBindings,
+ * this function discovers ALL inline literals in mcp.*.* call arguments.
+ *
+ * @example
+ * ```typescript
+ * // This code:
+ * await mcp.std.cap_rename({
+ *   name: "fetch:exec_fc6ca799",
+ *   namespace: "api",
+ *   action: "checkEmergence"
+ * });
+ *
+ * // Will discover: { name: "fetch:exec_fc6ca799", namespace: "api", action: "checkEmergence" }
+ * ```
+ */
+function findMcpCallInlineLiterals(
+  // deno-lint-ignore no-explicit-any
+  node: any,
+  results: McpCallLiteralsResult = { positions: [], discoveredLiterals: {} },
+  processedSpans: Set<string> = new Set(),
+  inMcpCallArg: boolean = false,
+): McpCallLiteralsResult {
+  if (!node || typeof node !== "object") return results;
+
+  // Check if this is an MCP call expression: mcp.namespace.action(args)
+  let isEnteringMcpCall = false;
+  if (node.type === "CallExpression") {
+    const callee = node.callee;
+    // Check for mcp.*.* pattern
+    if (
+      callee?.type === "MemberExpression" &&
+      callee.object?.type === "MemberExpression" &&
+      callee.object.object?.type === "Identifier" &&
+      callee.object.object.value === "mcp"
+    ) {
+      isEnteringMcpCall = true;
+    }
+  }
+
+  // If we're inside an MCP call argument and this is a KeyValueProperty with a literal value
+  if (inMcpCallArg && node.type === "KeyValueProperty") {
+    const keyNode = node.key;
+    const valueNode = node.value;
+
+    // Extract key name
+    let keyName: string | undefined;
+    if (keyNode?.type === "Identifier") {
+      keyName = keyNode.value as string;
+    } else if (keyNode?.type === "StringLiteral") {
+      keyName = keyNode.value as string;
+    }
+
+    if (keyName && valueNode) {
+      // Extract literal value
+      let literalValue: JsonValue | undefined;
+      if (valueNode.type === "StringLiteral") {
+        literalValue = valueNode.value as string;
+      } else if (valueNode.type === "NumericLiteral") {
+        literalValue = valueNode.value as number;
+      } else if (valueNode.type === "BooleanLiteral") {
+        literalValue = valueNode.value as boolean;
+      } else if (valueNode.type === "TemplateLiteral") {
+        // Handle template literals like `SELECT * FROM users`
+        const quasis = valueNode.quasis as Array<Record<string, unknown>> | undefined;
+        if (quasis && quasis.length > 0) {
+          // For simple templates (no interpolation), get the raw content
+          // Note: cooked is directly a string, not { value: string }
+          const templateContent = quasis
+            .map((q) => (q.cooked as string) ?? "")
+            .join("");
+          if (templateContent.length > 0) {
+            literalValue = templateContent;
+          }
+        }
+      } else if (valueNode.type === "ArrayExpression") {
+        // Handle array literals like [1, 2, 3]
+        const elements = valueNode.elements;
+        if (elements && Array.isArray(elements)) {
+          const arrayValue: JsonValue[] = [];
+          let allLiterals = true;
+          for (const elem of elements) {
+            if (elem?.expression?.type === "StringLiteral") {
+              arrayValue.push(elem.expression.value as string);
+            } else if (elem?.expression?.type === "NumericLiteral") {
+              arrayValue.push(elem.expression.value as number);
+            } else if (elem?.expression?.type === "BooleanLiteral") {
+              arrayValue.push(elem.expression.value as boolean);
+            } else {
+              allLiterals = false;
+              break;
+            }
+          }
+          if (allLiterals && arrayValue.length > 0) {
+            literalValue = arrayValue;
+          }
+        }
+      }
+
+      if (literalValue !== undefined) {
+        const start = valueNode.span?.start ?? 0;
+        const end = valueNode.span?.end ?? 0;
+        const spanKey = `${start}-${end}`;
+
+        // Skip if already processed
+        if (!processedSpans.has(spanKey)) {
+          processedSpans.add(spanKey);
+          results.positions.push({
+            propertyName: keyName,
+            value: literalValue,
+            start,
+            end,
+          });
+          results.discoveredLiterals[keyName] = literalValue;
+        }
+      }
+    }
+  }
+
+  // Recurse through all properties
+  for (const key of Object.keys(node)) {
+    if (key === "span") continue;
+    const value = node[key];
+
+    // Determine if we should mark children as inside MCP call args
+    const childInMcpCallArg = inMcpCallArg ||
+      (isEnteringMcpCall && key === "arguments");
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        findMcpCallInlineLiterals(item, results, processedSpans, childInMcpCallArg);
+      }
+    } else if (value && typeof value === "object") {
+      findMcpCallInlineLiterals(value, results, processedSpans, childInMcpCallArg);
+    }
+  }
+
+  return results;
 }
 
 /**

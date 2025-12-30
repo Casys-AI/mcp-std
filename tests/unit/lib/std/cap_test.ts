@@ -816,3 +816,64 @@ Deno.test("cap:merge - deletes source capability (AC6)", async () => {
   assertEquals(deleteQuery !== undefined, true, "DELETE query must be executed");
   assertEquals(deleteQuery!.params[0], "source-uuid-ac6");
 });
+
+Deno.test("cap:merge - calls onMerged callback after successful merge", async () => {
+  const mockDb = new MockDb();
+  const mockRegistry = new MockRegistry();
+
+  const sourceCap = createMockCapability({
+    id: "source-uuid-cb",
+    namespace: "fs",
+    action: "read_old",
+    workflowPatternId: "wp-source-cb",
+  });
+  const targetCap = createMockCapability({
+    id: "target-uuid-cb",
+    namespace: "fs",
+    action: "read_new",
+    workflowPatternId: "wp-target-cb",
+  });
+  mockRegistry.addCapability(sourceCap);
+  mockRegistry.addCapability(targetCap);
+
+  mockDb.setMockRows([
+    { tools_used: ["mcp__fs__read"], code_snippet: "// code", updated_at: new Date("2025-01-01") },
+  ]);
+
+  // deno-lint-ignore no-explicit-any
+  const capModule = new CapModule(mockRegistry as any, mockDb as any);
+
+  // Track callback invocation
+  let callbackCalled = false;
+  let callbackResponse: unknown = null;
+
+  capModule.setOnMerged((response) => {
+    callbackCalled = true;
+    callbackResponse = response;
+  });
+
+  const result = await capModule.call("cap:merge", {
+    source: "fs:read_old",
+    target: "fs:read_new",
+  });
+  const data = JSON.parse(result.content[0].text);
+
+  assertEquals(data.success, true);
+  assertEquals(callbackCalled, true, "onMerged callback must be called");
+
+  // Verify callback received correct data
+  const cbData = callbackResponse as {
+    deletedSourceId: string;
+    deletedSourceName: string;
+    deletedSourcePatternId: string | null;
+    targetId: string;
+    targetDisplayName: string;
+    targetPatternId: string | null;
+  };
+  assertEquals(cbData.deletedSourceId, "source-uuid-cb");
+  assertEquals(cbData.deletedSourceName, "fs:read_old");
+  assertEquals(cbData.deletedSourcePatternId, "wp-source-cb");
+  assertEquals(cbData.targetId, "target-uuid-cb");
+  assertEquals(cbData.targetDisplayName, "fs:read_new");
+  assertEquals(cbData.targetPatternId, "wp-target-cb");
+});

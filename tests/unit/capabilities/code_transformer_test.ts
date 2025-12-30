@@ -606,3 +606,62 @@ Deno.test({
     assertEquals(Object.keys(result.parametersSchema.properties || {}).length, 6);
   },
 });
+
+// =============================================================================
+// Unit Tests - MCP Call Inline Literals Discovery (Story 10.2e)
+// =============================================================================
+
+Deno.test({
+  name: "LiteralTransform - discovers inline literals in MCP calls without literalBindings",
+  fn: async () => {
+    // This test verifies that inline literals are discovered even with empty literalBindings
+    const code = `const r = await mcp.std.cap_rename({
+  name: "fetch:exec_fc6ca799",
+  namespace: "api",
+  action: "checkEmergence"
+});`;
+
+    // Empty literalBindings - the function should discover literals automatically
+    const literalBindings = {};
+
+    const result = await transformLiteralsToArgs(code, literalBindings);
+
+    assertExists(result);
+    // Should discover and transform 3 inline literals
+    assertEquals(result.replacedCount, 3);
+    assertEquals(result.code.includes("args.name"), true);
+    assertEquals(result.code.includes("args.namespace"), true);
+    assertEquals(result.code.includes("args.action"), true);
+    // Original values should be removed
+    assertEquals(result.code.includes("fetch:exec_fc6ca799"), false);
+    assertEquals(result.code.includes('"api"'), false);
+    // Schema should have all 3 discovered properties
+    assertEquals(Object.keys(result.parametersSchema.properties || {}).length, 3);
+    // extractedLiterals should contain discovered values
+    assertEquals(result.extractedLiterals.name, "fetch:exec_fc6ca799");
+    assertEquals(result.extractedLiterals.namespace, "api");
+    assertEquals(result.extractedLiterals.action, "checkEmergence");
+  },
+});
+
+Deno.test({
+  name: "LiteralTransform - discovers nested MCP call inline literals",
+  fn: async () => {
+    // Multiple MCP calls with inline literals
+    const code = `
+const r1 = await mcp.std.cap_rename({ name: "old:name", newName: "new:name" });
+const r2 = await mcp.fs.read_file({ path: "/tmp/test.txt" });
+`;
+
+    const result = await transformLiteralsToArgs(code, {});
+
+    assertExists(result);
+    // Should discover all 3 inline literals (name, newName, path)
+    assertEquals(result.replacedCount, 3);
+    assertEquals(result.code.includes("args.name"), true);
+    assertEquals(result.code.includes("args.newName"), true);
+    assertEquals(result.code.includes("args.path"), true);
+    // Schema should have 3 properties
+    assertEquals(Object.keys(result.parametersSchema.properties || {}).length, 3);
+  },
+});

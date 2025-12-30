@@ -124,13 +124,16 @@ export interface CapabilityRecord {
   /** Optional cryptographic signature */
   signature?: string;
 
-  // Metrics
+  // Metrics (sourced from workflow_pattern via JOIN)
   /** Total number of times used */
   usageCount: number;
   /** Number of successful executions */
   successCount: number;
-  /** Cumulative execution time in milliseconds */
-  totalLatencyMs: number;
+  /**
+   * @deprecated Removed in migration 034. Use workflow_pattern.avg_duration_ms instead.
+   * Kept for backward compatibility until all code is updated.
+   */
+  totalLatencyMs?: number;
 
   // Metadata
   /** Tags for categorization */

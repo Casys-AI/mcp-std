@@ -53,6 +53,7 @@ export type EventType =
   | "capability.matched"
   | "capability.executed"
   | "capability.pruned"
+  | "capability.merged" // cap:merge - triggers graph invalidation
   | "capability.dependency.created"
   | "capability.dependency.removed"
   | "capability.zone.created"
@@ -360,6 +361,29 @@ export interface CapabilityMatchedPayload {
   thresholdUsed: number;
   /** Whether capability was selected for execution */
   selected: boolean;
+}
+
+/**
+ * Payload for capability.merged events
+ * Emitted after cap:merge completes - triggers graph cache invalidation
+ */
+export interface CapabilityMergedPayload {
+  /** Source capability ID (deleted) */
+  sourceId: string;
+  /** Source capability display name */
+  sourceName: string;
+  /** Source workflow_pattern ID (deleted) */
+  sourcePatternId: string | null;
+  /** Target capability ID (kept) */
+  targetId: string;
+  /** Target capability display name */
+  targetName: string;
+  /** Target workflow_pattern ID */
+  targetPatternId: string | null;
+  /** Merged usage count */
+  mergedUsageCount: number;
+  /** Number of edges redirected */
+  edgesRedirected?: number;
 }
 
 /**
@@ -728,6 +752,11 @@ export type CapabilityLearnedEvent = PmlEvent<"capability.learned", CapabilityLe
  * Typed event for capability.matched
  */
 export type CapabilityMatchedEvent = PmlEvent<"capability.matched", CapabilityMatchedPayload>;
+
+/**
+ * Typed event for capability.merged
+ */
+export type CapabilityMergedEvent = PmlEvent<"capability.merged", CapabilityMergedPayload>;
 
 /**
  * Typed event for capability.zone.created

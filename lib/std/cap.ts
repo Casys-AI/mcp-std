@@ -23,8 +23,41 @@ import {
 import type { DbClient } from "../../src/db/mod.ts";
 import type { EmbeddingModelInterface } from "../../src/vector/embeddings.ts";
 import { parseFQDN } from "../../src/capabilities/fqdn.ts";
+import { eventBus } from "../../src/events/mod.ts";
 import * as log from "@std/log";
 import { z } from "zod";
+
+// =============================================================================
+// Validation Schemas
+// =============================================================================
+
+/**
+ * Namespace must be lowercase letters/numbers, start with letter.
+ * Examples: "fs", "api", "math", "db"
+ * Invalid: "Fs", "api_v2", "my:ns"
+ */
+export const NamespaceSchema = z
+  .string()
+  .min(1, "Namespace cannot be empty")
+  .max(20, "Namespace too long (max 20 chars)")
+  .regex(/^[a-z][a-z0-9]*$/, "Namespace must be lowercase letters/numbers, start with letter")
+  .refine((s) => !s.includes("_") && !s.includes(":"), "No underscores or colons allowed");
+
+/**
+ * Action must be camelCase or snake_case, no auto-generated prefixes.
+ * Examples: "readFile", "list_users", "analyze"
+ * Invalid: "exec_abc123", "my:action", "123start"
+ */
+export const ActionSchema = z
+  .string()
+  .min(1, "Action cannot be empty")
+  .max(50, "Action too long (max 50 chars)")
+  .regex(/^[a-zA-Z][a-zA-Z0-9_]*$/, "Action must be alphanumeric (camelCase/snake_case), start with letter")
+  .refine((s) => !s.includes(":"), "No colons allowed in action")
+  .refine(
+    (s) => !s.startsWith("exec_") && !s.match(/^exec[0-9a-f]{6,}/i),
+    "Auto-generated names like 'exec_...' not allowed. Use a descriptive name."
+  );
 
 // =============================================================================
 // Embedding Text Builder
@@ -110,9 +143,9 @@ export interface CapListResponse {
 export interface CapRenameOptions {
   /** Current name (namespace:action) or UUID to update */
   name: string;
-  /** New namespace (e.g., "fs", "api", "data") */
+  /** New namespace - must be a clean identifier (lowercase, no special chars) */
   namespace?: string;
-  /** New action name (e.g., "read_json", "fetch_user") */
+  /** New action - must be a clean identifier (camelCase or snake_case, no prefixes like exec_) */
   action?: string;
   /** Optional description update */
   description?: string;
@@ -162,6 +195,8 @@ export interface CapLookupResponse {
   action: string;
   /** Description from workflow_pattern */
   description: string | null;
+  /** Tools used by this capability (from dag_structure) */
+  toolsUsed: string[] | null;
   /** Total usage count */
   usageCount: number;
   /** Success rate (0-1) */
@@ -218,8 +253,8 @@ export interface CapWhoisResponse {
   usageCount: number;
   /** Success count */
   successCount: number;
-  /** Total latency in ms */
-  totalLatencyMs: number;
+  /** @deprecated Total latency in ms - removed in migration 034 */
+  totalLatencyMs?: number;
   /** Tags */
   tags: string[];
   /** Visibility level */
@@ -230,6 +265,8 @@ export interface CapWhoisResponse {
   description?: string | null;
   /** Input parameters schema (JSON Schema) */
   parametersSchema?: Record<string, unknown> | null;
+  /** Tools used by this capability (from dag_structure) */
+  toolsUsed?: string[] | null;
 }
 
 /**
@@ -270,6 +307,12 @@ export interface CapMergeResponse {
   targetDisplayName: string;
   /** UUID of deleted source */
   deletedSourceId: string;
+  /** Display name of deleted source */
+  deletedSourceName: string;
+  /** workflow_pattern ID of deleted source (for graph invalidation) */
+  deletedSourcePatternId: string | null;
+  /** workflow_pattern ID of target */
+  targetPatternId: string | null;
   /** Merged statistics summary */
   mergedStats: {
     usageCount: number;
@@ -279,6 +322,12 @@ export interface CapMergeResponse {
   /** Which code_snippet was kept */
   codeSource: "source" | "target";
 }
+
+/**
+ * Callback type for merge events
+ * Used to emit events after successful merge
+ */
+export type OnCapabilityMerged = (response: CapMergeResponse) => void | Promise<void>;
 
 /**
  * MCP Tool definition for cap:* tools
@@ -356,11 +405,21 @@ export function globToSqlLike(pattern: string): string {
  * - Getting full metadata (whois)
  */
 export class CapModule {
+  private onMergedCallback?: OnCapabilityMerged;
+
   constructor(
     private registry: CapabilityRegistry,
     private db: DbClient,
     private embeddingModel?: EmbeddingModelInterface,
   ) {}
+
+  /**
+   * Set callback for merge events
+   * Used to emit capability.merged events for graph invalidation
+   */
+  setOnMerged(callback: OnCapabilityMerged): void {
+    this.onMergedCallback = callback;
+  }
 
   /**
    * List available cap:* tools
@@ -546,6 +605,8 @@ export class CapModule {
     const whereClause = conditions.join(" AND ");
 
     // Query with total count using window function
+    // NOTE: Read usage/success from workflow_pattern (where updateUsage writes)
+    // not from capability_records (which was never updated - bug fixed Dec 2024)
     const query = `
       SELECT
         cr.id,
@@ -554,14 +615,14 @@ export class CapModule {
         cr.namespace,
         cr.action,
         cr.hash,
-        cr.usage_count,
-        cr.success_count,
+        COALESCE(wp.usage_count, 0) as usage_count,
+        COALESCE(wp.success_count, 0) as success_count,
         wp.description,
         COUNT(*) OVER() as total
       FROM capability_records cr
       LEFT JOIN workflow_pattern wp ON cr.workflow_pattern_id = wp.pattern_id
       WHERE ${whereClause}
-      ORDER BY cr.usage_count DESC, cr.namespace ASC, cr.action ASC
+      ORDER BY COALESCE(wp.usage_count, 0) DESC, cr.namespace ASC, cr.action ASC
       LIMIT $${params.length + 1} OFFSET $${params.length + 2}
     `;
 
@@ -619,6 +680,22 @@ export class CapModule {
   private async handleRename(options: CapRenameOptions): Promise<CapToolResult> {
     const { name, namespace, action, description, tags, visibility } = options;
 
+    // Validate namespace with Zod
+    if (namespace !== undefined) {
+      const nsResult = NamespaceSchema.safeParse(namespace);
+      if (!nsResult.success) {
+        return this.errorResult(`Invalid namespace: ${nsResult.error.errors[0].message}`);
+      }
+    }
+
+    // Validate action with Zod
+    if (action !== undefined) {
+      const actionResult = ActionSchema.safeParse(action);
+      if (!actionResult.success) {
+        return this.errorResult(`Invalid action: ${actionResult.error.errors[0].message}`);
+      }
+    }
+
     // Resolve the capability by name (namespace:action) or UUID
     let record = await this.registry.resolveByName(name, DEFAULT_SCOPE);
     if (!record) {
@@ -671,23 +748,39 @@ export class CapModule {
       log.info(`[CapModule] Updated capability_records for ${record.id}`);
     }
 
-    // Update description in workflow_pattern if provided
-    if (description !== undefined && record.workflowPatternId) {
-      await this.db.query(
-        `UPDATE workflow_pattern
-         SET description = $2
-         WHERE pattern_id = $1`,
-        [record.workflowPatternId, description],
-      );
+    // Check if name or description changed - need to update embedding
+    const nameChanged = namespace !== undefined || action !== undefined;
+    const descriptionChanged = description !== undefined;
 
-      // Recalculate embedding with updated description
+    if ((nameChanged || descriptionChanged) && record.workflowPatternId) {
+      // Update description in workflow_pattern if provided
+      if (descriptionChanged) {
+        await this.db.query(
+          `UPDATE workflow_pattern
+           SET description = $2
+           WHERE pattern_id = $1`,
+          [record.workflowPatternId, description],
+        );
+      }
+
+      // Recalculate embedding with new name and/or description
       const newNamespace = namespace ?? record.namespace;
       const newAction = action ?? record.action;
       const newDisplayName = `${newNamespace}:${newAction}`;
 
+      // Get current description if not changing it
+      let finalDescription = description;
+      if (!descriptionChanged) {
+        const wpRows = (await this.db.query(
+          `SELECT description FROM workflow_pattern WHERE pattern_id = $1`,
+          [record.workflowPatternId],
+        )) as unknown as { description: string | null }[];
+        finalDescription = wpRows[0]?.description ?? undefined;
+      }
+
       if (this.embeddingModel) {
         try {
-          const embeddingText = buildEmbeddingText(newDisplayName, description);
+          const embeddingText = buildEmbeddingText(newDisplayName, finalDescription);
           const newEmbedding = await this.embeddingModel.encode(embeddingText);
           const embeddingStr = `[${newEmbedding.join(",")}]`;
 
@@ -719,6 +812,19 @@ export class CapModule {
       displayName: newDisplayName,
     };
 
+    // Emit SSE event for dashboard refresh
+    eventBus.emit({
+      type: "capability.zone.updated",
+      source: "cap-module",
+      payload: {
+        capabilityId: record.id,
+        label: newDisplayName,
+        toolIds: [], // Dashboard will refetch full data
+        successRate: record.successCount / Math.max(record.usageCount, 1),
+        usageCount: record.usageCount,
+      },
+    });
+
     log.info(`[CapModule] cap:rename ${oldDisplayName} -> ${newDisplayName}`);
     return this.successResult(response);
   }
@@ -738,18 +844,22 @@ export class CapModule {
       return this.errorResult(`Capability not found: ${name}`);
     }
 
-    // Get description from workflow_pattern
-    interface DescRow {
+    // Get description and tools_used from workflow_pattern
+    interface PatternRow {
       description: string | null;
+      tools_used: string[] | null;
     }
     let description: string | null = null;
+    let toolsUsed: string[] | null = null;
     if (record.workflowPatternId) {
-      const descRows = (await this.db.query(
-        `SELECT description FROM workflow_pattern WHERE pattern_id = $1`,
+      const patternRows = (await this.db.query(
+        `SELECT description, dag_structure->'tools_used' as tools_used
+         FROM workflow_pattern WHERE pattern_id = $1`,
         [record.workflowPatternId],
-      )) as unknown as DescRow[];
-      if (descRows.length > 0) {
-        description = descRows[0].description;
+      )) as unknown as PatternRow[];
+      if (patternRows.length > 0) {
+        description = patternRows[0].description;
+        toolsUsed = patternRows[0].tools_used;
       }
     }
 
@@ -760,6 +870,7 @@ export class CapModule {
       namespace: record.namespace,
       action: record.action,
       description,
+      toolsUsed,
       usageCount: record.usageCount,
       successRate: record.usageCount > 0 ? record.successCount / record.usageCount : 0,
     };
@@ -804,21 +915,25 @@ export class CapModule {
       return this.errorResult(`Capability not found: ${id}`);
     }
 
-    // Get description and parameters_schema from workflow_pattern
+    // Get description, parameters_schema, and tools_used from workflow_pattern
     interface PatternRow {
       description: string | null;
       parameters_schema: Record<string, unknown> | null;
+      tools_used: string[] | null;
     }
     let description: string | null = null;
     let parametersSchema: Record<string, unknown> | null = null;
+    let toolsUsed: string[] | null = null;
     if (record.workflowPatternId) {
       const patternRows = (await this.db.query(
-        `SELECT description, parameters_schema FROM workflow_pattern WHERE pattern_id = $1`,
+        `SELECT description, parameters_schema, dag_structure->'tools_used' as tools_used
+         FROM workflow_pattern WHERE pattern_id = $1`,
         [record.workflowPatternId],
       )) as unknown as PatternRow[];
       if (patternRows.length > 0) {
         description = patternRows[0].description;
         parametersSchema = patternRows[0].parameters_schema;
+        toolsUsed = patternRows[0].tools_used;
       }
     }
 
@@ -848,6 +963,7 @@ export class CapModule {
       routing: record.routing,
       description,
       parametersSchema,
+      toolsUsed,
     };
 
     log.info(`[CapModule] cap:whois ${id} -> ${record.id}`);
@@ -946,7 +1062,8 @@ export class CapModule {
     // Calculate merged stats
     const mergedUsageCount = sourceRecord.usageCount + targetRecord.usageCount;
     const mergedSuccessCount = sourceRecord.successCount + targetRecord.successCount;
-    const mergedLatencyMs = sourceRecord.totalLatencyMs + targetRecord.totalLatencyMs;
+    // totalLatencyMs deprecated (migration 034), use 0 as fallback
+    const mergedLatencyMs = (sourceRecord.totalLatencyMs ?? 0) + (targetRecord.totalLatencyMs ?? 0);
     const mergedCreatedAt =
       sourceRecord.createdAt < targetRecord.createdAt
         ? sourceRecord.createdAt
@@ -996,7 +1113,47 @@ export class CapModule {
         );
       }
 
-      // AC6: Delete source
+      // Redirect capability_dependency edges from source to target workflow_pattern
+      // This preserves graph relationships after merge
+      if (sourceRecord.workflowPatternId && targetRecord.workflowPatternId) {
+        // Redirect outgoing edges (source → X becomes target → X)
+        await tx.exec(
+          `UPDATE capability_dependency SET from_capability_id = $1
+           WHERE from_capability_id = $2
+           AND NOT EXISTS (
+             SELECT 1 FROM capability_dependency cd2
+             WHERE cd2.from_capability_id = $1 AND cd2.to_capability_id = capability_dependency.to_capability_id
+           )`,
+          [targetRecord.workflowPatternId, sourceRecord.workflowPatternId],
+        );
+
+        // Redirect incoming edges (X → source becomes X → target)
+        await tx.exec(
+          `UPDATE capability_dependency SET to_capability_id = $1
+           WHERE to_capability_id = $2
+           AND NOT EXISTS (
+             SELECT 1 FROM capability_dependency cd2
+             WHERE cd2.from_capability_id = capability_dependency.from_capability_id AND cd2.to_capability_id = $1
+           )`,
+          [targetRecord.workflowPatternId, sourceRecord.workflowPatternId],
+        );
+
+        // Delete any remaining edges to/from source (duplicates after redirect)
+        await tx.exec(
+          `DELETE FROM capability_dependency
+           WHERE from_capability_id = $1 OR to_capability_id = $1`,
+          [sourceRecord.workflowPatternId],
+        );
+
+        // Delete source workflow_pattern (orphaned after merge)
+        // This also cascades to delete any remaining capability_dependency edges
+        await tx.exec(
+          `DELETE FROM workflow_pattern WHERE pattern_id = $1`,
+          [sourceRecord.workflowPatternId],
+        );
+      }
+
+      // AC6: Delete source capability_records
       await tx.exec(`DELETE FROM capability_records WHERE id = $1`, [
         sourceRecord.id,
       ]);
@@ -1008,6 +1165,9 @@ export class CapModule {
       targetFqdn: getCapabilityFqdn(targetRecord),
       targetDisplayName: getCapabilityDisplayName(targetRecord),
       deletedSourceId: sourceRecord.id,
+      deletedSourceName: getCapabilityDisplayName(sourceRecord),
+      deletedSourcePatternId: sourceRecord.workflowPatternId ?? null,
+      targetPatternId: targetRecord.workflowPatternId ?? null,
       mergedStats: {
         usageCount: mergedUsageCount,
         successCount: mergedSuccessCount,
@@ -1019,6 +1179,17 @@ export class CapModule {
     log.info(
       `[CapModule] cap:merge ${getCapabilityDisplayName(sourceRecord)} -> ${getCapabilityDisplayName(targetRecord)} (usage: ${mergedUsageCount})`,
     );
+
+    // Emit merge event for graph cache invalidation
+    if (this.onMergedCallback) {
+      try {
+        await this.onMergedCallback(response);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        log.warn(`[CapModule] onMerged callback failed: ${msg}`);
+      }
+    }
+
     return this.successResult(response);
   }
 
@@ -1111,7 +1282,7 @@ export const pmlTools: MiniTool[] = [
   {
     name: "cap_rename",
     description:
-      "Update a capability's namespace, action, description, tags, or visibility. UUID stays immutable.",
+      "Update a capability's namespace, action, description, tags, or visibility. UUID stays immutable. Validates that namespace/action are clean identifiers.",
     category: "pml",
     inputSchema: {
       type: "object",
@@ -1122,11 +1293,11 @@ export const pmlTools: MiniTool[] = [
         },
         namespace: {
           type: "string",
-          description: "New namespace (e.g., 'fs', 'api', 'data')",
+          description: "New namespace - lowercase letters/numbers only (e.g., 'fs', 'api', 'math')",
         },
         action: {
           type: "string",
-          description: "New action name (e.g., 'read_json', 'fetch_user')",
+          description: "New action - camelCase/snake_case, no 'exec_' prefix (e.g., 'readFile', 'list_users')",
         },
         description: {
           type: "string",

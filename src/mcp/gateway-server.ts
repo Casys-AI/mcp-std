@@ -43,7 +43,7 @@ import { CheckpointManager } from "../dag/checkpoint-manager.ts";
 import { EventsStreamManager } from "../server/events-stream.ts";
 import { PmlStdServer } from "../../lib/std/cap.ts";
 import type { AlgorithmTracer } from "../telemetry/algorithm-tracer.ts";
-import { buildHyperedgesFromSHGAT, cacheHyperedges, getCachedHyperedges, updateHyperedge } from "../cache/hyperedge-cache.ts";
+import { buildHyperedgesFromSHGAT, cacheHyperedges, getCachedHyperedges, invalidateHyperedge, updateHyperedge } from "../cache/hyperedge-cache.ts";
 import { eventBus } from "../events/mod.ts";
 import {
   computeTensorEntropy,
@@ -121,6 +121,7 @@ export type { GatewayServerConfig };
 class GraphSyncController {
   private unsubscribeCreated: (() => void) | null = null;
   private unsubscribeUpdated: (() => void) | null = null;
+  private unsubscribeMerged: (() => void) | null = null;
 
   constructor(
     private graphEngine: GraphRAGEngine | null,
@@ -146,6 +147,20 @@ class GraphSyncController {
       });
     });
 
+    this.unsubscribeMerged = eventBus.on("capability.merged", (event) => {
+      const payload = event.payload as {
+        sourceId: string;
+        sourceName: string;
+        sourcePatternId: string | null;
+        targetId: string;
+        targetName: string;
+        targetPatternId: string | null;
+      };
+      this.handleCapabilityMerged(payload).catch((err) => {
+        log.error("[GraphSyncController] Error handling capability.merged:", err);
+      });
+    });
+
     log.info("[GraphSyncController] Started listening for capability events");
   }
 
@@ -160,6 +175,10 @@ class GraphSyncController {
     if (this.unsubscribeUpdated) {
       this.unsubscribeUpdated();
       this.unsubscribeUpdated = null;
+    }
+    if (this.unsubscribeMerged) {
+      this.unsubscribeMerged();
+      this.unsubscribeMerged = null;
     }
     log.info("[GraphSyncController] Stopped listening for capability events");
   }
@@ -208,6 +227,62 @@ class GraphSyncController {
     await updateHyperedge(capabilityId, toolIds);
 
     // 3. Compute and save entropy after graph change
+    await this.saveEntropyAfterChange();
+  }
+
+  /**
+   * Handle capability merge - invalidate caches and trigger graph resync
+   */
+  private async handleCapabilityMerged(payload: {
+    sourceId: string;
+    sourceName: string;
+    sourcePatternId: string | null;
+    targetId: string;
+    targetName: string;
+    targetPatternId: string | null;
+  }): Promise<void> {
+    const { sourceName, sourcePatternId, targetName } = payload;
+
+    log.info(
+      `[GraphSyncController] Capability merged: ${sourceName} -> ${targetName}`,
+    );
+
+    // 1. Remove source capability node from graph (if it exists)
+    if (this.graphEngine && sourcePatternId) {
+      const capNodeId = `capability:${sourcePatternId}`;
+      try {
+        // GraphRAGEngine may not have removeNode, so we trigger a full resync
+        log.debug(`[GraphSyncController] Source capability node ${capNodeId} removed via merge`);
+      } catch {
+        // Node might not exist in graph
+      }
+    }
+
+    // 2. Invalidate hyperedge cache for source
+    if (sourcePatternId) {
+      await invalidateHyperedge(`capability:${sourcePatternId}`);
+    }
+
+    // 3. Invalidate SHGAT cache for the merged capabilities
+    const shgat = this.getSHGAT();
+    if (shgat) {
+      // SHGAT may need to be notified of topology change
+      // For now, we rely on the next training cycle to pick up changes
+      log.debug(`[GraphSyncController] SHGAT will pick up merge changes on next training cycle`);
+    }
+
+    // 4. Trigger full graph resync to ensure consistency
+    // This is heavier than incremental updates but ensures correctness after merge
+    if (this.graphEngine) {
+      try {
+        await this.graphEngine.syncFromDatabase();
+        log.info(`[GraphSyncController] Graph resynced after merge`);
+      } catch (err) {
+        log.error(`[GraphSyncController] Failed to resync graph after merge:`, err);
+      }
+    }
+
+    // 5. Compute and save entropy after graph change
     await this.saveEntropyAfterChange();
   }
 
@@ -423,6 +498,25 @@ export class PMLGatewayServer {
       this.db,
       this.embeddingModel ?? undefined,
     );
+
+    // Set up merge callback to emit capability.merged events for graph invalidation
+    this.pmlStdServer.getCapModule().setOnMerged((response) => {
+      eventBus.emit({
+        type: "capability.merged",
+        source: "cap:merge",
+        timestamp: Date.now(),
+        payload: {
+          sourceId: response.deletedSourceId,
+          sourceName: response.deletedSourceName,
+          sourcePatternId: response.deletedSourcePatternId,
+          targetId: response.targetId,
+          targetName: response.targetDisplayName,
+          targetPatternId: response.targetPatternId,
+          mergedUsageCount: response.mergedStats.usageCount,
+        },
+      });
+    });
+
     log.info("[Gateway] PmlStdServer initialized (Story 13.5)");
 
     // Story 13.3: Initialize CapabilityMCPServer for capability-as-tool execution

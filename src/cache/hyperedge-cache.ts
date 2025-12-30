@@ -265,3 +265,49 @@ export async function updateHyperedge(
     `[HyperedgeCache] Updated hyperedge for ${capabilityId}: ${hyperedge.type} order=${hyperedge.order} (total=${summary.total})`,
   );
 }
+
+/**
+ * Remove a hyperedge from cache (e.g., after capability merge/delete)
+ *
+ * @param capabilityId - The capability ID to remove
+ */
+export async function invalidateHyperedge(capabilityId: string): Promise<void> {
+  const kv = await getKv();
+
+  const existingKey = [...HYPEREDGE_PREFIX, capabilityId];
+  const existing = await kv.get<CachedHyperedge>(existingKey);
+
+  if (!existing.value) {
+    log.debug(`[HyperedgeCache] No hyperedge to invalidate for ${capabilityId}`);
+    return;
+  }
+
+  // Get current summary to update counts
+  const currentSummary = await kv.get<HyperedgeSummary>(SUMMARY_KEY);
+  if (currentSummary.value) {
+    const summary = currentSummary.value;
+
+    // Decrement type count
+    if (existing.value.type === "cap_to_tool") {
+      summary.capToTool--;
+    } else {
+      summary.capToCap--;
+    }
+    summary.total--;
+    summary.computedAt = Date.now();
+
+    // Atomic delete + summary update
+    const atomic = kv.atomic();
+    atomic.delete(existingKey);
+    atomic.set(SUMMARY_KEY, summary);
+    await atomic.commit();
+
+    log.debug(
+      `[HyperedgeCache] Invalidated hyperedge for ${capabilityId} (total=${summary.total})`,
+    );
+  } else {
+    // No summary, just delete the entry
+    await kv.delete(existingKey);
+    log.debug(`[HyperedgeCache] Deleted hyperedge for ${capabilityId}`);
+  }
+}
