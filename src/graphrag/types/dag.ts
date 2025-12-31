@@ -148,6 +148,20 @@ export interface Task {
      * E.g., "code:map" if this multiply is inside a map callback
      */
     parentOperation?: string;
+    /**
+     * Loop ID if this task is inside a loop (Loop Abstraction)
+     *
+     * References the loop node ID from static structure (e.g., "l1")
+     */
+    loopId?: string;
+    /**
+     * Loop type for UI display (Loop Abstraction)
+     */
+    loopType?: "for" | "while" | "forOf" | "forIn" | "doWhile";
+    /**
+     * Loop condition for UI display (Loop Abstraction)
+     */
+    loopCondition?: string;
   };
 }
 

@@ -7,8 +7,8 @@
  */
 
 import * as log from "@std/log";
-import type { RouteContext } from "../types.ts";
-import { errorResponse, jsonResponse } from "../types.ts";
+import type { RouteContext } from "../mcp/routing/types.ts";
+import { errorResponse, jsonResponse } from "../mcp/routing/types.ts";
 import type {
   CapabilityNode,
   GraphEdge,
@@ -16,8 +16,8 @@ import type {
   HypergraphOptions,
   SequenceEdge,
   ToolInvocationNode,
-} from "../../../capabilities/types.ts";
-import { toolsByCategory } from "../../../../lib/std/mod.ts";
+} from "../capabilities/types.ts";
+import { toolsByCategory } from "../../lib/std/mod.ts";
 
 // Build lookup: tool name -> category (module) for std tools
 const stdToolCategoryMap = new Map<string, string>();

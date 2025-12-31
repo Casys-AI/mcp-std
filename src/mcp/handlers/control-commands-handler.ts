@@ -433,5 +433,7 @@ export async function handleApprovalResponse(
     activeWorkflow.dag,
     activeWorkflow.currentLayer + 1,
     deps,
+    undefined, // executorContext
+    activeWorkflow.layerResults, // Pass accumulated results from previous layers
   );
 }

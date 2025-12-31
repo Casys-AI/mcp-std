@@ -79,6 +79,11 @@ export interface ArgumentValue {
 export type ArgumentsStructure = Record<string, ArgumentValue>;
 
 /**
+ * Loop type enumeration for SHGAT semantic understanding
+ */
+export type LoopType = "for" | "while" | "forOf" | "forIn" | "doWhile";
+
+/**
  * Static structure node types for capability analysis
  *
  * Nodes represent elements discovered during static code analysis:
@@ -87,9 +92,14 @@ export type ArgumentsStructure = Record<string, ArgumentValue>;
  * - capability: Nested capability call
  * - fork: Parallel execution start (Promise.all/allSettled)
  * - join: Parallel execution end
+ * - loop: Iteration pattern (for, while, for-of, for-in, do-while)
  *
  * Story 10.2: Added optional `arguments` field to task nodes for
  * speculative execution argument resolution.
+ *
+ * Loop Abstraction: Loops are represented as a single node with their
+ * body analyzed once. SHGAT learns the iteration pattern rather than
+ * seeing repeated operations (which don't generalize well).
  */
 export type StaticStructureNode =
   | {
@@ -116,7 +126,15 @@ export type StaticStructureNode =
   | { id: string; type: "decision"; condition: string }
   | { id: string; type: "capability"; capabilityId: string }
   | { id: string; type: "fork" }
-  | { id: string; type: "join" };
+  | { id: string; type: "join" }
+  | {
+    id: string;
+    type: "loop";
+    /** Loop condition (e.g., "for(item of items)", "while(hasMore)") */
+    condition: string;
+    /** Type of loop for semantic understanding */
+    loopType: LoopType;
+  };
 
 /**
  * Coverage level for "provides" edges (data flow)
@@ -136,11 +154,12 @@ export type ProvidesCoverage = "strict" | "partial" | "optional";
  * - provides: Data flow (A's output feeds B's input)
  * - conditional: Branch from decision node
  * - contains: Hierarchy (capability contains tools)
+ * - loop_body: Connection from loop node to its body content
  */
 export interface StaticStructureEdge {
   from: string;
   to: string;
-  type: "sequence" | "provides" | "conditional" | "contains";
+  type: "sequence" | "provides" | "conditional" | "contains" | "loop_body";
   /** For conditional edges: branch outcome ("true", "false", "case:value") */
   outcome?: string;
   /** For provides edges: coverage level */

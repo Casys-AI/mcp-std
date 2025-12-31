@@ -530,8 +530,10 @@ export async function processGeneratorUntilPause(
   expectedLayer: number,
   deps: WorkflowHandlerDependencies,
   executorContext?: ExecutorContext,
+  initialResults?: TaskResult[],
 ): Promise<MCPToolResponse> {
-  const layerResults: TaskResult[] = [];
+  // Accumulate results from previous layers when resuming
+  const layerResults: TaskResult[] = initialResults ? [...initialResults] : [];
   let currentLayer = expectedLayer;
   let totalLayers = 0;
   let latestCheckpointId: string | null = null;
@@ -545,13 +547,9 @@ export async function processGeneratorUntilPause(
       layerResults.push({
         taskId: event.taskId ?? "",
         status: event.type === "task_complete" ? "success" : "error",
-        output: event.type === "task_complete"
-          ? {
-            executionTimeMs: event.executionTimeMs,
-            resultPreview: event.resultPreview,
-            resultSize: event.resultSize,
-          }
-          : undefined,
+        // Store full result (not just preview) so resume returns complete data
+        output: event.type === "task_complete" ? event.result : undefined,
+        executionTimeMs: event.type === "task_complete" ? event.executionTimeMs : undefined,
         error: event.type === "task_error" ? event.error : undefined,
       });
     }

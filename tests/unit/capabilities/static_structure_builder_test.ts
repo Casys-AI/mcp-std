@@ -478,6 +478,77 @@ Deno.test("StaticStructureBuilder - extract literal boolean argument (AC8)", asy
   await db.close();
 });
 
+Deno.test("StaticStructureBuilder - extract template literal SQL query as literal (AC8)", async () => {
+  const db = await setupTestDb();
+  const builder = new StaticStructureBuilder(db);
+
+  // Template literal without interpolation should be treated as literal
+  const code = `
+    const counts = await mcp.std.psql_query({
+      query: \`SELECT
+        (SELECT COUNT(*) FROM capability_records) as cap_count,
+        (SELECT COUNT(*) FROM workflow_pattern) as wp_count\`
+    });
+  `;
+
+  const structure = await builder.buildStaticStructure(code);
+
+  assertExists(structure);
+  assertEquals(structure.nodes.length, 1);
+
+  if (structure.nodes[0].type === "task") {
+    assertExists(structure.nodes[0].arguments);
+    assertExists(structure.nodes[0].arguments!.query, "Should have query argument");
+    // Template literal without interpolation should be a literal, not a reference
+    assertEquals(
+      structure.nodes[0].arguments!.query.type,
+      "literal",
+      "Simple template literal should be treated as literal",
+    );
+    // Value should be the SQL content (without backticks)
+    const queryValue = structure.nodes[0].arguments!.query.value as string;
+    assertEquals(queryValue.includes("SELECT"), true);
+    assertEquals(queryValue.includes("capability_records"), true);
+  }
+
+  // literalBindings should include the query
+  assertExists(structure.literalBindings);
+  assertExists(structure.literalBindings.query, "query should be in literalBindings");
+  assertEquals(typeof structure.literalBindings.query, "string");
+
+  await db.close();
+});
+
+Deno.test("StaticStructureBuilder - template literal WITH interpolation stays reference (AC8)", async () => {
+  const db = await setupTestDb();
+  const builder = new StaticStructureBuilder(db);
+
+  // Template literal WITH interpolation should remain a reference (dynamic value)
+  const code = `
+    const table = "users";
+    const result = await mcp.std.psql_query({
+      query: \`SELECT * FROM \${table}\`
+    });
+  `;
+
+  const structure = await builder.buildStaticStructure(code);
+
+  assertExists(structure);
+
+  if (structure.nodes[0].type === "task") {
+    assertExists(structure.nodes[0].arguments);
+    assertExists(structure.nodes[0].arguments!.query);
+    // Template with interpolation should be a reference (not static)
+    assertEquals(
+      structure.nodes[0].arguments!.query.type,
+      "reference",
+      "Template with interpolation should remain reference",
+    );
+  }
+
+  await db.close();
+});
+
 Deno.test("StaticStructureBuilder - extract literal object (nested) argument (AC8)", async () => {
   const db = await setupTestDb();
   const builder = new StaticStructureBuilder(db);

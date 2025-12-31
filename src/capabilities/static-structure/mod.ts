@@ -15,6 +15,7 @@
 export type {
   BuilderState,
   InternalNode,
+  LoopType,
   NodeCounters,
   NodeMetadata,
   ToolSchema,
@@ -40,6 +41,7 @@ export {
   generateChainedEdges,
   generateConditionalEdges,
   generateForkJoinEdges,
+  generateLoopEdges,
   generateProvidesEdges,
   generateSequenceEdges,
   loadToolSchema,
@@ -53,10 +55,15 @@ export {
   handleBinaryExpression,
   handleCallExpression,
   handleConditionalExpression,
+  handleDoWhileStatement,
+  handleForInStatement,
+  handleForOfStatement,
+  handleForStatement,
   handleFunctionExpression,
   handleIfStatement,
   handleSwitchStatement,
   handleVariableDeclarator,
+  handleWhileStatement,
   OPERATOR_MAP,
 } from "./ast-handlers.ts";
 export type { CallExpressionResult, HandlerContext, VisitorResult } from "./ast-handlers.ts";

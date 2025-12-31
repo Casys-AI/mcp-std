@@ -28,12 +28,12 @@ import {
   type StaticStructure,
 } from "./types.ts";
 import { ExecutionTraceStore } from "./execution-trace-store.ts";
-import { hashCode } from "./hash.ts";
+import { hashCode, hashSemanticStructure } from "./hash.ts";
 import { getLogger } from "../telemetry/logger.ts";
 import type { SchemaInferrer } from "./schema-inferrer.ts";
 import type { StaticStructureBuilder } from "./static-structure-builder.ts";
 import type { CapabilityRegistry } from "./capability-registry.ts";
-import { transformCapabilityRefs, transformLiteralsToArgs } from "./code-transformer.ts";
+import { normalizeVariableNames, transformCapabilityRefs, transformLiteralsToArgs } from "./code-transformer.ts";
 // Story 6.5: EventBus integration (ADR-036)
 import { eventBus } from "../events/mod.ts";
 // Story 10.7c: Thompson Sampling risk classification
@@ -180,8 +180,52 @@ export class CapabilityStore {
       }
     }
 
-    // Generate code hash for deduplication (after transformation)
-    const codeHash = await hashCode(code);
+    // Build static structure from code FIRST (Story 10.1)
+    // Needed for semantic hashing (Story 7.2c) which normalizes variable names
+    let finalStaticStructure: StaticStructure | undefined = staticStructure;
+    if (!finalStaticStructure && this.staticStructureBuilder) {
+      try {
+        finalStaticStructure = await this.staticStructureBuilder.buildStaticStructure(code);
+        logger.debug("Static structure built for capability", {
+          nodeCount: finalStaticStructure.nodes.length,
+          edgeCount: finalStaticStructure.edges.length,
+        });
+      } catch (error) {
+        logger.warn("Static structure analysis failed, continuing without", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    // Story 7.2c: Normalize variable names in code for consistent storage
+    // Uses variableBindings from static structure to rename variables to node IDs
+    let normalizedCode = code;
+    if (finalStaticStructure?.variableBindings) {
+      const normalizeResult = normalizeVariableNames(code, finalStaticStructure.variableBindings);
+      normalizedCode = normalizeResult.code;
+      if (Object.keys(normalizeResult.renames).length > 0) {
+        logger.debug("Normalized variable names in code", {
+          renames: normalizeResult.renames,
+        });
+      }
+    }
+
+    // Generate code hash for deduplication (Story 7.2c: semantic hashing)
+    // Use semantic hash if static structure available (normalizes variable names)
+    // Fallback to code hash if no static structure
+    let codeHash: string;
+    if (finalStaticStructure && finalStaticStructure.nodes.length > 0) {
+      codeHash = await hashSemanticStructure(finalStaticStructure);
+      logger.debug("Using semantic hash for deduplication", {
+        nodeCount: finalStaticStructure.nodes.length,
+      });
+    } else {
+      codeHash = await hashCode(normalizedCode);
+      logger.debug("Using code hash for deduplication (no static structure)");
+    }
+
+    // Use normalized code for storage
+    code = normalizedCode;
 
     // Generate intent embedding for semantic search
     let embedding: number[];
@@ -236,24 +280,6 @@ export class CapabilityStore {
     // Permissions: sandbox always runs with "none", HIL is controlled by allow/ask/deny config
     const permissionSet: PermissionSet = "minimal";
     const permissionConfidence = 1.0; // No inference, static config
-
-    // Build static structure from code (Story 10.1)
-    // Use passed staticStructure if available, otherwise generate from builder
-    let finalStaticStructure: StaticStructure | undefined = staticStructure;
-    if (!finalStaticStructure && this.staticStructureBuilder) {
-      try {
-        finalStaticStructure = await this.staticStructureBuilder.buildStaticStructure(code);
-        logger.debug("Static structure built for capability", {
-          codeHash,
-          nodeCount: finalStaticStructure.nodes.length,
-          edgeCount: finalStaticStructure.edges.length,
-        });
-      } catch (error) {
-        logger.warn("Static structure analysis failed, continuing without", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
 
     // Build dag_structure with tools used, invocations, and static structure (for graph analysis)
     const dagStructure: Record<string, unknown> = {

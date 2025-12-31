@@ -53,13 +53,18 @@ export interface NodeMetadata {
  *
  * @internal This type is not exported - use StaticStructureNode for external APIs
  */
+/**
+ * Loop type enumeration for SHGAT semantic understanding
+ */
+export type LoopType = "for" | "while" | "forOf" | "forIn" | "doWhile";
+
 export type InternalNode =
   & {
-    /** Unique node identifier (e.g., "n1", "d1", "f1") */
+    /** Unique node identifier (e.g., "n1", "d1", "f1", "l1") */
     id: string;
     /** AST traversal position for ordering sequence edges */
     position: number;
-    /** Parent scope for conditional/parallel containment (e.g., "d1:true", "f1") */
+    /** Parent scope for conditional/parallel containment (e.g., "d1:true", "f1", "l1") */
     parentScope?: string;
     /** Option B: Execution metadata for nested operation tracking */
     metadata?: NodeMetadata;
@@ -70,6 +75,7 @@ export type InternalNode =
     | { type: "capability"; capabilityId: string }
     | { type: "fork" }
     | { type: "join" }
+    | { type: "loop"; condition: string; loopType: LoopType }
   );
 
 /**
@@ -81,6 +87,7 @@ export interface NodeCounters {
   capability: number;
   fork: number;
   join: number;
+  loop: number;
 }
 
 /**

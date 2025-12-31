@@ -9,12 +9,13 @@
  */
 
 import * as log from "@std/log";
-import type { RouteContext } from "../types.ts";
-import { errorResponse, jsonResponse } from "../types.ts";
+import type { RouteContext } from "../mcp/routing/types.ts";
+import { errorResponse, jsonResponse } from "../mcp/routing/types.ts";
 import {
   getExecutedToolIds,
   type Scope,
-} from "../../../graphrag/user-usage.ts";
+} from "../graphrag/user-usage.ts";
+import { getMetricsCollector } from "../telemetry/metrics-collector.ts";
 
 // Rate limiting for metrics endpoint
 let lastMetricsCall = 0;
@@ -103,6 +104,38 @@ export async function handleMetrics(
 }
 
 /**
+ * GET /api/metrics/prometheus
+ *
+ * Returns metrics in Prometheus exposition format for scraping.
+ * Includes algorithm decision metrics, tool calls, DAG executions, etc.
+ */
+export function handlePrometheusMetrics(
+  corsHeaders: Record<string, string>,
+): Response {
+  try {
+    const collector = getMetricsCollector();
+    const prometheusOutput = collector.toPrometheusFormat();
+
+    return new Response(prometheusOutput + "\n", {
+      status: 200,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
+      },
+    });
+  } catch (error) {
+    log.error(`Failed to get Prometheus metrics: ${error}`);
+    return new Response(`# Error generating metrics: ${error}\n`, {
+      status: 500,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "text/plain",
+      },
+    });
+  }
+}
+
+/**
  * Route /api/metrics requests
  */
 export async function handleMetricsRoutes(
@@ -111,6 +144,12 @@ export async function handleMetricsRoutes(
   ctx: RouteContext,
   corsHeaders: Record<string, string>,
 ): Promise<Response | null> {
+  // Prometheus metrics endpoint
+  if (url.pathname === "/api/metrics/prometheus" && req.method === "GET") {
+    return handlePrometheusMetrics(corsHeaders);
+  }
+
+  // JSON metrics endpoint
   if (url.pathname === "/api/metrics" && req.method === "GET") {
     return await handleMetrics(req, url, ctx, corsHeaders);
   }

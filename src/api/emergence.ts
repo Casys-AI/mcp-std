@@ -10,8 +10,8 @@
  */
 
 import * as log from "@std/log";
-import type { RouteContext } from "../types.ts";
-import { errorResponse, jsonResponse } from "../types.ts";
+import type { RouteContext } from "../mcp/routing/types.ts";
+import { errorResponse, jsonResponse } from "../mcp/routing/types.ts";
 import type {
   EmergenceCurrentMetrics,
   EmergenceMetricsResponse,
@@ -19,13 +19,13 @@ import type {
   PhaseTransition,
   Recommendation,
   Trend,
-} from "../../../shared/emergence.types.ts";
+} from "../shared/emergence.types.ts";
 import {
   filterSnapshotByExecution,
   getExecutedToolIds,
   type Scope,
-} from "../../../graphrag/user-usage.ts";
-import type { DbClient } from "../../../db/types.ts";
+} from "../graphrag/user-usage.ts";
+import type { DbClient } from "../db/types.ts";
 import {
   computeDualEntropy,
   computeSemanticEntropy,
@@ -36,9 +36,9 @@ import {
   type TensorEntropyResult,
   type EntropyGraphInput,
   type SemanticEntropyResult,
-} from "../../../graphrag/algorithms/tensor-entropy.ts";
-import type { TensorEntropyMetrics } from "../../../shared/emergence.types.ts";
-import { getCachedHyperedges } from "../../../cache/hyperedge-cache.ts";
+} from "../graphrag/algorithms/tensor-entropy.ts";
+import type { TensorEntropyMetrics } from "../shared/emergence.types.ts";
+import { getCachedHyperedges } from "../cache/hyperedge-cache.ts";
 
 // Re-export types for consumers of this module
 export type {
@@ -47,7 +47,7 @@ export type {
   PhaseTransition,
   Recommendation,
   Trend,
-} from "../../../shared/emergence.types.ts";
+} from "../shared/emergence.types.ts";
 
 // History for phase transition detection and trend computation (in-memory, resets on restart)
 // CR-2: TODO - Persist to database for real historical data across restarts

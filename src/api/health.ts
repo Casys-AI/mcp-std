@@ -6,8 +6,8 @@
  * @module mcp/routing/handlers/health
  */
 
-import type { RouteContext } from "../types.ts";
-import { jsonResponse } from "../types.ts";
+import type { RouteContext } from "../mcp/routing/types.ts";
+import { jsonResponse } from "../mcp/routing/types.ts";
 
 /**
  * GET /health

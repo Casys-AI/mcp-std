@@ -55,6 +55,29 @@ export function generateChainedEdges(
 }
 
 /**
+ * Find the root of a method chain (first node in the chain)
+ * Traverses chainedFrom metadata backwards to find the chain root.
+ */
+function findChainRoot(
+  node: InternalNode,
+  allNodes: InternalNode[],
+): InternalNode {
+  if (node.type !== "task" || !node.metadata?.chainedFrom) {
+    return node;
+  }
+
+  const chainedFromId = node.metadata.chainedFrom as string;
+  const chainedFromNode = allNodes.find((n) => n.id === chainedFromId);
+
+  if (!chainedFromNode) {
+    return node;
+  }
+
+  // Recursively find the root
+  return findChainRoot(chainedFromNode, allNodes);
+}
+
+/**
  * Generate sequence edges between consecutive await statements
  */
 export function generateSequenceEdges(
@@ -91,13 +114,17 @@ export function generateSequenceEdges(
         continue;
       }
 
+      // Fix: If "to" has a chain, connect to the chain root instead
+      // This ensures dependencies flow to the first operation in the chain
+      const targetNode = findChainRoot(to, nodes);
+
       // Skip if already exists (e.g., from chained edges)
-      const edgeKey = `${from.id}->${to.id}:sequence`;
+      const edgeKey = `${from.id}->${targetNode.id}:sequence`;
       if (edgeSet.has(edgeKey)) continue;
 
       edges.push({
         from: from.id,
-        to: to.id,
+        to: targetNode.id,
         type: "sequence",
       });
       edgeSet.add(edgeKey);
@@ -163,6 +190,40 @@ export function generateConditionalEdges(
           outcome: `case:${caseValue}`,
         });
       }
+    }
+  }
+}
+
+/**
+ * Generate loop edges for iteration patterns
+ *
+ * Creates edges from loop node to the first node in its body.
+ * The body content is analyzed once (not per-iteration) for SHGAT pattern learning.
+ */
+export function generateLoopEdges(
+  nodes: InternalNode[],
+  edges: StaticStructureEdge[],
+): void {
+  const loopNodes = nodes.filter((n) => n.type === "loop");
+
+  for (const loop of loopNodes) {
+    // Find nodes inside this loop's body
+    const bodyNodes = nodes.filter((n) => n.parentScope === loop.id);
+
+    if (bodyNodes.length > 0) {
+      // Sort by position to get first node
+      const sortedBody = bodyNodes.sort((a, b) => a.position - b.position);
+      const firstNode = sortedBody[0];
+
+      // Connect loop to first node in body
+      edges.push({
+        from: loop.id,
+        to: firstNode.id,
+        type: "loop_body",
+      });
+
+      // Note: We don't create a back-edge because SHGAT sees the pattern once,
+      // not the iteration cycle. The "loop" node type indicates repetition semantically.
     }
   }
 }
@@ -364,6 +425,9 @@ export async function generateAllEdges(
 
   // Generate conditional edges (from decision nodes to their branches)
   generateConditionalEdges(sortedNodes, edges);
+
+  // Generate loop edges (from loop nodes to their body)
+  generateLoopEdges(sortedNodes, edges);
 
   // Generate fork/join edges
   generateForkJoinEdges(sortedNodes, edges);

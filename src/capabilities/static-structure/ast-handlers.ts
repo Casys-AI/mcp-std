@@ -9,6 +9,7 @@
 
 import type { ASTVisitor, DefaultHandler } from "../../infrastructure/patterns/visitor/mod.ts";
 import type { InternalNode, NodeMetadata } from "./types.ts";
+import { ARRAY_METHOD_NAMES } from "../pure-operations.ts";
 
 // ============================================================================
 // Visitor Result Type
@@ -45,7 +46,7 @@ export interface HandlerContext {
   currentParentOp?: string;
 
   // Builder methods exposed to handlers
-  generateNodeId: (type: "task" | "decision" | "capability" | "fork" | "join") => string;
+  generateNodeId: (type: "task" | "decision" | "capability" | "fork" | "join" | "loop") => string;
   extractConditionText: (node: Record<string, unknown> | undefined) => string;
   extractMemberChain: (node: Record<string, unknown>, parts?: string[]) => string[];
   extractCodeFromSpan: (span: { start: number; end: number } | undefined) => string | undefined;
@@ -127,25 +128,10 @@ export const OPERATOR_MAP: Record<string, string> = {
 
 /**
  * Array method names that should be tracked as operations
+ *
+ * Re-exported from pure-operations.ts (single source of truth)
  */
-export const ARRAY_OPERATIONS = [
-  "filter",
-  "map",
-  "reduce",
-  "flatMap",
-  "find",
-  "findIndex",
-  "some",
-  "every",
-  "sort",
-  "reverse",
-  "slice",
-  "concat",
-  "join",
-  "includes",
-  "indexOf",
-  "lastIndexOf",
-];
+export const ARRAY_OPERATIONS = ARRAY_METHOD_NAMES;
 
 // ============================================================================
 // Handler Functions
@@ -307,6 +293,222 @@ export function handleConditionalExpression(
 
   return { handled: true };
 }
+
+// ============================================================================
+// Loop Handlers
+// ============================================================================
+
+/**
+ * Handle for statements (classic for loop)
+ *
+ * Creates a loop node and processes the body ONCE for SHGAT pattern learning.
+ * Example: for (let i = 0; i < 10; i++) { ... }
+ */
+export function handleForStatement(
+  n: Record<string, unknown>,
+  ctx: HandlerContext,
+  _visitor: ASTVisitor<HandlerContext, VisitorResult>,
+): VisitorResult {
+  const init = n.init as Record<string, unknown> | undefined;
+  const test = n.test as Record<string, unknown> | undefined;
+  const update = n.update as Record<string, unknown> | undefined;
+
+  // Build condition string
+  const initText = init ? ctx.extractConditionText(init) : "";
+  const testText = test ? ctx.extractConditionText(test) : "";
+  const updateText = update ? ctx.extractConditionText(update) : "";
+  const condition = `for(${initText}; ${testText}; ${updateText})`;
+
+  // Create loop node
+  const loopId = ctx.generateNodeId("loop");
+  ctx.nodes.push({
+    id: loopId,
+    type: "loop",
+    condition,
+    loopType: "for",
+    position: ctx.position,
+    parentScope: ctx.parentScope,
+  });
+
+  // Process body ONCE (SHGAT learns the pattern, not repetitions)
+  const body = n.body as Record<string, unknown> | undefined;
+  if (body) {
+    ctx.findNodes(
+      body,
+      ctx.nodes,
+      ctx.position + 1,
+      loopId, // Body is scoped to this loop
+      ctx.nestingLevel,
+      ctx.currentParentOp,
+    );
+  }
+
+  return { handled: true };
+}
+
+/**
+ * Handle while statements
+ *
+ * Creates a loop node for while (condition) { ... }
+ */
+export function handleWhileStatement(
+  n: Record<string, unknown>,
+  ctx: HandlerContext,
+  _visitor: ASTVisitor<HandlerContext, VisitorResult>,
+): VisitorResult {
+  const test = n.test as Record<string, unknown> | undefined;
+  const condition = `while(${ctx.extractConditionText(test)})`;
+
+  const loopId = ctx.generateNodeId("loop");
+  ctx.nodes.push({
+    id: loopId,
+    type: "loop",
+    condition,
+    loopType: "while",
+    position: ctx.position,
+    parentScope: ctx.parentScope,
+  });
+
+  const body = n.body as Record<string, unknown> | undefined;
+  if (body) {
+    ctx.findNodes(
+      body,
+      ctx.nodes,
+      ctx.position + 1,
+      loopId,
+      ctx.nestingLevel,
+      ctx.currentParentOp,
+    );
+  }
+
+  return { handled: true };
+}
+
+/**
+ * Handle do-while statements
+ *
+ * Creates a loop node for do { ... } while (condition)
+ */
+export function handleDoWhileStatement(
+  n: Record<string, unknown>,
+  ctx: HandlerContext,
+  _visitor: ASTVisitor<HandlerContext, VisitorResult>,
+): VisitorResult {
+  const test = n.test as Record<string, unknown> | undefined;
+  const condition = `do...while(${ctx.extractConditionText(test)})`;
+
+  const loopId = ctx.generateNodeId("loop");
+  ctx.nodes.push({
+    id: loopId,
+    type: "loop",
+    condition,
+    loopType: "doWhile",
+    position: ctx.position,
+    parentScope: ctx.parentScope,
+  });
+
+  const body = n.body as Record<string, unknown> | undefined;
+  if (body) {
+    ctx.findNodes(
+      body,
+      ctx.nodes,
+      ctx.position + 1,
+      loopId,
+      ctx.nestingLevel,
+      ctx.currentParentOp,
+    );
+  }
+
+  return { handled: true };
+}
+
+/**
+ * Handle for-of statements
+ *
+ * Creates a loop node for: for (const x of items) { ... }
+ */
+export function handleForOfStatement(
+  n: Record<string, unknown>,
+  ctx: HandlerContext,
+  _visitor: ASTVisitor<HandlerContext, VisitorResult>,
+): VisitorResult {
+  const left = n.left as Record<string, unknown> | undefined;
+  const right = n.right as Record<string, unknown> | undefined;
+
+  const leftText = left ? ctx.extractConditionText(left) : "item";
+  const rightText = right ? ctx.extractConditionText(right) : "items";
+  const condition = `for(${leftText} of ${rightText})`;
+
+  const loopId = ctx.generateNodeId("loop");
+  ctx.nodes.push({
+    id: loopId,
+    type: "loop",
+    condition,
+    loopType: "forOf",
+    position: ctx.position,
+    parentScope: ctx.parentScope,
+  });
+
+  const body = n.body as Record<string, unknown> | undefined;
+  if (body) {
+    ctx.findNodes(
+      body,
+      ctx.nodes,
+      ctx.position + 1,
+      loopId,
+      ctx.nestingLevel,
+      ctx.currentParentOp,
+    );
+  }
+
+  return { handled: true };
+}
+
+/**
+ * Handle for-in statements
+ *
+ * Creates a loop node for: for (const key in obj) { ... }
+ */
+export function handleForInStatement(
+  n: Record<string, unknown>,
+  ctx: HandlerContext,
+  _visitor: ASTVisitor<HandlerContext, VisitorResult>,
+): VisitorResult {
+  const left = n.left as Record<string, unknown> | undefined;
+  const right = n.right as Record<string, unknown> | undefined;
+
+  const leftText = left ? ctx.extractConditionText(left) : "key";
+  const rightText = right ? ctx.extractConditionText(right) : "obj";
+  const condition = `for(${leftText} in ${rightText})`;
+
+  const loopId = ctx.generateNodeId("loop");
+  ctx.nodes.push({
+    id: loopId,
+    type: "loop",
+    condition,
+    loopType: "forIn",
+    position: ctx.position,
+    parentScope: ctx.parentScope,
+  });
+
+  const body = n.body as Record<string, unknown> | undefined;
+  if (body) {
+    ctx.findNodes(
+      body,
+      ctx.nodes,
+      ctx.position + 1,
+      loopId,
+      ctx.nestingLevel,
+      ctx.currentParentOp,
+    );
+  }
+
+  return { handled: true };
+}
+
+// ============================================================================
+// Binary Expression Handler
+// ============================================================================
 
 /**
  * Handle binary expressions (arithmetic, comparison, logical operators)
@@ -494,6 +696,12 @@ export function createStaticStructureVisitor(
     .register("IfStatement", handleIfStatement)
     .register("SwitchStatement", handleSwitchStatement)
     .register("ConditionalExpression", handleConditionalExpression)
+    // Loops (SHGAT sees pattern once, not all iterations)
+    .register("ForStatement", handleForStatement)
+    .register("WhileStatement", handleWhileStatement)
+    .register("DoWhileStatement", handleDoWhileStatement)
+    .register("ForOfStatement", handleForOfStatement)
+    .register("ForInStatement", handleForInStatement)
     // Operations
     .register("BinaryExpression", handleBinaryExpression)
     .register("CallExpression", handleCallExpression)

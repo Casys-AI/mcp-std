@@ -20,7 +20,7 @@ import type { InternalNode } from "./types.ts";
  */
 export interface IStaticStructureBuilder {
   // Methods
-  generateNodeId(type: "task" | "decision" | "capability" | "fork" | "join"): string;
+  generateNodeId(type: "task" | "decision" | "capability" | "fork" | "join" | "loop"): string;
   extractConditionText(node: Record<string, unknown> | undefined): string;
   extractMemberChain(node: Record<string, unknown>, parts?: string[]): string[];
   extractCodeFromSpan(span: { start: number; end: number } | undefined): string | undefined;
@@ -83,7 +83,7 @@ export class BuilderContextAdapter implements HandlerContext {
   ) {}
 
   // Delegate methods to builder
-  generateNodeId = (type: "task" | "decision" | "capability" | "fork" | "join"): string =>
+  generateNodeId = (type: "task" | "decision" | "capability" | "fork" | "join" | "loop"): string =>
     this.builder.generateNodeId(type);
 
   extractConditionText = (node: Record<string, unknown> | undefined): string =>

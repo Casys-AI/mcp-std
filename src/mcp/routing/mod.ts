@@ -22,7 +22,7 @@ export {
 export type { RouteContext, RouteHandler } from "./types.ts";
 export { errorResponse, jsonResponse } from "./types.ts";
 
-// Re-export handlers for direct access if needed
+// Re-export API handlers for direct access if needed
 export {
   handleCapabilitiesRoutes,
   handleEmergenceRoutes,
@@ -30,7 +30,7 @@ export {
   handleHealthRoutes,
   handleMetricsRoutes,
   handleToolsRoutes,
-} from "./handlers/mod.ts";
+} from "../../api/mod.ts";
 
 // Note: router.ts and dispatcher.ts are deprecated (QW-4)
 // Routing is now handled by Hono in src/mcp/server/app.ts

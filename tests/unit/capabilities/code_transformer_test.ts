@@ -665,3 +665,65 @@ const r2 = await mcp.fs.read_file({ path: "/tmp/test.txt" });
     assertEquals(Object.keys(result.parametersSchema.properties || {}).length, 3);
   },
 });
+
+// =============================================================================
+// Unit Tests - Nested Literal Extraction in Code Templates (Story 10.2f)
+// =============================================================================
+
+Deno.test({
+  name: "LiteralTransform - extracts nested literals from code template (Playwright)",
+  fn: async () => {
+    // Code template with nested literals that should be extracted
+    const code = `const result = await mcp.playwright.browser_run_code({
+  code: \`async (page) => {
+    await page.goto('http://localhost:8081/dashboard');
+    await page.waitForLoadState('networkidle');
+    const content = await page.evaluate(() => {
+      return texts.slice(0, 100).join(' | ');
+    });
+    return { url: page.url(), content };
+  }\`
+});`;
+
+    const result = await transformLiteralsToArgs(code, {});
+
+    assertExists(result);
+    // Should extract 5 nested literals: url, state, sliceStart, sliceEnd, separator
+    assertEquals(result.replacedCount, 5);
+    // Check that interpolations were added
+    assertEquals(result.code.includes("${args.url}"), true);
+    assertEquals(result.code.includes("${args.state}"), true);
+    assertEquals(result.code.includes("${args.sliceStart}"), true);
+    assertEquals(result.code.includes("${args.sliceEnd}"), true);
+    assertEquals(result.code.includes("${args.separator}"), true);
+    // Check extracted values
+    assertEquals(result.extractedLiterals.url, "http://localhost:8081/dashboard");
+    assertEquals(result.extractedLiterals.state, "networkidle");
+    assertEquals(result.extractedLiterals.sliceStart, 0);
+    assertEquals(result.extractedLiterals.sliceEnd, 100);
+    assertEquals(result.extractedLiterals.separator, " | ");
+    // Original hardcoded values should be removed
+    assertEquals(result.code.includes("'http://localhost:8081/dashboard'"), false);
+    assertEquals(result.code.includes("'networkidle'"), false);
+    // Schema should have all 5 parameters
+    assertEquals(Object.keys(result.parametersSchema.properties || {}).length, 5);
+  },
+});
+
+Deno.test({
+  name: "LiteralTransform - handles simple SQL template (not code-like)",
+  fn: async () => {
+    // SQL template should be treated as regular literal, not code template
+    const code = `const result = await mcp.postgres.query({
+  query: \`SELECT * FROM users WHERE id = 1\`
+});`;
+
+    const result = await transformLiteralsToArgs(code, {});
+
+    assertExists(result);
+    // SQL is not code-like, so it should be replaced as a whole
+    assertEquals(result.replacedCount, 1);
+    assertEquals(result.code.includes("args.query"), true);
+    assertEquals(result.extractedLiterals.query, "SELECT * FROM users WHERE id = 1");
+  },
+});

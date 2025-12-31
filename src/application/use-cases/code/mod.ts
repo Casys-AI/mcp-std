@@ -10,8 +10,20 @@
  * @module application/use-cases/code
  */
 
-// Types
-export * from "./types.ts";
+// Types (re-export everything from types.ts)
+export type {
+  CodeSyntaxError,
+  ExecuteCodeRequest,
+  ExecuteCodeResult,
+  ExecutionMetrics,
+  MatchedCapability,
+  SandboxConfig,
+  SecurityIssue,
+  ToolDefinition,
+  ToolFailure,
+  ValidateCodeRequest,
+  ValidateCodeResult,
+} from "./types.ts";
 
 // Use Cases
 export { ExecuteCodeUseCase } from "./execute-code.ts";

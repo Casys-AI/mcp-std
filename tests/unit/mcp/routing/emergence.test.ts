@@ -8,7 +8,7 @@
  */
 
 import { assertEquals, assertAlmostEquals } from "jsr:@std/assert@1";
-import { _internals } from "../../../../src/mcp/routing/handlers/emergence.ts";
+import { _internals } from "../../../../src/api/emergence.ts";
 
 const {
   computeGraphEntropy,

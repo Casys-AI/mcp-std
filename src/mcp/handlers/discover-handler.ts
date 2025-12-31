@@ -32,6 +32,7 @@ import {
   GLOBAL_SCORE_CAP,
   type ReliabilityConfig,
 } from "../../graphrag/algorithms/unified-search.ts";
+import type { IDecisionLogger } from "../../telemetry/decision-logger.ts";
 
 /**
  * Discover request arguments
@@ -144,6 +145,7 @@ export async function handleDiscover(
   graphEngine: GraphRAGEngine,
   dagSuggester: DAGSuggester,
   capabilityRegistry?: CapabilityRegistry,
+  decisionLogger?: IDecisionLogger,
 ): Promise<MCPToolResponse | MCPErrorResponse> {
   const transaction = startTransaction("mcp.discover", "mcp");
   const startTime = performance.now();
@@ -190,7 +192,9 @@ export async function handleDiscover(
         graphEngine,
         limit,
         includeRelated,
+        minScore,
         correlationId,
+        decisionLogger,
       );
       for (const tool of toolResults) {
         if (tool.score >= minScore) {
@@ -206,7 +210,9 @@ export async function handleDiscover(
         intent,
         dagSuggester,
         capabilityRegistry,
+        minScore,
         correlationId,
+        decisionLogger,
       );
       if (capabilityResult && capabilityResult.score >= minScore) {
         results.push(capabilityResult);
@@ -274,7 +280,9 @@ async function searchTools(
   graphEngine: GraphRAGEngine,
   limit: number,
   includeRelated: boolean,
+  minScore: number,
   correlationId?: string,
+  decisionLogger?: IDecisionLogger,
 ): Promise<DiscoverResultItem[]> {
   const hybridResults: HybridSearchResult[] = await graphEngine.searchToolsHybrid(
     vectorSearch,
@@ -291,6 +299,26 @@ async function searchTools(
     // Tools don't have successRate yet, default to 1.0 (cold start favorable)
     const toolSuccessRate = 1.0;
     const unifiedScore = computeDiscoverScore(result.semanticScore, toolSuccessRate);
+
+    // Trace tool scoring decision
+    decisionLogger?.logDecision({
+      algorithm: "HybridSearch",
+      mode: "active_search",
+      targetType: "tool",
+      intent,
+      finalScore: unifiedScore,
+      threshold: minScore,
+      decision: unifiedScore >= minScore ? "accepted" : "rejected",
+      targetId: result.toolId,
+      correlationId,
+      signals: {
+        semanticScore: result.semanticScore,
+        successRate: toolSuccessRate,
+      },
+      params: {
+        reliabilityFactor: 1.0,
+      },
+    });
 
     const item: DiscoverResultItem = {
       type: "tool",
@@ -331,7 +359,9 @@ async function searchCapability(
   intent: string,
   dagSuggester: DAGSuggester,
   capabilityRegistry?: CapabilityRegistry,
+  minScore: number = 0,
   correlationId?: string,
+  decisionLogger?: IDecisionLogger,
 ): Promise<DiscoverResultItem | null> {
   const match: CapabilityMatch | null = await dagSuggester.searchCapabilities(
     intent,
@@ -339,8 +369,39 @@ async function searchCapability(
   );
 
   if (!match) {
+    // Trace no match found
+    decisionLogger?.logDecision({
+      algorithm: "CapabilityMatcher",
+      mode: "active_search",
+      targetType: "capability",
+      intent,
+      finalScore: 0,
+      threshold: minScore,
+      decision: "rejected",
+      correlationId,
+    });
     return null;
   }
+
+  // Trace capability match decision
+  decisionLogger?.logDecision({
+    algorithm: "CapabilityMatcher",
+    mode: "active_search",
+    targetType: "capability",
+    intent,
+    finalScore: match.score,
+    threshold: minScore,
+    decision: match.score >= minScore ? "accepted" : "rejected",
+    targetId: match.capability.id,
+    correlationId,
+    signals: {
+      semanticScore: match.semanticScore,
+      successRate: match.capability.successRate,
+    },
+    params: {
+      reliabilityFactor: match.capability.successRate ?? 1.0,
+    },
+  });
 
   // AC12-13: CapabilityMatcher.findMatch() already computes:
   // score = semanticScore × reliabilityFactor × transitiveReliability

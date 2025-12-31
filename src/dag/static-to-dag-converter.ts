@@ -116,6 +116,49 @@ export function staticStructureToDag(
     variableBindingsCount: Object.keys(structure.variableBindings ?? {}).length,
   });
 
+  // Phase 0: Build loop membership map from loop_body edges
+  // Maps node ID -> { loopId, loopType, loopCondition }
+  const loopMembership = new Map<string, {
+    loopId: string;
+    loopType: "for" | "while" | "forOf" | "forIn" | "doWhile";
+    loopCondition?: string;
+  }>();
+
+  // Find all loop nodes and their body members
+  const loopNodes = structure.nodes.filter((n) => n.type === "loop");
+  for (const loop of loopNodes) {
+    // Find all nodes connected via loop_body edges (direct children)
+    const bodyEdges = structure.edges.filter(
+      (e) => e.type === "loop_body" && e.from === loop.id,
+    );
+    for (const edge of bodyEdges) {
+      loopMembership.set(edge.to, {
+        loopId: loop.id,
+        loopType: loop.loopType,
+        loopCondition: loop.condition,
+      });
+    }
+    // Also check for nodes that have sequence edges from loop body nodes
+    // (transitive membership within the loop)
+    const directChildren = new Set(bodyEdges.map((e) => e.to));
+    for (const childId of directChildren) {
+      // Find sequence edges from this child
+      const sequenceEdges = structure.edges.filter(
+        (e) => e.type === "sequence" && e.from === childId,
+      );
+      for (const seqEdge of sequenceEdges) {
+        // If the target isn't already mapped, add it to the loop
+        if (!loopMembership.has(seqEdge.to)) {
+          loopMembership.set(seqEdge.to, {
+            loopId: loop.id,
+            loopType: loop.loopType,
+            loopCondition: loop.condition,
+          });
+        }
+      }
+    }
+  }
+
   // Phase 1: Create task map from nodes
   const tasks: ConditionalTask[] = [];
   const nodeToTaskId = new Map<string, string>();
@@ -141,6 +184,7 @@ export function staticStructureToDag(
       includeDecisionTasks,
       structure.variableBindings,
       structure.literalBindings,
+      loopMembership.get(node.id),
     );
     if (task) {
       tasks.push(task);
@@ -248,6 +292,7 @@ export function staticStructureToDag(
  * @param includeDecisions Whether to include decision nodes as tasks
  * @param variableBindings Variable to node ID mappings for code task context injection
  * @param literalBindings Literal values from static analysis for context injection
+ * @param loopInfo Loop membership info if this node is inside a loop
  * @returns Task or null if node should not become a task
  */
 function nodeToTask(
@@ -256,8 +301,22 @@ function nodeToTask(
   includeDecisions: boolean,
   variableBindings?: Record<string, string>,
   literalBindings?: Record<string, unknown>,
+  loopInfo?: {
+    loopId: string;
+    loopType: "for" | "while" | "forOf" | "forIn" | "doWhile";
+    loopCondition?: string;
+  },
 ): ConditionalTask | null {
   const taskId = `${prefix}${node.id}`;
+
+  // Build loop metadata if this node is inside a loop (Loop Abstraction)
+  const loopMetadata = loopInfo
+    ? {
+        loopId: loopInfo.loopId,
+        loopType: loopInfo.loopType,
+        loopCondition: loopInfo.loopCondition,
+      }
+    : {};
 
   switch (node.type) {
     case "task":
@@ -287,10 +346,11 @@ function nodeToTask(
           sandboxConfig: {
             permissionSet: "minimal", // Pure operations have minimal permissions
           },
-          // Merge node metadata with pure operation check (Option B)
+          // Merge node metadata with pure operation check and loop info (Option B)
           metadata: {
             pure: isPureOperation(node.tool),
             ...nodeMetadata, // Preserve executable, nestingLevel, parentOperation
+            ...loopMetadata, // Add loopId, loopType, loopCondition if inside loop
           },
           staticArguments: node.arguments,
           // Pass variable bindings for context injection at runtime
@@ -308,6 +368,10 @@ function nodeToTask(
         dependsOn: [],
         type: "mcp_tool",
         staticArguments: node.arguments,
+        // Add loop metadata if inside a loop (Loop Abstraction)
+        ...(loopInfo && {
+          metadata: loopMetadata,
+        }),
       };
 
     case "capability":
@@ -318,6 +382,10 @@ function nodeToTask(
         dependsOn: [],
         type: "capability",
         capabilityId: node.capabilityId,
+        // Add loop metadata if inside a loop (Loop Abstraction)
+        ...(loopInfo && {
+          metadata: loopMetadata,
+        }),
       };
 
     case "decision":

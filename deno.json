@@ -19,10 +19,11 @@
   },
   "nodeModulesDir": "auto",
   "tasks": {
-    "dev": "deno run --allow-all scripts/backup-db.ts || true; deno run --watch --allow-all --env --unstable-worker-options --unstable-kv src/main.ts serve --port 3003 --config config/.mcp-servers.json",
-    "dev:api": "deno run --allow-all scripts/backup-db.ts || true; deno run --watch --allow-all --env --unstable-worker-options --unstable-broadcast-channel --unstable-kv src/main.ts serve --port 3003 --config config/.mcp-servers.json",
+    "dev": "deno run --allow-all scripts/backup-db.ts || true; deno run --watch --allow-all --env --unstable-worker-options --unstable-kv --unstable-otel src/main.ts serve --port 3003 --config config/.mcp-servers.json",
+    "dev:api": "deno run --allow-all scripts/backup-db.ts || true; deno run --watch --allow-all --env --unstable-worker-options --unstable-broadcast-channel --unstable-kv --unstable-otel src/main.ts serve --port 3003 --config config/.mcp-servers.json",
     "db:backup": "deno run --allow-all scripts/backup-db.ts",
     "db:backup:prod": "deno run --allow-all scripts/backup-db.ts .pml.db .pml.db.last",
+    "db:cleanup": "deno run --allow-all scripts/cleanup-db.ts",
     "dev:fresh": "cd src/web && deno run -A --env=../../.env --unstable-kv --node-modules-dir=auto npm:vite",
     "dev:build": "cd src/web && vite build",
     "prod:start": "sudo systemctl start casys-dashboard casys-api",
@@ -59,14 +60,14 @@
     "lint": "deno lint",
     "fmt": "deno fmt",
     "check": "deno check src/**/*.ts",
-    "cli": "deno run --allow-all --unstable-worker-options src/main.ts",
-    "mcp": "deno run --allow-all --env --unstable-worker-options --unstable-kv src/main.ts serve --config config/.mcp-servers.json",
+    "cli": "deno run --allow-all --unstable-worker-options --unstable-otel src/main.ts",
+    "mcp": "deno run --allow-all --env --unstable-worker-options --unstable-kv --unstable-otel src/main.ts serve --config config/.mcp-servers.json",
     "build": "deno compile --allow-all --output=pml src/main.ts",
     "mock:fs": "deno run --allow-all tests/mocks/filesystem-mock.ts",
     "mock:db": "deno run --allow-all tests/mocks/database-mock.ts",
     "mock:api": "deno run --allow-all tests/mocks/api-mock.ts",
     "db:restore": "rm -rf .pml-dev.db && cp -r .pml-dev.db.last .pml-dev.db && echo '✓ Database restored from .pml-dev.db.last'",
-    "db:backup:prod": "cp -r ~/.pml/.pml.db ~/.pml/.pml.db.backup && echo '✓ Production DB backed up to ~/.pml/.pml.db.backup'",
+
     "db:restore:prod": "rm -rf ~/.pml/.pml.db && cp -r ~/.pml/.pml.db.backup ~/.pml/.pml.db && echo '✓ Production DB restored'",
     "test:arch": "deno test --allow-read --allow-run tests/architecture/",
     "test:all": "deno task test && deno task test:arch"
@@ -156,7 +157,8 @@
     "hono": "jsr:@hono/hono@^4",
     "hono/": "jsr:@hono/hono@^4/",
     "diod": "npm:diod@^3.0.0",
-    "xstate": "npm:xstate@^5.19.2"
+    "xstate": "npm:xstate@^5.19.2",
+    "@opentelemetry/api": "npm:@opentelemetry/api@^1.9.0"
   },
   "compilerOptions": {
     "strict": true,

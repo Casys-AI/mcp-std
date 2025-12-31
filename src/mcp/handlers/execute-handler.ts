@@ -38,6 +38,8 @@ import {
   type Scope,
 } from "../../capabilities/capability-registry.ts";
 import type { AlgorithmTracer } from "../../telemetry/algorithm-tracer.ts";
+import { TelemetryAdapter } from "../../telemetry/decision-logger.ts";
+import { getSuggestion, type SuggestedDag } from "./suggestion-handler.ts";
 
 import { formatMCPToolError } from "../server/responses.ts";
 import { ServerDefaults } from "../server/constants.ts";
@@ -58,6 +60,7 @@ import { generateLogicalTrace } from "../../dag/trace-generator.ts";
 import { ControlledExecutor } from "../../dag/controlled-executor.ts";
 import type { CheckpointManager } from "../../dag/checkpoint-manager.ts";
 import { handleWorkflowExecution, requiresValidation } from "./workflow-execution-handler.ts";
+import { handleApprovalResponse } from "./control-commands-handler.ts";
 import type { WorkflowHandlerDependencies } from "./workflow-handler-types.ts";
 import { buildToolDefinitionsFromStaticStructure } from "./shared/tool-definitions.ts";
 
@@ -96,6 +99,20 @@ export interface ExecuteDependencies {
   algorithmTracer?: AlgorithmTracer;
   /** Callback to save SHGAT params after PER training */
   onSHGATParamsUpdated?: () => Promise<void>;
+}
+
+/**
+ * Build SuggestionDependencies from ExecuteDependencies
+ * Adapts algorithmTracer to IDecisionLogger via TelemetryAdapter
+ */
+function buildSuggestionDeps(deps: ExecuteDependencies) {
+  return {
+    drdsp: deps.drdsp,
+    capabilityStore: deps.capabilityStore,
+    graphEngine: deps.graphEngine,
+    capabilityRegistry: deps.capabilityRegistry,
+    decisionLogger: new TelemetryAdapter(),
+  };
 }
 
 /**
@@ -152,6 +169,27 @@ export interface ExecuteArgs {
     timeout?: number;
     per_layer_validation?: boolean;
   };
+  /**
+   * Resume a paused workflow (Mode Resume)
+   *
+   * Workflow ID from a previous execution that returned status="approval_required"
+   * Use with `approved` to continue or abort the workflow.
+   *
+   * @example Resume with approval
+   * ```typescript
+   * pml_execute({ intent: "continue workflow", resume: "abc-123", approved: true })
+   * ```
+   */
+  resume?: string;
+  /**
+   * Approval decision for resume mode
+   *
+   * - `true`: Continue workflow execution
+   * - `false`: Abort workflow
+   *
+   * Required when `resume` is provided.
+   */
+  approved?: boolean;
 }
 
 /**
@@ -187,21 +225,8 @@ export interface ExecuteResponse {
 
   // Mode suggestions (low confidence)
   suggestions?: {
-    suggestedDag?: { tasks: unknown[] };
+    suggestedDag?: SuggestedDag;
     confidence: number;
-    tools?: Array<{
-      id: string;
-      name: string;
-      description: string;
-      input_schema?: Record<string, unknown>;
-      score: number;
-    }>;
-    capabilities?: Array<{
-      id: string;
-      name: string;
-      description: string;
-      score: number;
-    }>;
   };
 
   // Errors
@@ -283,6 +308,36 @@ export async function handleExecute(
         "Cannot use both 'code' and 'capability' parameters. " +
           "Use 'code' for new execution or 'capability' to call existing.",
       );
+    }
+
+    // Mode Resume: Continue a paused workflow
+    if (params.resume) {
+      if (params.approved === undefined) {
+        transaction.finish();
+        return formatMCPToolError(
+          "Missing 'approved' parameter. When using 'resume', you must specify approved: true or false.",
+        );
+      }
+
+      if (!deps.workflowDeps) {
+        transaction.finish();
+        return formatMCPToolError("Resume mode requires workflowDeps configuration.");
+      }
+
+      log.info(`pml:execute: resuming workflow ${params.resume}, approved=${params.approved}`);
+      transaction.setData("mode", "resume");
+
+      // Delegate to existing approval handler
+      const result = await handleApprovalResponse(
+        {
+          workflow_id: params.resume,
+          checkpoint_id: deps.workflowDeps.activeWorkflows.get(params.resume)?.latestCheckpointId,
+          approved: params.approved,
+        },
+        deps.workflowDeps,
+      );
+      transaction.finish();
+      return result;
     }
 
     // Route to appropriate mode
@@ -516,6 +571,16 @@ async function executeDirectMode(
         // Extract tool calls from logical trace (for SHGAT learning)
         const toolsCalled = logicalTrace.executedPath;
 
+        // Loop Abstraction: Count actual tool calls from traces to determine iterations
+        // Tasks inside loops will have loopId set - we count how many times each tool was called
+        const toolCallCounts = new Map<string, number>();
+        for (const trace of executorContext.traces) {
+          if (trace.type === "tool_start" && trace.tool) {
+            const count = toolCallCounts.get(trace.tool) || 0;
+            toolCallCounts.set(trace.tool, count + 1);
+          }
+        }
+
         // Build task results for trace (using physical tasks with logical detail)
         // Phase 2a: Include fusion metadata for UI display
         const taskResults: TraceTaskResult[] = physicalResults.results.map((physicalResult) => {
@@ -536,9 +601,14 @@ async function executeDirectMode(
             });
           }
 
+          // Loop Abstraction: Get iteration count from actual tool call traces
+          const toolName = physicalTask?.tool || "unknown";
+          const loopId = physicalTask?.metadata?.loopId as string | undefined;
+          const loopIterations = loopId ? (toolCallCounts.get(toolName) || 1) : undefined;
+
           return {
             taskId: physicalResult.taskId,
-            tool: physicalTask?.tool || "unknown",
+            tool: toolName,
             args: {} as Record<string, JsonValue>,
             result: physicalResult.output as JsonValue ?? null,
             success: physicalResult.status === "success",
@@ -547,6 +617,11 @@ async function executeDirectMode(
             // Phase 2a: Fusion metadata
             isFused: fused,
             logicalOperations: logicalOps,
+            // Loop Abstraction: propagate loop info from task metadata + iteration count
+            loopId,
+            loopIteration: loopIterations, // Total iterations counted from traces
+            loopType: physicalTask?.metadata?.loopType as TraceTaskResult["loopType"],
+            loopCondition: physicalTask?.metadata?.loopCondition as string | undefined,
           };
         });
 
@@ -640,34 +715,53 @@ async function executeDirectMode(
         let autoDisplayName: string | undefined;
         if (deps.capabilityRegistry) {
           try {
-            // Infer namespace from first tool's server (e.g., "filesystem:read" -> "filesystem")
-            const firstTool = toolsCalled[0] ?? "misc";
-            const namespace = firstTool.includes(":") ? firstTool.split(":")[0] : "code";
-            // Auto-generate action from code hash
             const codeHash = capability.codeHash;
-            const action = `exec_${codeHash.substring(0, 8)}`;
-            // 4-char hash for FQDN
-            const hash = codeHash.substring(0, 4);
-            // Migration 028: displayName removed, use namespace:action instead
-            autoDisplayName = `${namespace}:${action}`;
 
-            const record = await deps.capabilityRegistry.create({
-              org: DEFAULT_SCOPE.org,
-              project: DEFAULT_SCOPE.project,
-              namespace,
-              action,
-              workflowPatternId: capability.id,
-              hash,
-              createdBy: "pml_execute",
-              toolsUsed: toolsCalled, // Story 13.9: routing inference
-            });
+            // Check if capability_records already exists for this code_hash in scope
+            // Prevents duplicates after rename (dedup by code_hash + scope)
+            const existingRecord = await deps.capabilityRegistry.getByCodeHash(
+              codeHash,
+              DEFAULT_SCOPE,
+            );
 
-            capabilityFqdn = record.id;
+            if (existingRecord) {
+              // Reuse existing capability_records (possibly renamed)
+              capabilityFqdn = existingRecord.id;
+              autoDisplayName = `${existingRecord.namespace}:${existingRecord.action}`;
+              log.info("[pml:execute] Reusing existing capability (dedup by code_hash)", {
+                name: autoDisplayName,
+                fqdn: capabilityFqdn,
+              });
+            } else {
+              // Create new capability_records
+              // Infer namespace from first tool's server (e.g., "filesystem:read" -> "filesystem")
+              const firstTool = toolsCalled[0] ?? "misc";
+              const namespace = firstTool.includes(":") ? firstTool.split(":")[0] : "code";
+              // Auto-generate action from code hash
+              const action = `exec_${codeHash.substring(0, 8)}`;
+              // 4-char hash for FQDN
+              const hash = codeHash.substring(0, 4);
+              // Migration 028: displayName removed, use namespace:action instead
+              autoDisplayName = `${namespace}:${action}`;
 
-            log.info("[pml:execute] Capability registered with auto FQDN", {
-              name: autoDisplayName,
-              fqdn: capabilityFqdn,
-            });
+              const record = await deps.capabilityRegistry.create({
+                org: DEFAULT_SCOPE.org,
+                project: DEFAULT_SCOPE.project,
+                namespace,
+                action,
+                workflowPatternId: capability.id,
+                hash,
+                createdBy: "pml_execute",
+                toolsUsed: toolsCalled, // Story 13.9: routing inference
+              });
+
+              capabilityFqdn = record.id;
+
+              log.info("[pml:execute] Capability registered with auto FQDN", {
+                name: autoDisplayName,
+                fqdn: capabilityFqdn,
+              });
+            }
           } catch (registryError) {
             // Log but don't fail - capability was still created
             log.warn("[pml:execute] Failed to register capability in registry", {
@@ -1361,7 +1455,7 @@ async function executeSuggestionMode(
 
   // Score capabilities with SHGAT v1 K-head (trained on execution traces)
   // V1 won benchmark: MRR=0.214 vs V2=0.198
-  // Note: Tools use semantic search (cosine), not K-head - see getSuggestions()
+  // Note: SHGAT K-head trained on capabilities, DR-DSP for suggested DAG
   const shgatCapabilities = deps.shgat.scoreAllCapabilities(intentEmbedding);
 
   log.debug("[pml:execute] SHGAT scored capabilities", {
@@ -1421,21 +1515,14 @@ async function executeSuggestionMode(
   }
 
   if (shgatCapabilities.length === 0) {
-    log.info("[pml:execute] No capabilities found - returning tool suggestions");
-    const suggestions = await getSuggestions(
-      deps,
-      intent,
-      { shgatCapabilities },
-      undefined,
-      correlationId,
-    );
+    log.info("[pml:execute] No capabilities found - returning suggestions");
     return {
       content: [{
         type: "text",
         text: JSON.stringify(
           {
             status: "suggestions",
-            suggestions: { ...suggestions, confidence: 0 },
+            suggestions: { confidence: 0 },
             executionTimeMs: performance.now() - startTime,
           } as ExecuteResponse,
           null,
@@ -1455,8 +1542,8 @@ async function executeSuggestionMode(
 
   if (!capability) {
     log.warn("[pml:execute] Best capability not found in store", { id: bestMatch.capabilityId });
-    // Still pass bestMatch for DR-DSP backward attempt (may have partial data)
-    const suggestions = await getSuggestions(deps, intent, { shgatCapabilities }, {
+    // Still attempt DR-DSP backward (may have partial data)
+    const suggestion = await getSuggestion(buildSuggestionDeps(deps), intent, {
       id: bestMatch.capabilityId,
       score: bestMatch.score,
     }, correlationId);
@@ -1466,7 +1553,7 @@ async function executeSuggestionMode(
         text: JSON.stringify(
           {
             status: "suggestions",
-            suggestions: { ...suggestions, confidence: bestMatch.score },
+            suggestions: suggestion,
             executionTimeMs: performance.now() - startTime,
           } as ExecuteResponse,
           null,
@@ -1538,24 +1625,23 @@ async function executeSuggestionMode(
     });
 
     // Return as suggestion instead of executing
-    const suggestions = await getSuggestions(deps, intent, { shgatCapabilities }, {
+    const suggestion = await getSuggestion(buildSuggestionDeps(deps), intent, {
       id: bestMatch.capabilityId,
       score: bestMatch.score,
     }, correlationId);
 
-    const response: ExecuteResponse = {
-      status: "suggestions",
-      suggestions: {
-        ...suggestions,
-        confidence: bestMatch.score,
-      },
-      executionTimeMs: performance.now() - startTime,
-    };
-
     return {
       content: [{
         type: "text",
-        text: JSON.stringify(response, null, 2),
+        text: JSON.stringify(
+          {
+            status: "suggestions",
+            suggestions: suggestion,
+            executionTimeMs: performance.now() - startTime,
+          } as ExecuteResponse,
+          null,
+          2,
+        ),
       }],
     };
   }
@@ -1570,25 +1656,23 @@ async function executeSuggestionMode(
     },
   });
 
-  // Pass bestMatch to getSuggestions for DR-DSP backward pathfinding
-  const suggestions = await getSuggestions(deps, intent, { shgatCapabilities }, {
+  const suggestion = await getSuggestion(buildSuggestionDeps(deps), intent, {
     id: bestMatch.capabilityId,
     score: bestMatch.score,
   }, correlationId);
 
-  const response: ExecuteResponse = {
-    status: "suggestions",
-    suggestions: {
-      ...suggestions,
-      confidence: bestMatch.score,
-    },
-    executionTimeMs: performance.now() - startTime,
-  };
-
   return {
     content: [{
       type: "text",
-      text: JSON.stringify(response, null, 2),
+      text: JSON.stringify(
+        {
+          status: "suggestions",
+          suggestions: suggestion,
+          executionTimeMs: performance.now() - startTime,
+        } as ExecuteResponse,
+        null,
+        2,
+      ),
     }],
   };
 }
@@ -1598,213 +1682,7 @@ async function executeSuggestionMode(
 // The static_structure has hardcoded arguments from the original execution.
 // See: docs/sprint-artifacts/10-7-pml-execute-api.md for Epic-12 roadmap.
 
-/**
- * Get suggestions from SHGAT + semantic search
- *
- * - Capabilities: SHGAT K-head scores (trained on execution traces)
- * - Tools: Semantic search (cosine on embeddings) - K-head not trained for tools
- * - suggestedDag: DR-DSP backward pathfinding
- */
-async function getSuggestions(
-  deps: ExecuteDependencies,
-  intent: string,
-  shgatResults: {
-    shgatCapabilities: Array<{ capabilityId: string; score: number }>;
-  },
-  bestCapability?: { id: string; score: number },
-  correlationId?: string,
-): Promise<{
-  tools?: Array<
-    {
-      id: string;
-      name: string;
-      description: string;
-      input_schema?: Record<string, unknown>;
-      score: number;
-    }
-  >;
-  capabilities?: Array<{
-    id: string;
-    name: string;
-    description: string;
-    score: number;
-    call_name?: string;
-    input_schema?: Record<string, unknown>;
-    called_capabilities?: Array<{
-      id: string;
-      call_name?: string;
-      input_schema?: Record<string, unknown>;
-    }>;
-  }>;
-  suggestedDag?: { tasks: Array<{ id: string; tool: string; dependsOn: string[] }> };
-}> {
-  // Build tool suggestions from SEMANTIC SEARCH (not K-head)
-  // K-head is trained on capabilities, not tools - cosine works better for tools
-  const tools: Array<
-    {
-      id: string;
-      name: string;
-      description: string;
-      input_schema?: Record<string, unknown>;
-      score: number;
-    }
-  > = [];
-
-  const hybridResults = await deps.graphEngine.searchToolsHybrid(
-    deps.vectorSearch,
-    intent,
-    5, // limit
-    [], // contextTools
-    false, // includeRelated
-    undefined, // minScore
-    correlationId, // Story 7.6: Pass correlationId for trace grouping
-  );
-
-  for (const result of hybridResults) {
-    const toolNode = deps.graphEngine.getToolNode(result.toolId);
-    if (toolNode) {
-      tools.push({
-        id: result.toolId,
-        name: toolNode.name,
-        description: toolNode.description,
-        input_schema: toolNode.schema?.inputSchema as Record<string, unknown> | undefined,
-        score: result.finalScore,
-      });
-    }
-  }
-
-  // Build capability suggestions from SHGAT K-head scores (trained for this)
-  const capabilities: Array<{
-    id: string;
-    name: string;
-    description: string;
-    score: number;
-    call_name?: string;
-    input_schema?: Record<string, unknown>;
-    called_capabilities?: Array<{
-      id: string;
-      call_name?: string;
-      input_schema?: Record<string, unknown>;
-    }>;
-  }> = [];
-  for (const c of shgatResults.shgatCapabilities.slice(0, 3)) {
-    const cap = await deps.capabilityStore.findById(c.capabilityId);
-    if (cap) {
-      // Get namespace:action from capability_records via registry
-      // Note: c.capabilityId is workflow_pattern.pattern_id, not capability_records.id
-      let callName: string | undefined;
-      if (deps.capabilityRegistry) {
-        const record = await deps.capabilityRegistry.getByWorkflowPatternId(c.capabilityId);
-        if (record) {
-          callName = `${record.namespace}:${record.action}`;
-        }
-      }
-
-      // Parse $cap:uuid references from code to find called capabilities
-      const calledCapabilities: Array<{
-        id: string;
-        call_name?: string;
-        input_schema?: Record<string, unknown>;
-      }> = [];
-
-      if (cap.codeSnippet && deps.capabilityRegistry) {
-        const capRefPattern = /\$cap:([a-f0-9-]{36})/g;
-        let capMatch;
-        const seenIds = new Set<string>();
-
-        while ((capMatch = capRefPattern.exec(cap.codeSnippet)) !== null) {
-          const capUuid = capMatch[1];
-          if (seenIds.has(capUuid)) continue;
-          seenIds.add(capUuid);
-
-          const innerRecord = await deps.capabilityRegistry.getByWorkflowPatternId(capUuid);
-          if (innerRecord) {
-            const innerCap = await deps.capabilityStore.findById(capUuid);
-            calledCapabilities.push({
-              id: capUuid,
-              call_name: `${innerRecord.namespace}:${innerRecord.action}`,
-              input_schema: innerCap?.parametersSchema as Record<string, unknown> | undefined,
-            });
-          }
-        }
-      }
-
-      capabilities.push({
-        id: c.capabilityId,
-        name: cap.name ?? c.capabilityId.substring(0, 8),
-        description: cap.description ?? "",
-        score: c.score,
-        call_name: callName,
-        input_schema: cap.parametersSchema as Record<string, unknown> | undefined,
-        called_capabilities: calledCapabilities.length > 0 ? calledCapabilities : undefined,
-      });
-    }
-  }
-
-  // =========================================================================
-  // DR-DSP Backward: Build suggestedDag from hyperpath (POC pattern)
-  // =========================================================================
-  let suggestedDag: { tasks: Array<{ id: string; tool: string; dependsOn: string[] }> } | undefined;
-
-  // DR-DSP backward pathfinding - ONLY if we have bestCapability from SHGAT
-  if (deps.drdsp && bestCapability) {
-    const cap = await deps.capabilityStore.findById(bestCapability.id);
-
-    if (cap && cap.toolsUsed && cap.toolsUsed.length > 1) {
-      // DR-DSP backward: find hyperpath through this capability
-      const startTool = cap.toolsUsed[0];
-      const endTool = cap.toolsUsed[cap.toolsUsed.length - 1];
-      const pathResult = deps.drdsp.findShortestHyperpath(startTool, endTool);
-
-      if (pathResult.found && pathResult.nodeSequence.length > 0) {
-        // Convert hyperpath to DAG structure
-        suggestedDag = {
-          tasks: pathResult.nodeSequence.map((tool, i) => ({
-            id: `task_${i}`,
-            tool,
-            dependsOn: i > 0 ? [`task_${i - 1}`] : [],
-          })),
-        };
-
-        log.debug("[pml:execute] DR-DSP backward built suggestedDag", {
-          capabilityId: bestCapability.id,
-          pathLength: pathResult.nodeSequence.length,
-          pathWeight: pathResult.totalWeight,
-          tools: pathResult.nodeSequence,
-        });
-
-        // Story 7.6: Trace DRDSP backward pathfinding
-        deps.algorithmTracer?.logTrace({
-          correlationId,
-          algorithmName: "DRDSP",
-          algorithmMode: "passive_suggestion",
-          targetType: "capability",
-          intent: intent.substring(0, 200),
-          signals: {
-            graphDensity: 0,
-            spectralClusterMatch: false,
-            pathFound: true,
-            pathLength: pathResult.nodeSequence.length,
-            pathWeight: pathResult.totalWeight,
-            targetId: bestCapability.id,
-          },
-          params: {
-            alpha: 0, // N/A for pathfinding
-            reliabilityFactor: 1.0,
-            structuralBoost: 0,
-          },
-          finalScore: 1.0 / (1 + pathResult.totalWeight),
-          thresholdUsed: 0,
-          decision: "accepted",
-        });
-      }
-    }
-  }
-
-  return { tools, capabilities, suggestedDag };
-}
-
-// TODO(Epic-12): buildToolDefinitionsForCapability removed with executeCapability
+// getSuggestion moved to suggestion-handler.ts (thin) + GetSuggestionUseCase
 
 // extractToolFailures removed - ControlledExecutor provides errors directly via executionResult.errors
 

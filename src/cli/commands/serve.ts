@@ -33,6 +33,7 @@ import { checkAndSyncRouting } from "../../capabilities/routing-resolver.ts";
 import { StaticStructureBuilder } from "../../capabilities/static-structure-builder.ts";
 import { AdaptiveThresholdManager } from "../../mcp/adaptive-threshold.ts";
 import { AlgorithmTracer } from "../../telemetry/algorithm-tracer.ts";
+import { initAlgorithmSubscribers, stopAlgorithmSubscribers } from "../../telemetry/mod.ts";
 import { ensureStdBundle } from "../../lib/std-loader.ts";
 import { bootstrapDI } from "../../infrastructure/di/mod.ts";
 import { GatewayBuilder } from "../../infrastructure/patterns/mod.ts";
@@ -331,7 +332,11 @@ export function createServeCommand() {
         capabilityMatcher.setAlgorithmTracer(algorithmTracer);
         dagSuggester.setAlgorithmTracer(algorithmTracer);
         graphEngine.setAlgorithmTracer(algorithmTracer);
-        log.info("✓ Algorithm tracing enabled");
+
+        // Initialize EventBus subscribers for algorithm.decision events
+        // DBSubscriber writes to Postgres, OTELSubscriber emits spans
+        initAlgorithmSubscribers(db);
+        log.info("✓ Algorithm tracing enabled (EventBus-centric)");
 
         // Phase 2.2: Bootstrap DI container with real implementations
         // Container available for future DI-aware components
@@ -454,6 +459,7 @@ export function createServeCommand() {
           // Attempt graceful shutdown
           Promise.all([
             gateway.stop(),
+            stopAlgorithmSubscribers(),
             db.close(),
           ])
             .then(() => {

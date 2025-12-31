@@ -11,26 +11,37 @@
  */
 
 /**
+ * Array method names tracked as operations (source of truth)
+ *
+ * Used by:
+ * - static-structure/ast-handlers.ts: detecting array method calls in AST
+ * - PURE_OPERATIONS below: with "code:" prefix for tool IDs
+ */
+export const ARRAY_METHOD_NAMES = [
+  "filter",
+  "map",
+  "reduce",
+  "flatMap",
+  "find",
+  "findIndex",
+  "some",
+  "every",
+  "sort",
+  "reverse",
+  "slice",
+  "concat",
+  "join",
+  "includes",
+  "indexOf",
+  "lastIndexOf",
+] as const;
+
+/**
  * List of all pure operations that can bypass HIL validation
  */
 export const PURE_OPERATIONS = [
-  // Array operations
-  "code:filter",
-  "code:map",
-  "code:reduce",
-  "code:flatMap",
-  "code:find",
-  "code:findIndex",
-  "code:some",
-  "code:every",
-  "code:sort",
-  "code:reverse",
-  "code:slice",
-  "code:concat",
-  "code:join",
-  "code:includes",
-  "code:indexOf",
-  "code:lastIndexOf",
+  // Array operations (derived from ARRAY_METHOD_NAMES)
+  ...ARRAY_METHOD_NAMES.map((name) => `code:${name}` as const),
 
   // String operations
   "code:split",
@@ -127,6 +138,16 @@ export function getOperationName(toolId: string): string | undefined {
     return undefined;
   }
   return toolId.replace("code:", "");
+}
+
+/**
+ * Check if a method name is an array operation
+ *
+ * @param methodName Method name (e.g., "filter", "map")
+ * @returns true if this is a tracked array operation
+ */
+export function isArrayMethod(methodName: string): boolean {
+  return ARRAY_METHOD_NAMES.includes(methodName as typeof ARRAY_METHOD_NAMES[number]);
 }
 
 /**

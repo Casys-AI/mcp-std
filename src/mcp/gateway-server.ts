@@ -43,6 +43,7 @@ import { CheckpointManager } from "../dag/checkpoint-manager.ts";
 import { EventsStreamManager } from "../server/events-stream.ts";
 import { PmlStdServer } from "../../lib/std/cap.ts";
 import type { AlgorithmTracer } from "../telemetry/algorithm-tracer.ts";
+import { TelemetryAdapter } from "../telemetry/decision-logger.ts";
 import { buildHyperedgesFromSHGAT, cacheHyperedges, getCachedHyperedges, invalidateHyperedge, updateHyperedge } from "../cache/hyperedge-cache.ts";
 import { eventBus } from "../events/mod.ts";
 import {
@@ -742,6 +743,7 @@ export class PMLGatewayServer {
         this.graphEngine,
         this.dagSuggester,
         this.capabilityRegistry ?? undefined,
+        new TelemetryAdapter(),
       );
     }
 

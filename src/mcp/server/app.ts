@@ -19,14 +19,14 @@ import { getRateLimitKey } from "../../lib/rate-limiter-helpers.ts";
 import type { EventsStreamManager } from "../../server/events-stream.ts";
 import { isPublicRoute, buildCorsHeaders } from "../routing/middleware.ts";
 
-// Import existing handlers
+// Import REST API route handlers
 import {
   handleCapabilitiesRoutes,
   handleEmergenceRoutes,
   handleGraphRoutes,
   handleMetricsRoutes,
   handleToolsRoutes,
-} from "../routing/handlers/mod.ts";
+} from "../../api/mod.ts";
 
 // Types for Hono context
 interface AppEnv {

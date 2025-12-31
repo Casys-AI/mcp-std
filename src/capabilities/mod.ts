@@ -33,6 +33,9 @@ export {
   syncCapabilityRouting,
 } from "./routing-resolver.ts";
 export { CapabilityCodeGenerator } from "./code-generator.ts";
+// Story 7.2c: Variable name normalization for semantic deduplication
+export { normalizeVariableNames } from "./code-transformer.ts";
+export type { NormalizeVariablesResult } from "./code-transformer.ts";
 export { CapabilityExecutor } from "./executor.ts";
 export { CapabilityDataService } from "./data-service.ts";
 export { HypergraphBuilder } from "./hypergraph-builder.ts";
@@ -53,7 +56,7 @@ export {
 export type { EscalationResult, HILApprovalCallback } from "./permission-escalation-handler.ts";
 // Note: hashCodeSync is intentionally not exported - it uses djb2 (32-bit)
 // which has higher collision probability. Use hashCode (SHA-256) for production.
-export { hashCode, normalizeCode } from "./hash.ts";
+export { hashCode, hashSemanticStructure, normalizeCode } from "./hash.ts";
 // Story 11.2: Default priority constant for cold start traces
 export { DEFAULT_TRACE_PRIORITY } from "./types.ts";
 export type {

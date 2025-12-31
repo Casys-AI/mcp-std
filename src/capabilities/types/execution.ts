@@ -77,6 +77,28 @@ export interface TraceTaskResult {
    * fused together for execution optimization.
    */
   logicalOperations?: LogicalOperation[];
+
+  /**
+   * Loop Abstraction: ID of the parent loop if this task is inside a loop
+   * References the loop node ID from static structure (e.g., "l1")
+   */
+  loopId?: string;
+
+  /**
+   * Loop Abstraction: Loop iteration number (1-indexed)
+   * Only present for tasks inside loops during multi-iteration execution
+   */
+  loopIteration?: number;
+
+  /**
+   * Loop Abstraction: Type of loop containing this task
+   */
+  loopType?: "for" | "while" | "forOf" | "forIn" | "doWhile";
+
+  /**
+   * Loop Abstraction: Loop condition expression (for display)
+   */
+  loopCondition?: string;
 }
 
 /**

@@ -42,34 +42,50 @@ export type {
 } from "./workflows/mod.ts";
 
 // Capability Use Cases
-export { SearchCapabilitiesUseCase } from "./capabilities/mod.ts";
+export { SearchCapabilitiesUseCase, GetSuggestionUseCase } from "./capabilities/mod.ts";
 export type {
-  CapabilityRecord,
+  CapabilityMatch,
   CapabilitySummary,
   ExecuteCapabilityRequest,
   ExecuteCapabilityResult,
-  ICapabilityRepository,
-  IVectorSearch,
+  GetSuggestionRequest,
+  GetSuggestionResult,
+  ICapabilityRegistry,
+  ICapabilityStore,
+  IDecisionLogger,
+  IDRDSP,
+  IGraphEngine,
   LearnCapabilityRequest,
   LearnCapabilityResult,
   SearchCapabilitiesRequest,
   SearchCapabilitiesResult,
-  VectorSearchResult,
+  SuggestedDag,
+  SuggestedTask,
 } from "./capabilities/mod.ts";
 
 // Code Execution Use Cases
 export { ExecuteCodeUseCase } from "./code/mod.ts";
 export type {
+  CapabilityDetails,
+  CapabilityMatchResult,
+  CodeSyntaxError,
+  ExecuteCodeDependencies,
   ExecuteCodeRequest,
   ExecuteCodeResult,
-  IContextBuilder,
+  ExecutionData,
+  HybridToolResult,
+  ICapabilityFeedback,
+  ICapabilityMatcher,
+  IGraphUpdater,
   ISandboxExecutor,
+  IToolDiscovery,
+  MatchedCapability,
   SandboxConfig,
-  SandboxExecuteOptions,
-  SandboxExecuteResult,
+  SandboxExecutionResult,
   SecurityIssue,
-  SyntaxError,
   ToolDefinition,
+  ToolFailure,
   ValidateCodeRequest,
   ValidateCodeResult,
+  WorkerExecutionConfig,
 } from "./code/mod.ts";

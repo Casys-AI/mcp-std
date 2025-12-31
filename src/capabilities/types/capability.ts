@@ -286,6 +286,22 @@ export interface CapabilityResponseInternal {
   lastUsed: string; // ISO timestamp
   source: "emergent" | "manual"; // Learning source
   hierarchyLevel: number; // 0=leaf, 1+=contains capabilities (Story 10.1)
+  /** Static structure for DAG visualization (loop abstraction) */
+  staticStructure?: {
+    nodes: Array<{
+      id: string;
+      type: "task" | "decision" | "capability" | "fork" | "join" | "loop";
+      tool?: string;
+      condition?: string;
+      loopType?: "for" | "while" | "forOf" | "forIn" | "doWhile";
+      capabilityId?: string;
+    }>;
+    edges: Array<{
+      from: string;
+      to: string;
+      type: "sequence" | "provides" | "conditional" | "contains" | "loop_body";
+    }>;
+  };
 }
 
 /**

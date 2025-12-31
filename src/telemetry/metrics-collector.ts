@@ -49,6 +49,14 @@ export interface MetricsSnapshot {
     graph_edges_created: number;
     graph_edges_updated: number;
     graph_syncs_total: number;
+    // Algorithm decision counters
+    algo_scored_total: number;
+    algo_accepted_total: number;
+    algo_rejected_total: number;
+    algo_filtered_total: number;
+    algo_feedback_selected: number;
+    algo_feedback_ignored: number;
+    algo_feedback_rejected: number;
   };
 
   // Histograms
@@ -56,6 +64,7 @@ export interface MetricsSnapshot {
     tool_call_duration_ms: LatencyHistogram;
     dag_task_duration_ms: LatencyHistogram;
     dag_execution_duration_ms: LatencyHistogram;
+    algo_score_distribution: LatencyHistogram;
   };
 
   // Gauges (point-in-time values)
@@ -63,6 +72,15 @@ export interface MetricsSnapshot {
     active_dag_executions: number;
     connected_sse_clients: number;
   };
+
+  // Algorithm metrics by algorithm name
+  algoByName: Record<string, {
+    scored: number;
+    accepted: number;
+    rejected: number;
+    avgScore: number;
+    scoreSum: number;
+  }>;
 
   // Metadata
   collected_at: number;
@@ -132,10 +150,29 @@ export class MetricsCollector {
   private graphEdgesUpdated = 0;
   private graphSyncsTotal = 0;
 
+  // Algorithm decision counters
+  private algoScoredTotal = 0;
+  private algoAcceptedTotal = 0;
+  private algoRejectedTotal = 0;
+  private algoFilteredTotal = 0;
+  private algoFeedbackSelected = 0;
+  private algoFeedbackIgnored = 0;
+  private algoFeedbackRejected = 0;
+
+  // Algorithm metrics by name
+  private algoByName: Record<string, {
+    scored: number;
+    accepted: number;
+    rejected: number;
+    scoreSum: number;
+  }> = {};
+
   // Histograms
   private toolCallDuration = createHistogram();
   private dagTaskDuration = createHistogram();
   private dagExecutionDuration = createHistogram();
+  // Score distribution: buckets from 0 to 1 in 0.1 increments (stored as 0-100)
+  private algoScoreDistribution = createHistogram([10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
 
   // Gauges
   private activeDagExecutions = 0;
@@ -233,6 +270,50 @@ export class MetricsCollector {
         this.graphSyncsTotal++;
         break;
 
+      // Algorithm events
+      case "algorithm.scored": {
+        this.algoScoredTotal++;
+        const algoName = String(payload.algorithm || "unknown");
+        const score = typeof payload.finalScore === "number" ? payload.finalScore : 0;
+        const decision = String(payload.decision || "");
+
+        // Track by algorithm name
+        if (!this.algoByName[algoName]) {
+          this.algoByName[algoName] = { scored: 0, accepted: 0, rejected: 0, scoreSum: 0 };
+        }
+        this.algoByName[algoName].scored++;
+        this.algoByName[algoName].scoreSum += score;
+
+        // Track decisions
+        if (decision === "accepted") {
+          this.algoAcceptedTotal++;
+          this.algoByName[algoName].accepted++;
+        } else if (decision === "rejected" || decision === "rejected_by_threshold") {
+          this.algoRejectedTotal++;
+          this.algoByName[algoName].rejected++;
+        }
+
+        // Score histogram (0-1 scaled to 0-100)
+        observeHistogram(this.algoScoreDistribution, score * 100);
+        break;
+      }
+
+      case "algorithm.filtered":
+        this.algoFilteredTotal++;
+        break;
+
+      case "algorithm.feedback.selected":
+        this.algoFeedbackSelected++;
+        break;
+
+      case "algorithm.feedback.ignored":
+        this.algoFeedbackIgnored++;
+        break;
+
+      case "algorithm.feedback.rejected":
+        this.algoFeedbackRejected++;
+        break;
+
       // System events
       case "heartbeat":
         if (typeof payload.connectedClients === "number") {
@@ -250,6 +331,15 @@ export class MetricsCollector {
    * Get current metrics snapshot
    */
   getMetrics(): MetricsSnapshot {
+    // Build algoByName with avgScore calculated
+    const algoByNameWithAvg: MetricsSnapshot["algoByName"] = {};
+    for (const [name, stats] of Object.entries(this.algoByName)) {
+      algoByNameWithAvg[name] = {
+        ...stats,
+        avgScore: stats.scored > 0 ? stats.scoreSum / stats.scored : 0,
+      };
+    }
+
     return {
       counters: {
         tool_calls_total: this.toolCallsTotal,
@@ -264,16 +354,26 @@ export class MetricsCollector {
         graph_edges_created: this.graphEdgesCreated,
         graph_edges_updated: this.graphEdgesUpdated,
         graph_syncs_total: this.graphSyncsTotal,
+        // Algorithm counters
+        algo_scored_total: this.algoScoredTotal,
+        algo_accepted_total: this.algoAcceptedTotal,
+        algo_rejected_total: this.algoRejectedTotal,
+        algo_filtered_total: this.algoFilteredTotal,
+        algo_feedback_selected: this.algoFeedbackSelected,
+        algo_feedback_ignored: this.algoFeedbackIgnored,
+        algo_feedback_rejected: this.algoFeedbackRejected,
       },
       histograms: {
         tool_call_duration_ms: { ...this.toolCallDuration },
         dag_task_duration_ms: { ...this.dagTaskDuration },
         dag_execution_duration_ms: { ...this.dagExecutionDuration },
+        algo_score_distribution: { ...this.algoScoreDistribution },
       },
       gauges: {
         active_dag_executions: this.activeDagExecutions,
         connected_sse_clients: this.connectedSseClients,
       },
+      algoByName: algoByNameWithAvg,
       collected_at: Date.now(),
       uptime_seconds: Math.floor((Date.now() - this.startTime) / 1000),
     };
@@ -296,9 +396,20 @@ export class MetricsCollector {
     this.graphEdgesUpdated = 0;
     this.graphSyncsTotal = 0;
 
+    // Reset algorithm counters
+    this.algoScoredTotal = 0;
+    this.algoAcceptedTotal = 0;
+    this.algoRejectedTotal = 0;
+    this.algoFilteredTotal = 0;
+    this.algoFeedbackSelected = 0;
+    this.algoFeedbackIgnored = 0;
+    this.algoFeedbackRejected = 0;
+    this.algoByName = {};
+
     this.toolCallDuration = createHistogram();
     this.dagTaskDuration = createHistogram();
     this.dagExecutionDuration = createHistogram();
+    this.algoScoreDistribution = createHistogram([10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
 
     this.activeDagExecutions = 0;
     this.connectedSseClients = 0;
@@ -355,6 +466,55 @@ export class MetricsCollector {
     lines.push("# HELP pml_connected_sse_clients Connected SSE clients");
     lines.push("# TYPE pml_connected_sse_clients gauge");
     lines.push(`pml_connected_sse_clients ${metrics.gauges.connected_sse_clients}`);
+
+    // Algorithm decision counters
+    lines.push("# HELP pml_algo_scored_total Total algorithm scoring events");
+    lines.push("# TYPE pml_algo_scored_total counter");
+    lines.push(`pml_algo_scored_total ${metrics.counters.algo_scored_total}`);
+
+    lines.push("# HELP pml_algo_decisions_total Algorithm decisions by outcome");
+    lines.push("# TYPE pml_algo_decisions_total counter");
+    lines.push(`pml_algo_decisions_total{decision="accepted"} ${metrics.counters.algo_accepted_total}`);
+    lines.push(`pml_algo_decisions_total{decision="rejected"} ${metrics.counters.algo_rejected_total}`);
+    lines.push(`pml_algo_decisions_total{decision="filtered"} ${metrics.counters.algo_filtered_total}`);
+
+    lines.push("# HELP pml_algo_feedback_total User feedback on algorithm suggestions");
+    lines.push("# TYPE pml_algo_feedback_total counter");
+    lines.push(`pml_algo_feedback_total{action="selected"} ${metrics.counters.algo_feedback_selected}`);
+    lines.push(`pml_algo_feedback_total{action="ignored"} ${metrics.counters.algo_feedback_ignored}`);
+    lines.push(`pml_algo_feedback_total{action="rejected"} ${metrics.counters.algo_feedback_rejected}`);
+
+    // Algorithm metrics by name
+    lines.push("# HELP pml_algo_by_name_scored Algorithm scoring events by algorithm name");
+    lines.push("# TYPE pml_algo_by_name_scored counter");
+    lines.push("# HELP pml_algo_by_name_accepted Accepted decisions by algorithm name");
+    lines.push("# TYPE pml_algo_by_name_accepted counter");
+    lines.push("# HELP pml_algo_by_name_avg_score Average score by algorithm name");
+    lines.push("# TYPE pml_algo_by_name_avg_score gauge");
+    for (const [name, stats] of Object.entries(metrics.algoByName)) {
+      lines.push(`pml_algo_by_name_scored{algorithm="${name}"} ${stats.scored}`);
+      lines.push(`pml_algo_by_name_accepted{algorithm="${name}"} ${stats.accepted}`);
+      lines.push(`pml_algo_by_name_avg_score{algorithm="${name}"} ${stats.avgScore.toFixed(4)}`);
+    }
+
+    // Algorithm score distribution histogram
+    lines.push("# HELP pml_algo_score_distribution Algorithm score distribution (0-1 scaled to 0-100)");
+    lines.push("# TYPE pml_algo_score_distribution histogram");
+    for (const bucket of metrics.histograms.algo_score_distribution.buckets) {
+      const label = (bucket.le / 100).toFixed(1);
+      lines.push(`pml_algo_score_distribution_bucket{le="${label}"} ${bucket.count}`);
+    }
+    lines.push(`pml_algo_score_distribution_bucket{le="+Inf"} ${metrics.histograms.algo_score_distribution.count}`);
+    lines.push(`pml_algo_score_distribution_sum ${metrics.histograms.algo_score_distribution.sum / 100}`);
+    lines.push(`pml_algo_score_distribution_count ${metrics.histograms.algo_score_distribution.count}`);
+
+    // Conversion rate gauge
+    const conversionRate = metrics.counters.algo_scored_total > 0
+      ? metrics.counters.algo_accepted_total / metrics.counters.algo_scored_total
+      : 0;
+    lines.push("# HELP pml_algo_conversion_rate Algorithm decision conversion rate");
+    lines.push("# TYPE pml_algo_conversion_rate gauge");
+    lines.push(`pml_algo_conversion_rate ${conversionRate.toFixed(4)}`);
 
     return lines.join("\n");
   }

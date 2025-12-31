@@ -84,6 +84,7 @@ export class StaticStructureBuilder {
     capability: 0,
     fork: 0,
     join: 0,
+    loop: 0,
   };
 
   /**
@@ -331,6 +332,7 @@ export class StaticStructureBuilder {
       capability: 0,
       fork: 0,
       join: 0,
+      loop: 0,
     };
     this.variableToNodeId.clear();
     this.literalBindings.clear();
@@ -348,6 +350,7 @@ export class StaticStructureBuilder {
       capability: "c",
       fork: "f",
       join: "j",
+      loop: "l",
     };
     return `${prefixes[type]}${this.nodeCounters[type]}`;
   }
@@ -563,6 +566,15 @@ export class StaticStructureBuilder {
           const inputNode = nodes.find((node) => node.id === chainedInputNodeId);
           if (inputNode && inputNode.metadata) {
             (inputNode.metadata as NodeMetadata).executable = false;
+            // Also update code to method-only (not full chain)
+            // Type guard: only task nodes have code and tool properties
+            if (inputNode.type === "task" && inputNode.code && inputNode.tool) {
+              const inputMethodName = inputNode.tool.replace("code:", "");
+              const methodStart = inputNode.code.indexOf(inputMethodName + "(");
+              if (methodStart > 0) {
+                inputNode.code = inputNode.code.substring(methodStart);
+              }
+            }
           }
         }
 
@@ -643,6 +655,15 @@ export class StaticStructureBuilder {
           const inputNode = nodes.find((node) => node.id === chainedInputNodeId);
           if (inputNode && inputNode.metadata) {
             (inputNode.metadata as NodeMetadata).executable = false;
+            // Also update code to method-only (not full chain)
+            // Type guard: only task nodes have code and tool properties
+            if (inputNode.type === "task" && inputNode.code && inputNode.tool) {
+              const inputMethodName = inputNode.tool.replace("code:", "");
+              const methodStart = inputNode.code.indexOf(inputMethodName + "(");
+              if (methodStart > 0) {
+                inputNode.code = inputNode.code.substring(methodStart);
+              }
+            }
           }
         }
 
@@ -1304,9 +1325,25 @@ export class StaticStructureBuilder {
       return { type: "reference", expression: name };
     }
 
-    // === Template Literal (treat as literal with placeholder) ===
+    // === Template Literal ===
     if (node.type === "TemplateLiteral") {
-      // For template literals, we extract a simplified representation
+      const expressions = node.expressions as Array<unknown> | undefined;
+      const quasis = node.quasis as Array<Record<string, unknown>> | undefined;
+
+      // Simple template literal (no interpolation) → treat as literal
+      // e.g., `SELECT * FROM users` → { type: "literal", value: "SELECT * FROM users" }
+      if (!expressions || expressions.length === 0) {
+        // Extract the raw text content from quasis
+        const textContent = quasis
+          ?.map((q) => (q.cooked as string) ?? "")
+          .join("") ?? "";
+        if (textContent.length > 0) {
+          return { type: "literal", value: textContent };
+        }
+      }
+
+      // Template with interpolation → treat as reference (dynamic value)
+      // e.g., `SELECT * FROM ${table}` → { type: "reference", expression: "..." }
       const expression = this.extractTemplateLiteralText(node);
       return { type: "reference", expression };
     }

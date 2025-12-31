@@ -754,8 +754,10 @@ Deno.test({
       assertEquals(response.status, "suggestions");
       assertExists(response.suggestions);
       assert(typeof response.suggestions.confidence === "number");
-      assertExists(response.suggestions.tools);
-      assert(Array.isArray(response.suggestions.tools));
+      // suggestedDag is optional (only present if DR-DSP finds a path)
+      if (response.suggestions.suggestedDag) {
+        assert(Array.isArray(response.suggestions.suggestedDag.tasks));
+      }
       assertExists(response.executionTimeMs);
       assert(typeof response.executionTimeMs === "number");
 

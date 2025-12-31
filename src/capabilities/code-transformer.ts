@@ -20,6 +20,7 @@
 import { parse } from "https://deno.land/x/swc@0.2.1/mod.ts";
 import type { CapabilityRegistry, Scope } from "./capability-registry.ts";
 import { analyzeCode, WRAPPER_OFFSET } from "./swc-analyzer.ts";
+import { extractNestedLiterals } from "./nested-literal-extractor.ts";
 import type { JSONSchema } from "./types.ts";
 import type { JsonValue } from "./types.ts";
 import { getLogger } from "../telemetry/logger.ts";
@@ -222,6 +223,53 @@ interface InlineLiteralPosition {
 }
 
 /**
+ * Position of a template literal containing code with nested literals
+ * e.g., { code: `page.goto('http://localhost')` }
+ * The nested literals inside will be extracted and parameterized
+ */
+interface CodeTemplateLiteralPosition {
+  /** Property name (e.g., "code") */
+  propertyName: string;
+  /** The full template content */
+  templateContent: string;
+  /** Start position of the template content (after opening backtick) */
+  contentStart: number;
+  /** End position of the template content (before closing backtick) */
+  contentEnd: number;
+  /** Start position of the full template (including backtick) */
+  start: number;
+  /** End position of the full template (including backtick) */
+  end: number;
+}
+
+/**
+ * Check if a string looks like it contains code (heuristic)
+ */
+function looksLikeCode(content: string): boolean {
+  // Must be substantial (more than simple value)
+  if (content.length < 20) return false;
+
+  // Look for code patterns
+  const codePatterns = [
+    /\bawait\b/, // async/await
+    /\bfunction\b/, // function keyword
+    /\b=>\b/, // arrow functions
+    /\bpage\.\w+/, // Playwright page methods
+    /\bdocument\.\w+/, // DOM access
+    /\bwindow\.\w+/, // window access
+    /\bconsole\.\w+/, // console methods
+    /\breturn\b/, // return statement
+    /\bconst\b|\blet\b|\bvar\b/, // variable declarations
+    /\bif\s*\(/, // if statements
+    /\bfor\s*\(/, // for loops
+    /\bwhile\s*\(/, // while loops
+    /\.\w+\s*\(/, // method calls
+  ];
+
+  return codePatterns.some((pattern) => pattern.test(content));
+}
+
+/**
  * Transform literal bindings to args.xxx references
  *
  * Makes capabilities shareable in cloud mode by:
@@ -308,7 +356,7 @@ export async function transformLiteralsToArgs(
     }
   }
 
-  if (identifierPositions.length === 0 && inlineLiteralPositions.length === 0) {
+  if (identifierPositions.length === 0 && inlineLiteralPositions.length === 0 && mcpCallLiterals.codeTemplates.length === 0) {
     return {
       code,
       replacedCount: 0,
@@ -383,6 +431,46 @@ export async function transformLiteralsToArgs(
     const after = transformedCode.substring(end);
     transformedCode = before + `args.${pos.propertyName}` + after;
     replacedCount++;
+  }
+
+  // Story 10.2f: Process code template literals (extract nested literals)
+  // Sort by position descending to replace from end to start
+  const sortedCodeTemplates = [...mcpCallLiterals.codeTemplates].sort((a, b) => b.start - a.start);
+  for (const template of sortedCodeTemplates) {
+    const contentStart = template.contentStart - baseOffset;
+    const contentEnd = template.contentEnd - baseOffset;
+
+    // Skip if positions are invalid
+    if (contentStart < 0 || contentEnd > transformedCode.length) continue;
+
+    // Extract nested literals from the template content
+    const nestedResult = await extractNestedLiterals(template.templateContent);
+
+    if (nestedResult.count > 0) {
+      // Replace the template content with the transformed version (with interpolations)
+      const before = transformedCode.substring(0, contentStart);
+      const after = transformedCode.substring(contentEnd);
+      transformedCode = before + nestedResult.transformedCode + after;
+      replacedCount += nestedResult.count;
+
+      // Add extracted literals to our collection (with prefix to avoid conflicts)
+      for (const [name, value] of Object.entries(nestedResult.extractedLiterals)) {
+        // Use property-prefixed name if there might be conflicts
+        const paramName = `${template.propertyName}_${name}`;
+        if (!(paramName in extractedLiterals) && !(name in extractedLiterals)) {
+          // Prefer short name if no conflict
+          extractedLiterals[name] = value;
+        } else {
+          extractedLiterals[paramName] = value;
+        }
+      }
+
+      logger.debug("Extracted nested literals from code template", {
+        propertyName: template.propertyName,
+        nestedCount: nestedResult.count,
+        params: Object.keys(nestedResult.extractedLiterals),
+      });
+    }
   }
 
   // Clean up: remove empty lines and extra whitespace
@@ -478,7 +566,11 @@ function findLiteralDeclarations(
 }
 
 /**
- * Pass 2: Find all usages of literal names (excluding declarations and args.xxx)
+ * Pass 2: Find all usages of literal names (excluding declarations, args.xxx, and shadowed variables)
+ *
+ * Handles variable shadowing correctly:
+ * - If a loop variable (for...of, for...in) shadows a literal name, usages inside the loop are excluded
+ * - If a function parameter shadows a literal name, usages inside the function are excluded
  */
 function findAllUsages(
   // deno-lint-ignore no-explicit-any
@@ -486,6 +578,7 @@ function findAllUsages(
   literalNames: Set<string>,
   declarationSpans: Set<string>,
   results: IdentifierPosition[] = [],
+  shadowedNames: Set<string> = new Set(),
 ): IdentifierPosition[] {
   if (!node || typeof node !== "object") return results;
 
@@ -497,10 +590,24 @@ function findAllUsages(
     }
   }
 
+  // Check for scope-creating nodes that might shadow variables
+  // ForOfStatement: for (const x of items) - x shadows any outer x
+  // ForInStatement: for (const x in obj) - x shadows any outer x
+  // ForStatement: for (let i = 0; ...) - i shadows any outer i
+  // ArrowFunctionExpression: (x) => ... - x shadows any outer x
+  // FunctionExpression/FunctionDeclaration: function(x) {...} - x shadows any outer x
+  const newShadowedNames = detectShadowedVariables(node, literalNames);
+  const effectiveShadowed = newShadowedNames.size > 0
+    ? new Set([...shadowedNames, ...newShadowedNames])
+    : shadowedNames;
+
   // Check for identifier usage
   if (node.type === "Identifier") {
     const name = node.value;
-    if (literalNames.has(name)) {
+    // Only process if:
+    // 1. Name is in literalNames (we want to parameterize it)
+    // 2. Name is NOT shadowed in current scope (it's a different variable)
+    if (literalNames.has(name) && !effectiveShadowed.has(name)) {
       const start = node.span?.start ?? 0;
       const end = node.span?.end ?? 0;
       const spanKey = `${start}-${end}`;
@@ -530,14 +637,109 @@ function findAllUsages(
     const value = node[key];
     if (Array.isArray(value)) {
       for (const item of value) {
-        findAllUsages(item, literalNames, declarationSpans, results);
+        findAllUsages(item, literalNames, declarationSpans, results, effectiveShadowed);
       }
     } else if (value && typeof value === "object") {
-      findAllUsages(value, literalNames, declarationSpans, results);
+      findAllUsages(value, literalNames, declarationSpans, results, effectiveShadowed);
     }
   }
 
   return results;
+}
+
+/**
+ * Detect variables that are shadowed by this node's declarations
+ *
+ * Returns the set of variable names that are declared in this scope and
+ * shadow names from literalNames.
+ */
+function detectShadowedVariables(
+  // deno-lint-ignore no-explicit-any
+  node: any,
+  literalNames: Set<string>,
+): Set<string> {
+  const shadowed = new Set<string>();
+
+  // ForOfStatement: for (const x of items)
+  if (node.type === "ForOfStatement" || node.type === "ForInStatement") {
+    const left = node.left;
+    if (left?.type === "VariableDeclaration") {
+      const declarations = left.declarations as Array<Record<string, unknown>> | undefined;
+      if (declarations) {
+        for (const decl of declarations) {
+          const id = decl.id as Record<string, unknown> | undefined;
+          if (id?.type === "Identifier") {
+            const name = id.value as string;
+            if (literalNames.has(name)) {
+              shadowed.add(name);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // ForStatement: for (let i = 0; ...)
+  if (node.type === "ForStatement") {
+    const init = node.init;
+    if (init?.type === "VariableDeclaration") {
+      const declarations = init.declarations as Array<Record<string, unknown>> | undefined;
+      if (declarations) {
+        for (const decl of declarations) {
+          const id = decl.id as Record<string, unknown> | undefined;
+          if (id?.type === "Identifier") {
+            const name = id.value as string;
+            if (literalNames.has(name)) {
+              shadowed.add(name);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // ArrowFunctionExpression: (x) => ...
+  // FunctionExpression/FunctionDeclaration: function(x) {...}
+  if (
+    node.type === "ArrowFunctionExpression" ||
+    node.type === "FunctionExpression" ||
+    node.type === "FunctionDeclaration"
+  ) {
+    const params = node.params as Array<Record<string, unknown>> | undefined;
+    if (params) {
+      for (const param of params) {
+        // Handle both simple identifiers and patterns
+        const paramNode = param as Record<string, unknown>;
+        if (paramNode.type === "Identifier") {
+          const name = paramNode.value as string;
+          if (literalNames.has(name)) {
+            shadowed.add(name);
+          }
+        } else if (paramNode.pat) {
+          const pat = paramNode.pat as Record<string, unknown>;
+          if (pat.type === "Identifier") {
+            const name = pat.value as string;
+            if (literalNames.has(name)) {
+              shadowed.add(name);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // CatchClause: catch (e) {...}
+  if (node.type === "CatchClause") {
+    const param = node.param;
+    if (param?.type === "Identifier") {
+      const name = param.value as string;
+      if (literalNames.has(name)) {
+        shadowed.add(name);
+      }
+    }
+  }
+
+  return shadowed;
 }
 
 /**
@@ -627,6 +829,8 @@ function findInlineLiteralPositions(
 interface McpCallLiteralsResult {
   positions: InlineLiteralPosition[];
   discoveredLiterals: Record<string, JsonValue>;
+  /** Template literals containing code - need special handling for nested literals */
+  codeTemplates: CodeTemplateLiteralPosition[];
 }
 
 /**
@@ -650,7 +854,7 @@ interface McpCallLiteralsResult {
 function findMcpCallInlineLiterals(
   // deno-lint-ignore no-explicit-any
   node: any,
-  results: McpCallLiteralsResult = { positions: [], discoveredLiterals: {} },
+  results: McpCallLiteralsResult = { positions: [], discoveredLiterals: {}, codeTemplates: [] },
   processedSpans: Set<string> = new Set(),
   inMcpCallArg: boolean = false,
 ): McpCallLiteralsResult {
@@ -694,16 +898,44 @@ function findMcpCallInlineLiterals(
       } else if (valueNode.type === "BooleanLiteral") {
         literalValue = valueNode.value as boolean;
       } else if (valueNode.type === "TemplateLiteral") {
-        // Handle template literals like `SELECT * FROM users`
+        // Handle template literals like `SELECT * FROM users` or `async (page) => {...}`
         const quasis = valueNode.quasis as Array<Record<string, unknown>> | undefined;
-        if (quasis && quasis.length > 0) {
-          // For simple templates (no interpolation), get the raw content
-          // Note: cooked is directly a string, not { value: string }
+        const expressions = valueNode.expressions as Array<unknown> | undefined;
+
+        // Only handle simple templates (no interpolation)
+        if (quasis && quasis.length > 0 && (!expressions || expressions.length === 0)) {
           const templateContent = quasis
             .map((q) => (q.cooked as string) ?? "")
             .join("");
+
           if (templateContent.length > 0) {
-            literalValue = templateContent;
+            const start = valueNode.span?.start ?? 0;
+            const end = valueNode.span?.end ?? 0;
+            const spanKey = `${start}-${end}`;
+
+            // Check if this looks like code (needs nested literal extraction)
+            if (looksLikeCode(templateContent)) {
+              // Add to codeTemplates for special handling
+              if (!processedSpans.has(spanKey)) {
+                processedSpans.add(spanKey);
+                results.codeTemplates.push({
+                  propertyName: keyName,
+                  templateContent,
+                  contentStart: start + 1, // After opening backtick
+                  contentEnd: end - 1, // Before closing backtick
+                  start,
+                  end,
+                });
+                logger.debug("Found code template literal", {
+                  propertyName: keyName,
+                  contentLength: templateContent.length,
+                });
+              }
+              // Don't add to literalValue - will be handled separately
+            } else {
+              // Simple template (SQL, etc.) - treat as regular literal
+              literalValue = templateContent;
+            }
           }
         }
       } else if (valueNode.type === "ArrayExpression") {
@@ -862,4 +1094,75 @@ function generateSchemaFromLiterals(
     properties,
     required: Object.keys(literals), // All extracted literals are required
   };
+}
+
+/**
+ * Result of variable name normalization
+ */
+export interface NormalizeVariablesResult {
+  /** Code with normalized variable names */
+  code: string;
+  /** Map of original name → normalized name */
+  renames: Record<string, string>;
+}
+
+/**
+ * Normalize variable names in code using variableBindings from static structure
+ *
+ * Replaces all variable declarations and usages with normalized names
+ * based on the node IDs from static analysis. This ensures that code
+ * with different variable names but identical semantics produces
+ * identical normalized code.
+ *
+ * @example
+ * ```typescript
+ * // Input:
+ * const result = await mcp.foo(); return result;
+ * // variableBindings: { "result": "n1" }
+ *
+ * // Output:
+ * const _n1 = await mcp.foo(); return _n1;
+ * ```
+ *
+ * @param code - Original code
+ * @param variableBindings - Map of variable names to node IDs from static structure
+ * @returns Normalized code and rename mapping
+ */
+export function normalizeVariableNames(
+  code: string,
+  variableBindings: Record<string, string>,
+): NormalizeVariablesResult {
+  if (!variableBindings || Object.keys(variableBindings).length === 0) {
+    return { code, renames: {} };
+  }
+
+  // Build rename map: original name → normalized name (using node ID)
+  const renames: Record<string, string> = {};
+  for (const [varName, nodeId] of Object.entries(variableBindings)) {
+    renames[varName] = `_${nodeId}`;
+  }
+
+  // Replace all occurrences using word boundaries
+  // Sort by length descending to avoid partial replacements
+  const sortedNames = Object.keys(renames).sort((a, b) => b.length - a.length);
+
+  let normalizedCode = code;
+  for (const originalName of sortedNames) {
+    const normalizedName = renames[originalName];
+    // Use negative lookbehind to avoid replacing property accesses
+    // e.g., "content" in "const content = ..." should be replaced
+    // but "content" in "file.content" should NOT be replaced (it's a property)
+    // (?<!\.) = not preceded by a dot
+    const pattern = new RegExp(`(?<!\\.)\\b${escapeRegExp(originalName)}\\b`, "g");
+    normalizedCode = normalizedCode.replace(pattern, normalizedName);
+  }
+
+  return { code: normalizedCode, renames };
+}
+
+/**
+ * Escape special regex characters in a string
+ */
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

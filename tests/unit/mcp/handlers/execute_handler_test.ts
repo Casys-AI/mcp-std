@@ -286,38 +286,17 @@ Deno.test("Execute Handler - should include executionTimeMs in response", async 
   }
 });
 
-Deno.test("Execute Handler - should include suggestions structure with tools", async () => {
+Deno.test("Execute Handler - should return suggestions with confidence when no capabilities", async () => {
   const deps = createMockDependencies();
 
-  // Mock SHGAT to return tool scores
+  // Mock SHGAT to return no capabilities
   deps.shgat = {
     scoreAllCapabilities: () => [],
     scoreAllCapabilitiesV2: () => [],
-    scoreAllToolsV2: () => [
-      { toolId: "fs:read", score: 0.9 },
-    ],
-    getToolIds: () => ["fs:read"],
+    scoreAllToolsV2: () => [],
+    getToolIds: () => [],
     getCapabilityIds: () => [],
   } as unknown as ExecuteDependencies["shgat"];
-
-  // Mock graphEngine to return tool results via searchToolsHybrid
-  deps.graphEngine = {
-    ...deps.graphEngine,
-    searchToolsHybrid: async () => [
-      { toolId: "fs:read", finalScore: 0.9 },
-    ],
-    getToolNode: (toolId: string) => {
-      if (toolId === "fs:read") {
-        return {
-          name: "read",
-          serverId: "fs",
-          description: "Read file",
-          schema: { inputSchema: { type: "object", properties: { path: { type: "string" } } } },
-        };
-      }
-      return null;
-    },
-  } as unknown as ExecuteDependencies["graphEngine"];
 
   const args: ExecuteArgs = {
     intent: "read a file",
@@ -328,13 +307,9 @@ Deno.test("Execute Handler - should include suggestions structure with tools", a
 
   if ("content" in result) {
     const parsed = JSON.parse(result.content[0].text);
-    if (parsed.status === "suggestions") {
-      assertExists(parsed.suggestions);
-      assertExists(parsed.suggestions.tools);
-      assertEquals(Array.isArray(parsed.suggestions.tools), true);
-      assertEquals(parsed.suggestions.tools.length, 1);
-      assertEquals(parsed.suggestions.tools[0].id, "fs:read");
-    }
+    assertEquals(parsed.status, "suggestions");
+    assertExists(parsed.suggestions);
+    assertEquals(parsed.suggestions.confidence, 0);
   }
 });
 
@@ -467,10 +442,15 @@ Deno.test("Execute Handler - should use DR-DSP backward to build suggestedDag fr
     assertEquals(Array.isArray(dag.tasks), true);
     assertEquals(dag.tasks.length, 3); // 3 tools in the hyperpath
 
-    // Verify the tools match the hyperpath nodeSequence
-    assertEquals(dag.tasks[0].tool, "db:getCart");
-    assertEquals(dag.tasks[1].tool, "inventory:check");
-    assertEquals(dag.tasks[2].tool, "payment:charge");
+    // Verify the tasks have callName matching the hyperpath nodeSequence
+    assertEquals(dag.tasks[0].callName, "db:getCart");
+    assertEquals(dag.tasks[1].callName, "inventory:check");
+    assertEquals(dag.tasks[2].callName, "payment:charge");
+
+    // Verify type is set
+    assertEquals(dag.tasks[0].type, "tool");
+    assertEquals(dag.tasks[1].type, "tool");
+    assertEquals(dag.tasks[2].type, "tool");
 
     // Verify dependencies are chained correctly
     assertEquals(dag.tasks[0].dependsOn, []);

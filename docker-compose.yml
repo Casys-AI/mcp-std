@@ -60,14 +60,16 @@ services:
       - monitoring
     restart: unless-stopped
 
-  # Promtail - Log shipper (LTS - migrate to Alloy before March 2026)
-  promtail:
-    image: grafana/promtail:3.0.0
-    container_name: pml-promtail
+  # Alloy - Log collector (successor to Promtail)
+  alloy:
+    image: grafana/alloy:latest
+    container_name: pml-alloy
+    ports:
+      - "12345:12345"  # Alloy UI
     volumes:
-      - ./monitoring/promtail-config.yaml:/etc/promtail/config.yaml
-      - /home/ubuntu/.cai/logs:/var/log/pml:ro
-    command: -config.file=/etc/promtail/config.yaml
+      - ./monitoring/alloy-config.alloy:/etc/alloy/config.alloy
+      - /home/ubuntu/.pml/logs:/var/log/pml:ro
+    command: run --server.http.listen-addr=0.0.0.0:12345 /etc/alloy/config.alloy
     depends_on:
       - loki
     networks:
@@ -80,6 +82,8 @@ services:
     container_name: pml-prometheus
     ports:
       - "9091:9090" # 9091 external (Cockpit uses 9090)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
       - pml-prometheus-data:/prometheus
@@ -129,6 +133,32 @@ services:
     pid: host
     volumes:
       - "/:/host:ro,rslave"
+    networks:
+      - monitoring
+    restart: unless-stopped
+
+  # Jaeger - Distributed tracing (OTEL backend)
+  # Receives traces from Deno --unstable-otel via OTLP HTTP
+  # UI: http://localhost:16686 | SPM metrics: http://localhost:8889/metrics
+  jaeger:
+    image: jaegertracing/jaeger:2.2.0
+    container_name: pml-jaeger
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP (Deno default)
+      - "8889:8889"   # Prometheus metrics (SPM)
+    volumes:
+      - ./monitoring/jaeger-config.yaml:/etc/jaeger/config.yaml
+      - ./monitoring/jaeger-ui-config.json:/etc/jaeger/ui-config.json
+    command: ["--config", "/etc/jaeger/config.yaml"]
+    environment:
+      - METRICS_STORAGE_TYPE=prometheus
+      - PROMETHEUS_SERVER_URL=http://prometheus:9090
+      - PROMETHEUS_QUERY_SUPPORT_SPANMETRICS_CONNECTOR=true
+      - PROMETHEUS_QUERY_NAMESPACE=jaeger
+      - PROMETHEUS_QUERY_NORMALIZE_CALLS=true
+      - PROMETHEUS_QUERY_NORMALIZE_DURATION=true
     networks:
       - monitoring
     restart: unless-stopped

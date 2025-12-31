@@ -188,6 +188,37 @@ export class CapabilityRegistry {
   }
 
   /**
+   * Get a capability record by code_hash within a scope
+   *
+   * Used to prevent duplicate capability_records after rename.
+   * Joins with workflow_pattern to check code_hash.
+   *
+   * @param codeHash - The full code hash from workflow_pattern
+   * @param scope - The org/project scope
+   * @returns The record or null if not found
+   */
+  async getByCodeHash(codeHash: string, scope: Scope): Promise<CapabilityRecord | null> {
+    const rows = await this.db.query(
+      `SELECT cr.*,
+              COALESCE(wp.usage_count, 0) as wp_usage_count,
+              COALESCE(wp.success_count, 0) as wp_success_count
+       FROM capability_records cr
+       JOIN workflow_pattern wp ON cr.workflow_pattern_id = wp.pattern_id
+       WHERE wp.code_hash = $1
+         AND cr.org = $2
+         AND cr.project = $3
+       LIMIT 1`,
+      [codeHash, scope.org, scope.project],
+    );
+
+    if (rows.length === 0) {
+      return null;
+    }
+
+    return this.rowToRecord(rows[0]);
+  }
+
+  /**
    * Get a capability record by FQDN components
    *
    * @param org - Organization

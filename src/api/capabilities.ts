@@ -7,9 +7,9 @@
  */
 
 import * as log from "@std/log";
-import type { RouteContext } from "../types.ts";
-import { errorResponse, jsonResponse } from "../types.ts";
-import type { CapabilityFilters } from "../../../capabilities/types.ts";
+import type { RouteContext } from "../mcp/routing/types.ts";
+import { errorResponse, jsonResponse } from "../mcp/routing/types.ts";
+import type { CapabilityFilters } from "../capabilities/types.ts";
 
 /**
  * Parse and validate capability list filters from URL params

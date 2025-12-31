@@ -144,6 +144,7 @@ export class HypergraphBuilder {
           toolInvocations: cap.toolInvocations, // Full sequence with timestamps (for invocation mode)
           lastUsed: cap.lastUsed, // ISO timestamp for timeline sorting
           hierarchyLevel: cap.hierarchyLevel, // 0=leaf, 1+=contains capabilities
+          staticStructure: cap.staticStructure, // Loop abstraction DAG structure
         },
       };
       nodes.push(capNode);

@@ -1084,34 +1084,34 @@ export class CapModule {
     // Execute merge in a real transaction for atomicity
     // If DELETE fails, UPDATE is rolled back
     await this.db.transaction(async (tx) => {
-      // Update target capability_records with merged stats
-      await tx.exec(
-        `UPDATE capability_records SET
-          usage_count = $1,
-          success_count = $2,
-          total_latency_ms = $3,
-          created_at = $4,
-          updated_at = NOW(),
-          updated_by = 'cap:merge'
-        WHERE id = $5`,
-        [
-          mergedUsageCount,
-          mergedSuccessCount,
-          mergedLatencyMs,
-          mergedCreatedAt,
-          targetRecord.id,
-        ],
-      );
-
-      // Update workflow_pattern code_snippet if target has one and we chose source code
-      if (targetRecord.workflowPatternId && finalCodeSnippet !== null) {
+      // Update target workflow_pattern with merged stats (migration 034: stats live in workflow_pattern)
+      if (targetRecord.workflowPatternId) {
         await tx.exec(
           `UPDATE workflow_pattern SET
-            code_snippet = $1
-          WHERE pattern_id = $2`,
-          [finalCodeSnippet, targetRecord.workflowPatternId],
+            usage_count = $1,
+            success_count = $2,
+            success_rate = CASE WHEN $1 > 0 THEN $2::real / $1::real ELSE 0 END,
+            created_at = LEAST(created_at, $3),
+            code_snippet = COALESCE($4, code_snippet)
+          WHERE pattern_id = $5`,
+          [
+            mergedUsageCount,
+            mergedSuccessCount,
+            mergedCreatedAt,
+            finalCodeSnippet,
+            targetRecord.workflowPatternId,
+          ],
         );
       }
+
+      // Update capability_records metadata only
+      await tx.exec(
+        `UPDATE capability_records SET
+          updated_at = NOW(),
+          updated_by = 'cap:merge'
+        WHERE id = $1`,
+        [targetRecord.id],
+      );
 
       // Redirect capability_dependency edges from source to target workflow_pattern
       // This preserves graph relationships after merge

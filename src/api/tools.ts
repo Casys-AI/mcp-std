@@ -7,8 +7,8 @@
  */
 
 import * as log from "@std/log";
-import type { RouteContext } from "../types.ts";
-import { errorResponse, jsonResponse } from "../types.ts";
+import type { RouteContext } from "../mcp/routing/types.ts";
+import { errorResponse, jsonResponse } from "../mcp/routing/types.ts";
 
 /**
  * GET /api/tools/search

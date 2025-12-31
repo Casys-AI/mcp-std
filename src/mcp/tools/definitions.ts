@@ -230,7 +230,8 @@ export const replanTool: MCPTool = {
  */
 export const approvalResponseTool: MCPTool = {
   name: "pml:approval_response",
-  description: "Approve or reject a Human-in-the-Loop checkpoint.",
+  description:
+    "[DEPRECATED] Use pml:execute with resume+approved parameters. Approve or reject a Human-in-the-Loop checkpoint.",
   inputSchema: {
     type: "object",
     properties: {
@@ -338,6 +339,16 @@ export const executeTool: MCPTool = {
           },
         },
       },
+      resume: {
+        type: "string",
+        description:
+          "Resume a paused workflow. Provide the workflow_id from a previous execution that returned status='approval_required'.",
+      },
+      approved: {
+        type: "boolean",
+        description:
+          "Approval decision when resuming. true = continue execution, false = abort workflow. Required when 'resume' is provided.",
+      },
     },
     required: ["intent"],
   },
@@ -356,13 +367,9 @@ export function getMetaTools(): Array<{
   const tools = [
     executeTool, // Primary API (Story 10.7)
     discoverTool,
-    // Legacy tools - kept for backward compatibility
-    executeDagTool,
-    executeCodeTool,
-    continueTool,
+    // Legacy tools removed - use pml:execute instead
     abortTool,
     replanTool,
-    approvalResponseTool,
   ];
 
   return tools.map((schema) => ({

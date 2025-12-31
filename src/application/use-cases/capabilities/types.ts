@@ -121,3 +121,55 @@ export interface LearnCapabilityResult {
   fqdn: string;
   created: boolean;
 }
+
+// ============================================================================
+// Get Suggestion (DR-DSP backward pathfinding)
+// ============================================================================
+
+/**
+ * A task in the suggested DAG
+ */
+export interface SuggestedTask {
+  /** Unique task identifier */
+  id: string;
+  /** Call name for invocation (e.g., "fs:read" or "math:sum") */
+  callName: string;
+  /** Whether this is a tool or capability */
+  type: "tool" | "capability";
+  /** JSON Schema for input parameters */
+  inputSchema?: unknown;
+  /** Task IDs this depends on */
+  dependsOn: string[];
+}
+
+/**
+ * Suggested DAG structure
+ */
+export interface SuggestedDag {
+  tasks: SuggestedTask[];
+}
+
+/**
+ * Request to get workflow suggestion
+ */
+export interface GetSuggestionRequest {
+  /** Natural language intent */
+  intent: string;
+  /** Best capability match from SHGAT */
+  bestCapability?: {
+    id: string;
+    score: number;
+  };
+  /** Correlation ID for tracing */
+  correlationId?: string;
+}
+
+/**
+ * Result of getting workflow suggestion
+ */
+export interface GetSuggestionResult {
+  /** Suggested workflow DAG */
+  suggestedDag?: SuggestedDag;
+  /** Confidence score from SHGAT (0-1) */
+  confidence: number;
+}

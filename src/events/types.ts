@@ -38,7 +38,8 @@ export type EventType =
   // ──────────────────────────────────────────────────────────────────────────
   // ALGORITHM EVENTS (ADR-039 - Story 7.6)
   // ──────────────────────────────────────────────────────────────────────────
-  | "algorithm.scored"
+  | "algorithm.decision" // Primary event: full algorithm decision (EventBus-centric)
+  | "algorithm.scored" // Legacy: lightweight scored event
   | "algorithm.suggested"
   | "algorithm.filtered"
   | "algorithm.feedback.selected"
@@ -573,6 +574,84 @@ export interface GraphEdgeUpdatedPayload {
 // ══════════════════════════════════════════════════════════════════════════════
 // ALGORITHM EVENT PAYLOADS (Preparation for Story 7.6)
 // ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Full algorithm decision payload (EventBus-centric architecture)
+ *
+ * This is the primary event for algorithm decisions. Subscribers:
+ * - DBSubscriber: writes to Postgres (full data)
+ * - OTELSubscriber: emits OTEL span (key attributes)
+ * - MetricsCollector: updates counters
+ */
+export interface AlgorithmDecisionPayload {
+  /** Unique trace ID (UUID) */
+  traceId: string;
+  /** Correlation ID for grouping related decisions */
+  correlationId?: string;
+  /** Algorithm name (e.g., "SHGAT", "DRDSP", "CapabilityMatcher") */
+  algorithmName?: string;
+  /** Algorithm mode */
+  algorithmMode: "active_search" | "passive_suggestion";
+  /** Target type being scored */
+  targetType: "tool" | "capability";
+  /** User intent (truncated to 200 chars) */
+  intent?: string;
+  /** Context hash for threshold lookup */
+  contextHash?: string;
+  /** All input signals for the algorithm */
+  signals: {
+    semanticScore?: number;
+    graphScore?: number;
+    successRate?: number;
+    pagerank?: number;
+    graphDensity: number;
+    spectralClusterMatch: boolean;
+    adamicAdar?: number;
+    localAlpha?: number;
+    alphaAlgorithm?: string;
+    coldStart?: boolean;
+    // SHGAT K-head attention
+    numHeads?: number;
+    avgHeadScore?: number;
+    headScores?: number[];
+    headWeights?: number[];
+    recursiveContribution?: number;
+    // Feature contributions
+    featureContribSemantic?: number;
+    featureContribStructure?: number;
+    featureContribTemporal?: number;
+    featureContribReliability?: number;
+    // Target info
+    targetId?: string;
+    targetName?: string;
+    targetSuccessRate?: number;
+    targetUsageCount?: number;
+    reliabilityMult?: number;
+    // DRDSP pathfinding
+    pathFound?: boolean;
+    pathLength?: number;
+    pathWeight?: number;
+    // Operation type
+    pure?: boolean;
+  };
+  /** Algorithm parameters used */
+  params: {
+    alpha: number;
+    reliabilityFactor: number;
+    structuralBoost: number;
+  };
+  /** Final computed score */
+  finalScore: number;
+  /** Threshold used for decision */
+  thresholdUsed: number;
+  /** Decision outcome */
+  decision: "accepted" | "rejected" | "rejected_by_threshold" | "filtered_by_reliability";
+}
+
+/**
+ * Typed event for algorithm.decision
+ */
+export type AlgorithmDecisionEvent = PmlEvent<"algorithm.decision", AlgorithmDecisionPayload>;
 
 /**
  * Payload for algorithm.scored events

@@ -158,6 +158,7 @@ export class CapabilityDataService {
           wp.code_snippet,
           wp.dag_structure->'tools_used' as tools_used,
           wp.dag_structure->'tool_invocations' as tool_invocations,
+          wp.dag_structure->'static_structure' as static_structure,
           wp.success_rate,
           wp.usage_count,
           wp.avg_duration_ms,
@@ -225,6 +226,23 @@ export class CapabilityDataService {
             }
           }
 
+          // Parse static_structure from JSONB (for DAG visualization with loop abstraction)
+          let staticStructure: CapabilityResponseInternal["staticStructure"];
+          if (row.static_structure) {
+            try {
+              if (typeof row.static_structure === "string") {
+                staticStructure = JSON.parse(row.static_structure);
+              } else if (
+                typeof row.static_structure === "object" &&
+                row.static_structure !== null
+              ) {
+                staticStructure = row.static_structure as typeof staticStructure;
+              }
+            } catch (error) {
+              logger.warn("Failed to parse static_structure", { error, row: row.id });
+            }
+          }
+
           return {
             id: String(row.id),
             name: row.name ? String(row.name) : null,
@@ -244,6 +262,7 @@ export class CapabilityDataService {
             lastUsed: row.last_used ? new Date(String(row.last_used)).toISOString() : "",
             source: (row.source as "emergent" | "manual") || "emergent",
             hierarchyLevel: Number(row.hierarchy_level || 0),
+            staticStructure,
           };
         },
       );
