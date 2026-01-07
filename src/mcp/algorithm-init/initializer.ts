@@ -17,25 +17,23 @@
  */
 
 import * as log from "@std/log";
-import type { DbClient } from "../db/types.ts";
-import type { GraphRAGEngine } from "../graphrag/graph-engine.ts";
-import type { CapabilityStore } from "../capabilities/capability-store.ts";
-import type { EmbeddingModelInterface } from "../vector/embeddings.ts";
+import type { DbClient } from "../../db/types.ts";
+import type { GraphRAGEngine } from "../../graphrag/graph-engine.ts";
+import type { CapabilityStore } from "../../capabilities/capability-store.ts";
+import type { EmbeddingModelInterface } from "../../vector/embeddings.ts";
 import {
-  createSHGATFromCapabilities,
   type SHGAT,
   type TrainingExample,
   type ToolGraphFeatures,
-} from "../graphrag/algorithms/shgat.ts";
-import { loadCooccurrenceData } from "../graphrag/algorithms/shgat/message-passing/index.ts";
-import { spawnSHGATTraining } from "../graphrag/algorithms/shgat/spawn-training.ts";
-import { buildDRDSPFromCapabilities, type DRDSP } from "../graphrag/algorithms/dr-dsp.ts";
+} from "../../graphrag/algorithms/shgat.ts";
+import { spawnSHGATTraining } from "../../graphrag/algorithms/shgat/spawn-training.ts";
+import type { DRDSP } from "../../graphrag/algorithms/dr-dsp.ts";
+import { GraphSyncController } from "../graph-sync/mod.ts";
+import { trainingLock } from "../handlers/mod.ts";
 import {
-  buildHyperedgesFromSHGAT,
-  cacheHyperedges,
-} from "../cache/hyperedge-cache.ts";
-import { GraphSyncController } from "./graph-sync/mod.ts";
-import { trainingLock } from "./handlers/mod.ts";
+  AlgorithmFactory,
+  type AlgorithmCapabilityInput,
+} from "../../infrastructure/patterns/factory/algorithm-factory.ts";
 
 // ==========================================================================
 // Types
@@ -53,14 +51,8 @@ interface ContainsEdge {
   to_capability_id: string;
 }
 
-interface CapabilityWithEmbedding {
-  id: string;
-  embedding: number[];
-  toolsUsed: string[];
-  successRate: number;
-  children?: string[];
-  parents?: string[];
-}
+// Re-use AlgorithmCapabilityInput from factory
+type CapabilityWithEmbedding = AlgorithmCapabilityInput;
 
 interface TraceRow {
   capability_id: string;
@@ -134,24 +126,26 @@ export class AlgorithmInitializer {
     }
 
     try {
-      // 1. Load and parse capabilities
+      // 1. Load and parse capabilities from database
       const rows = await this.loadCapabilities();
       const containsEdges = await this.loadContainsEdges();
       this.capabilities = this.parseCapabilities(rows, containsEdges);
 
-      // 2. Create SHGAT
-      this.shgat = createSHGATFromCapabilities(this.capabilities);
-      log.info(
-        `[AlgorithmInitializer] SHGAT initialized with ${this.capabilities.length} capabilities`,
+      // 2. Create SHGAT and DR-DSP via AlgorithmFactory (centralized creation)
+      // Factory handles: algorithm creation, co-occurrence loading
+      const { shgat: shgatResult, drdsp } = await AlgorithmFactory.createBoth(
+        this.capabilities,
+        { withCooccurrence: true },
       );
 
-      // 3. Load co-occurrence data
-      await this.loadCooccurrence();
+      this.shgat = shgatResult.shgat;
+      this.drdsp = drdsp;
+      log.info(
+        `[AlgorithmInitializer] Algorithms initialized: ${shgatResult.capabilitiesLoaded} caps, ` +
+        `${shgatResult.cooccurrenceEdges ?? 0} co-occurrence edges`,
+      );
 
-      // 4. Cache hyperedges
-      await this.cacheHyperedges();
-
-      // 5. Start GraphSyncController
+      // 3. Start GraphSyncController for incremental updates
       this.graphSyncController = new GraphSyncController(
         this.deps.graphEngine,
         this.deps.db,
@@ -159,35 +153,21 @@ export class AlgorithmInitializer {
       );
       this.graphSyncController.start();
 
-      // 6. Load persisted params
+      // 4. Load persisted SHGAT params
       const { loaded: paramsLoaded } = await this.loadSHGATParams();
 
-      // 7. Populate tool features
+      // 5. Populate tool features from graph
       await this.populateToolFeatures();
 
-      // 8. Background training if needed
+      // 6. Background training if needed
       if (this.capabilities.length > 0 && !paramsLoaded) {
-        log.info(
-          `[AlgorithmInitializer] Starting background SHGAT training`,
-        );
+        log.info(`[AlgorithmInitializer] Starting background SHGAT training`);
         this.trainOnTraces().catch((err) =>
           log.warn(`[AlgorithmInitializer] Background training failed: ${err}`)
         );
       } else if (paramsLoaded) {
-        log.info(
-          `[AlgorithmInitializer] SHGAT params loaded - skipping batch training`,
-        );
+        log.info(`[AlgorithmInitializer] SHGAT params loaded - skipping batch training`);
       }
-
-      // 9. Create DR-DSP
-      this.drdsp = buildDRDSPFromCapabilities(
-        rows.map((c) => ({
-          id: c.id,
-          toolsUsed: c.tools_used ?? [],
-          successRate: c.success_rate,
-        })),
-      );
-      log.info(`[AlgorithmInitializer] DR-DSP initialized`);
 
       return {
         shgat: this.shgat,
@@ -363,36 +343,7 @@ export class AlgorithmInitializer {
   }
 
   // ==========================================================================
-  // Private: Co-occurrence & Hyperedges
-  // ==========================================================================
-
-  private async loadCooccurrence(): Promise<void> {
-    if (!this.shgat) return;
-
-    try {
-      const toolIndex = this.shgat.getToolIndexMap();
-      const coocData = await loadCooccurrenceData(toolIndex);
-      if (coocData.entries.length > 0) {
-        this.shgat.setCooccurrenceData(coocData.entries);
-        log.info(
-          `[AlgorithmInitializer] V→V co-occurrence: ${coocData.stats.edges} edges`,
-        );
-      }
-    } catch (e) {
-      log.debug(`[AlgorithmInitializer] No V→V co-occurrence data: ${e}`);
-    }
-  }
-
-  private async cacheHyperedges(): Promise<void> {
-    const hyperedges = buildHyperedgesFromSHGAT(this.capabilities);
-    if (hyperedges.length > 0) {
-      await cacheHyperedges(hyperedges);
-      log.info(`[AlgorithmInitializer] Cached ${hyperedges.length} hyperedges`);
-    }
-  }
-
-  // ==========================================================================
-  // Private: Tool Features
+  // Private: Tool Features (co-occurrence & hyperedges handled by AlgorithmFactory)
   // ==========================================================================
 
   private async populateToolFeatures(): Promise<void> {

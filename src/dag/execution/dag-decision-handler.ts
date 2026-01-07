@@ -17,7 +17,7 @@ import type { ExecutorConfig } from "../types.ts";
 import type { CommandQueue } from "../command-queue.ts";
 import type { EventStream } from "../event-stream.ts";
 import type { WorkflowState } from "../state.ts";
-import type { EpisodicMemoryStore } from "../../learning/episodic-memory-store.ts";
+import type { EpisodicMemoryStore } from "../episodic/store.ts";
 import type { DAGSuggester } from "../../graphrag/dag-suggester.ts";
 import { shouldTriggerAIL, MAX_REPLANS } from "../loops/ail-handler.ts";
 import { shouldRequireApproval, generateHILSummary } from "../loops/hil-handler.ts";

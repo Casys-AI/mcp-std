@@ -27,7 +27,7 @@ import { CheckpointManager } from "./checkpoint-manager.ts";
 import type { DbClient } from "../db/types.ts";
 import { getLogger } from "../telemetry/logger.ts";
 import type { DAGSuggester } from "../graphrag/dag-suggester.ts";
-import type { EpisodicMemoryStore } from "../learning/episodic-memory-store.ts";
+import type { EpisodicMemoryStore } from "./episodic/store.ts";
 import type { SpeculationCache, SpeculationConfig, SpeculationMetrics } from "../graphrag/types.ts";
 import type { PermissionEscalationRequest, PermissionSet } from "../capabilities/types.ts";
 import type { PermissionAuditStore } from "../capabilities/permission-audit-store.ts";

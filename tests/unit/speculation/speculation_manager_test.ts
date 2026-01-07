@@ -11,7 +11,7 @@ import { assertEquals, assertExists } from "@std/assert";
 import {
   DEFAULT_SPECULATION_CONFIG,
   SpeculationManager,
-} from "../../../src/speculation/speculation-manager.ts";
+} from "../../../src/dag/speculation/speculation-manager.ts";
 import type { PredictedNode } from "../../../src/graphrag/types.ts";
 
 // Helper to create a fresh manager

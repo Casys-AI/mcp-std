@@ -18,7 +18,6 @@
       "tavily:*",
       "brave_search:*",
       "exa:*",
-      "github:*",
       "slack:*",
       "api:*",
       "http:*",

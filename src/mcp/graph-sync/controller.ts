@@ -183,17 +183,13 @@ export class GraphSyncController {
       `[GraphSyncController] Capability merged: ${sourceName} -> ${targetName}`,
     );
 
-    // 1. Remove source capability node from graph (if it exists)
+    // 1. Note: Source capability node will be removed via full resync below
+    // GraphRAGEngine doesn't have removeNode - full resync handles cleanup
     if (this.graphEngine && sourcePatternId) {
       const capNodeId = `capability:${sourcePatternId}`;
-      try {
-        // GraphRAGEngine may not have removeNode, so we trigger a full resync
-        log.debug(
-          `[GraphSyncController] Source capability node ${capNodeId} removed via merge`,
-        );
-      } catch {
-        // Node might not exist in graph
-      }
+      log.debug(
+        `[GraphSyncController] Source capability node ${capNodeId} marked for removal via resync`,
+      );
     }
 
     // 2. Invalidate hyperedge cache for source

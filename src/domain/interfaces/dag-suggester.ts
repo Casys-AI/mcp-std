@@ -68,6 +68,8 @@ export interface SuggestionResult {
  *
  * This interface abstracts the SHGAT + DR-DSP suggestion pipeline,
  * allowing for different implementations and easy mocking in tests.
+ *
+ * Note: Raw capability scoring is available via ISHGATTrainer.scoreCapabilities()
  */
 export interface IDAGSuggester {
   /**
@@ -78,12 +80,4 @@ export interface IDAGSuggester {
    * @returns Suggestion result with DAG and confidence
    */
   suggest(intent: string, correlationId?: string): Promise<SuggestionResult>;
-
-  /**
-   * Score all capabilities for an intent (raw SHGAT scoring)
-   *
-   * @param intentEmbedding - Pre-computed intent embedding
-   * @returns Sorted capability matches
-   */
-  scoreCapabilities?(intentEmbedding: number[]): CapabilityMatch[];
 }

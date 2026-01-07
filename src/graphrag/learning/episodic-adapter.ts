@@ -5,17 +5,27 @@
  * Handles retrieval and parsing of historical episodes for learning-enhanced predictions.
  *
  * @module graphrag/learning/episodic-adapter
+ *
+ * TODO(episodic-memory): LIMITED USAGE - This module is only used by:
+ * - DAGSuggester.predictNextNodes() → called by speculation system
+ * - NOT used by main execution flow (pml:execute → SHGAT.scoreAllCapabilities)
+ *
+ * The stats returned (EpisodeStatsMap) are per-TOOL, but SHGAT scores per-CAPABILITY.
+ * To fully leverage episodic memory, consider:
+ * 1. Add capability-level stats aggregation
+ * 2. Integrate with SHGAT scoring (context-aware success rates)
+ * 3. Use for Thompson Sampling priors (AdaptiveThresholdManager)
  */
 
 import * as log from "@std/log";
 import type { DagScoringConfig } from "../dag-scoring-config.ts";
 import type { WorkflowPredictionState } from "../types.ts";
-import type { EpisodicMemoryStore } from "../../learning/episodic-memory-store.ts";
+import type { EpisodicMemoryStore } from "../../dag/episodic/store.ts";
 import type { EpisodeStats, EpisodeStatsMap } from "../prediction/types.ts";
-import type { EpisodicEvent, PredictionData } from "../../learning/types.ts";
+import type { EpisodicEvent, PredictionData } from "../../dag/episodic/types.ts";
 
 // Re-export EpisodicEvent from canonical source (snake_case external convention)
-export type { EpisodicEvent } from "../../learning/types.ts";
+export type { EpisodicEvent } from "../../dag/episodic/types.ts";
 
 /**
  * Type guard for PredictionData in episodic events

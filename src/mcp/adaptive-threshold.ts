@@ -19,7 +19,7 @@
 import * as log from "@std/log";
 import type { ExecutionRecord, SpeculativeMetrics } from "../graphrag/types.ts";
 import type { DbClient } from "../db/types.ts";
-import type { StoredThreshold, ThresholdContext } from "../learning/types.ts";
+import type { StoredThreshold, ThresholdContext } from "../dag/episodic/types.ts";
 import {
   type RiskCategory,
   type ThompsonConfig,

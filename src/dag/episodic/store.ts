@@ -10,11 +10,29 @@
  * - Context hash-based retrieval (MVP strategy)
  * - Automatic pruning (retention policy)
  *
- * @module learning/episodic-memory-store
+ * @module dag/episodic/store
+ *
+ * TODO(episodic-memory): UNDERUTILIZED - Data is captured but barely used:
+ *
+ * CURRENT STATE:
+ * - Events ARE captured (task_complete, ail_decision, hil_decision, speculation_start)
+ * - Events ARE stored in episodic_events table
+ * - Events ARE retrieved by DAGSuggester.predictNextNodes() for speculation
+ *
+ * NOT USED BY:
+ * - SHGAT.scoreAllCapabilities() - main execution scoring
+ * - AdaptiveThresholdManager - Thompson Sampling (uses separate table)
+ * - Capability success rate updates - uses capability_records.success_rate
+ *
+ * MISSING FEATURES:
+ * - updateSpeculationResult() to set wasCorrect after validation
+ * - Capability-level aggregation (currently tool-level only)
+ * - Richer context hash (intent category, tool patterns)
+ * - Integration with SHGAT for context-aware scoring
  */
 
 import * as log from "@std/log";
-import type { DbClient } from "../db/types.ts";
+import type { DbClient } from "../../db/types.ts";
 import type {
   EpisodicEvent,
   EpisodicEventInput,

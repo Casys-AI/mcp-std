@@ -17,10 +17,14 @@ import { ContainerBuilder, type Container, Service } from "diod";
 
 // Domain interfaces (for type hints)
 import type { ICapabilityRepository } from "../../domain/interfaces/capability-repository.ts";
+import type { ICodeAnalyzer } from "../../domain/interfaces/code-analyzer.ts";
 import type { IDAGExecutor } from "../../domain/interfaces/dag-executor.ts";
+import type { IDAGSuggester } from "../../domain/interfaces/dag-suggester.ts";
 import type { IGraphEngine } from "../../domain/interfaces/graph-engine.ts";
 import type { IMCPClientRegistry } from "../../domain/interfaces/mcp-client-registry.ts";
+import type { ISHGATTrainer } from "../../domain/interfaces/shgat-trainer.ts";
 import type { IStreamOrchestrator, IStreamOrchestratorDeps } from "../../domain/interfaces/stream-orchestrator.ts";
+import type { IWorkflowRepository } from "../../domain/interfaces/workflow-repository.ts";
 import type {
   DecisionPreparation,
   AILResponseResult,
@@ -50,6 +54,13 @@ export abstract class CapabilityRepository implements ICapabilityRepository {
   abstract getAllDependencies: ICapabilityRepository["getAllDependencies"];
 }
 
+/** Token for code analyzer (StaticStructureBuilder) */
+export abstract class CodeAnalyzer implements ICodeAnalyzer {
+  abstract analyze: ICodeAnalyzer["analyze"];
+  abstract extractToolCalls: ICodeAnalyzer["extractToolCalls"];
+  abstract getHILRequiredTools: ICodeAnalyzer["getHILRequiredTools"];
+}
+
 /** Token for DAG executor */
 export abstract class DAGExecutor implements IDAGExecutor {
   abstract execute: IDAGExecutor["execute"];
@@ -58,6 +69,11 @@ export abstract class DAGExecutor implements IDAGExecutor {
   abstract getState: IDAGExecutor["getState"];
   abstract enqueueCommand: IDAGExecutor["enqueueCommand"];
   abstract updateState: IDAGExecutor["updateState"];
+}
+
+/** Token for DAG suggester */
+export abstract class DAGSuggester implements IDAGSuggester {
+  abstract suggest: IDAGSuggester["suggest"];
 }
 
 /** Token for graph engine */
@@ -142,6 +158,25 @@ export abstract class DecisionStrategy {
   abstract waitForHILResponse(ctx: unknown, layerIdx: number): Promise<void>;
 }
 
+/** Token for SHGAT trainer */
+export abstract class SHGATTrainer implements ISHGATTrainer {
+  abstract shouldTrain: ISHGATTrainer["shouldTrain"];
+  abstract train: ISHGATTrainer["train"];
+  abstract recordToolOutcome?: ISHGATTrainer["recordToolOutcome"];
+  abstract registerCapability?: ISHGATTrainer["registerCapability"];
+  abstract scoreCapabilities?: ISHGATTrainer["scoreCapabilities"];
+}
+
+/** Token for workflow repository */
+export abstract class WorkflowRepository implements IWorkflowRepository {
+  abstract create: IWorkflowRepository["create"];
+  abstract get: IWorkflowRepository["get"];
+  abstract update: IWorkflowRepository["update"];
+  abstract delete: IWorkflowRepository["delete"];
+  abstract listActive: IWorkflowRepository["listActive"];
+  abstract listAwaitingApproval: IWorkflowRepository["listAwaitingApproval"];
+}
+
 /** Token for database client */
 export abstract class DatabaseClient {
   abstract connect(): Promise<void>;
@@ -181,13 +216,19 @@ export interface ContainerImplementations {
   VectorSearchImpl?: new (db: DatabaseClient) => VectorSearch;
   EventBusImpl?: new () => EventBus;
 
-  // Domain services
+  // Domain services (Phase 2.1)
   CapabilityRepositoryImpl?: new (db: DatabaseClient) => CapabilityRepository;
   GraphEngineImpl?: new () => GraphEngine;
   DAGExecutorImpl?: new (repo: CapabilityRepository, graph: GraphEngine) => DAGExecutor;
   MCPClientRegistryImpl?: new () => MCPClientRegistry;
   StreamOrchestratorImpl?: new (decisionStrategy: DecisionStrategy) => StreamOrchestrator;
   DecisionStrategyImpl?: new () => DecisionStrategy;
+
+  // Domain services (Phase 3.2: DI Expansion)
+  CodeAnalyzerImpl?: new (db: DatabaseClient) => CodeAnalyzer;
+  DAGSuggesterImpl?: new (graph: GraphEngine, vectorSearch: VectorSearch) => DAGSuggester;
+  SHGATTrainerImpl?: new () => SHGATTrainer;
+  WorkflowRepositoryImpl?: new () => WorkflowRepository;
 
   // Factory functions (alternative to classes)
   createDbClient?: (dbPath: string) => DatabaseClient;
@@ -199,6 +240,12 @@ export interface ContainerImplementations {
   createMCPClientRegistry?: () => MCPClientRegistry;
   createStreamOrchestrator?: (decisionStrategy: DecisionStrategy) => StreamOrchestrator;
   createDecisionStrategy?: () => DecisionStrategy;
+
+  // Factory functions (Phase 3.2)
+  createCodeAnalyzer?: (db: DatabaseClient) => CodeAnalyzer;
+  createDAGSuggester?: (graph: GraphEngine, vectorSearch: VectorSearch) => DAGSuggester;
+  createSHGATTrainer?: () => SHGATTrainer;
+  createWorkflowRepository?: () => WorkflowRepository;
 }
 
 /**
@@ -303,6 +350,45 @@ export function buildContainer(
     }).asSingleton();
   }
 
+  // ========================================
+  // Phase 3.2: New Domain Services
+  // ========================================
+
+  // Code Analyzer (StaticStructureBuilder)
+  if (impls.CodeAnalyzerImpl) {
+    builder.register(CodeAnalyzer).use(impls.CodeAnalyzerImpl).asSingleton();
+  } else if (impls.createCodeAnalyzer) {
+    builder.register(CodeAnalyzer).useFactory((c) => {
+      const db = c.get(DatabaseClient);
+      return impls.createCodeAnalyzer!(db);
+    }).asSingleton();
+  }
+
+  // DAG Suggester
+  if (impls.DAGSuggesterImpl) {
+    builder.register(DAGSuggester).use(impls.DAGSuggesterImpl).asSingleton();
+  } else if (impls.createDAGSuggester) {
+    builder.register(DAGSuggester).useFactory((c) => {
+      const graph = c.get(GraphEngine);
+      const vectorSearch = c.get(VectorSearch);
+      return impls.createDAGSuggester!(graph, vectorSearch);
+    }).asSingleton();
+  }
+
+  // SHGAT Trainer
+  if (impls.SHGATTrainerImpl) {
+    builder.register(SHGATTrainer).use(impls.SHGATTrainerImpl).asSingleton();
+  } else if (impls.createSHGATTrainer) {
+    builder.register(SHGATTrainer).useInstance(impls.createSHGATTrainer());
+  }
+
+  // Workflow Repository
+  if (impls.WorkflowRepositoryImpl) {
+    builder.register(WorkflowRepository).use(impls.WorkflowRepositoryImpl).asSingleton();
+  } else if (impls.createWorkflowRepository) {
+    builder.register(WorkflowRepository).useInstance(impls.createWorkflowRepository());
+  }
+
   // Build validates graph - throws if cycles or missing deps
   return builder.build();
 }
@@ -344,6 +430,23 @@ export function getVectorSearch(container: Container): VectorSearch {
 
 export function getEventBus(container: Container): EventBus {
   return container.get(EventBus);
+}
+
+// Phase 3.2: New service accessors
+export function getCodeAnalyzer(container: Container): CodeAnalyzer {
+  return container.get(CodeAnalyzer);
+}
+
+export function getDAGSuggester(container: Container): DAGSuggester {
+  return container.get(DAGSuggester);
+}
+
+export function getSHGATTrainer(container: Container): SHGATTrainer {
+  return container.get(SHGATTrainer);
+}
+
+export function getWorkflowRepository(container: Container): WorkflowRepository {
+  return container.get(WorkflowRepository);
 }
 
 /**

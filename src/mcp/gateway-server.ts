@@ -46,7 +46,8 @@ import { PmlStdServer } from "../../lib/std/cap.ts";
 import type { AlgorithmTracer } from "../telemetry/algorithm-tracer.ts";
 import { TelemetryAdapter } from "../telemetry/decision-logger.ts";
 import { eventBus } from "../events/mod.ts";
-import { AlgorithmInitializer } from "./algorithm-initializer.ts";
+import { AlgorithmInitializer } from "./algorithm-init/mod.ts";
+import type { EpisodicMemoryStore } from "../dag/episodic/store.ts";
 
 // Server types, constants, lifecycle, and HTTP server
 import {
@@ -126,6 +127,7 @@ export class PMLGatewayServer {
   private pmlStdServer: PmlStdServer | null = null; // Story 13.5: cap:* management tools
   private algorithmTracer: AlgorithmTracer | null = null; // Story 7.6: Observability
   private algorithmInitializer: AlgorithmInitializer | null = null; // Algorithm lifecycle
+  private episodicMemory: EpisodicMemoryStore | null = null; // ADR-008: Episodic memory
 
   constructor(
     // @ts-ignore: db kept for future use (direct queries)
@@ -282,6 +284,15 @@ export class PMLGatewayServer {
   setAlgorithmTracer(tracer: AlgorithmTracer): void {
     this.algorithmTracer = tracer;
     log.debug("[Gateway] AlgorithmTracer configured for observability");
+  }
+
+  /**
+   * Set EpisodicMemoryStore for learning (ADR-008)
+   * Called from serve.ts after gateway construction.
+   */
+  setEpisodicMemoryStore(store: EpisodicMemoryStore): void {
+    this.episodicMemory = store;
+    log.debug("[Gateway] EpisodicMemoryStore configured for learning");
   }
 
   /**
@@ -545,6 +556,7 @@ export class PMLGatewayServer {
       activeWorkflows: this.activeWorkflows,
       adaptiveThresholdManager: this.adaptiveThresholdManager, // Story 10.7c
       algorithmTracer: this.algorithmTracer ?? undefined, // Story 7.6
+      episodicMemory: this.episodicMemory ?? undefined, // ADR-008
     };
   }
 

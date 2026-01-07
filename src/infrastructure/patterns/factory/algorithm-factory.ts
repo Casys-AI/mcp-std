@@ -5,16 +5,40 @@
  * capabilities data. Abstracts initialization complexity and provides
  * consistent algorithm creation across the application.
  *
+ * ## Supported Algorithms
+ *
+ * - **SHGAT**: Sparse Heterogeneous Graph Attention Network
+ *   - Scores capabilities using graph attention on tool-capability hypergraph
+ *   - Uses embeddings, hierarchy, and co-occurrence patterns
+ *
+ * - **DR-DSP**: Dynamic Resource Demand-Supply Planning
+ *   - Alternative scoring based on tool usage patterns
+ *   - Lightweight, no embeddings required
+ *
+ * ## Factory Methods
+ *
+ * | Method | Description |
+ * |--------|-------------|
+ * | `createSHGAT()` | Create SHGAT with optional co-occurrence and caching |
+ * | `createEmptySHGAT()` | Create empty SHGAT for dynamic registration |
+ * | `createDRDSP()` | Create DR-DSP from tool patterns |
+ * | `createBoth()` | Create both algorithms concurrently |
+ *
+ * ## Options
+ *
+ * - `withCooccurrence`: Load tool co-occurrence patterns for SHGAT
+ * - `withHyperedgeCache`: Cache hyperedges in Deno KV (requires --unstable-kv)
+ *
  * @example
  * ```typescript
  * // Create SHGAT from capabilities
- * const shgat = AlgorithmFactory.createSHGAT(capabilities, {
+ * const result = await AlgorithmFactory.createSHGAT(capabilities, {
  *   withCooccurrence: true,
- *   withHyperedgeCache: true,
  * });
+ * console.log(`Loaded ${result.capabilitiesLoaded} capabilities`);
  *
- * // Create DR-DSP from capabilities
- * const drdsp = AlgorithmFactory.createDRDSP(capabilities);
+ * // Create both algorithms concurrently
+ * const { shgat, drdsp } = await AlgorithmFactory.createBoth(capabilities);
  * ```
  *
  * @module infrastructure/patterns/factory/algorithm-factory

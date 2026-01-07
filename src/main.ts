@@ -13,7 +13,6 @@ import { createServeCommand } from "./cli/commands/serve.ts";
 import { createStatusCommand } from "./cli/commands/status.ts";
 import { createMigrateConfigCommand } from "./cli/commands/migrate-config.ts";
 import { createWorkflowsCommand } from "./cli/commands/workflows.ts";
-import { createSpeculationCommand } from "./cli/commands/speculation.ts";
 import { setupLogger } from "./telemetry/mod.ts";
 import { createDefaultClient } from "./db/client.ts";
 import { TelemetryService } from "./telemetry/telemetry.ts";
@@ -92,7 +91,6 @@ export async function main(): Promise<void> {
     .command("status", createStatusCommand())
     .command("migrate-config", createMigrateConfigCommand())
     .command("workflows", createWorkflowsCommand())
-    .command("speculation", createSpeculationCommand())
     .parse(Deno.args);
 }
 

@@ -37,6 +37,7 @@ import { initAlgorithmSubscribers, stopAlgorithmSubscribers } from "../../teleme
 import { ensureStdBundle } from "../../lib/std-loader.ts";
 import { bootstrapDI } from "../../infrastructure/di/mod.ts";
 import { GatewayBuilder } from "../../infrastructure/patterns/mod.ts";
+import { EpisodicMemoryStore } from "../../dag/episodic/store.ts";
 
 /**
  * Find and validate config file
@@ -338,6 +339,16 @@ export function createServeCommand() {
         initAlgorithmSubscribers(db);
         log.info("✓ Algorithm tracing enabled (EventBus-centric)");
 
+        // ADR-008: Initialize EpisodicMemoryStore for learning from workflow executions
+        const episodicMemory = new EpisodicMemoryStore(db, {
+          bufferSize: 50,
+          retentionDays: 30,
+          maxEvents: 10000,
+          flushIntervalMs: 5000,
+        });
+        dagSuggester.setEpisodicMemoryStore(episodicMemory);
+        log.info("✓ Episodic memory enabled (ADR-008)");
+
         // Phase 2.2: Bootstrap DI container with real implementations
         // Container available for future DI-aware components
         const { container: _diContainer, mcpRegistry } = bootstrapDI({
@@ -429,6 +440,9 @@ export function createServeCommand() {
         // Story 7.6: Wire AlgorithmTracer to gateway for execute observability
         gateway.setAlgorithmTracer(algorithmTracer);
 
+        // ADR-008: Wire EpisodicMemoryStore to gateway for workflow learning
+        gateway.setEpisodicMemoryStore(episodicMemory);
+
         // Connect gateway to tool tracking callback (Story 3.7)
         gatewayRef = gateway;
 
@@ -460,6 +474,7 @@ export function createServeCommand() {
           Promise.all([
             gateway.stop(),
             stopAlgorithmSubscribers(),
+            episodicMemory.shutdown(), // ADR-008: Flush pending events
             db.close(),
           ])
             .then(() => {

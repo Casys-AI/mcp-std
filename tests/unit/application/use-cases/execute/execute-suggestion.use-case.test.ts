@@ -28,16 +28,17 @@ function createMockCapabilityRepository(): ICapabilityRepository {
         return {
           id: "cap-high-score",
           codeHash: "abc",
-          name: "file:read",
-          displayName: "File Read",
-          code: "await mcp.filesystem.read_file()",
-          intent: "read file",
+          codeSnippet: "await mcp.filesystem.read_file()",
+          intentEmbedding: new Float32Array(1024).fill(0.1),
+          cacheConfig: { ttl_ms: 3600000, cacheable: true },
           toolsUsed: ["filesystem:read_file", "code:parse_json"],
           successRate: 0.95,
+          successCount: 95,
           usageCount: 100,
           avgDurationMs: 150,
           createdAt: new Date(),
-          updatedAt: new Date(),
+          lastUsed: new Date(),
+          source: "emergent" as const,
         };
       }
       return null;
@@ -51,10 +52,12 @@ function createMockCapabilityRepository(): ICapabilityRepository {
     addDependency: async () => ({
       fromCapabilityId: "",
       toCapabilityId: "",
-      confidence: 0,
-      coOccurrenceCount: 0,
+      observedCount: 1,
+      confidenceScore: 0.5,
+      edgeType: "sequence" as const,
+      edgeSource: "inferred" as const,
       createdAt: new Date(),
-      updatedAt: new Date(),
+      lastObserved: new Date(),
     }),
     removeDependency: async () => {},
     getAllDependencies: async () => [],
@@ -63,7 +66,7 @@ function createMockCapabilityRepository(): ICapabilityRepository {
 
 function createMockSHGATScorer(): ISHGATScorer {
   return {
-    scoreAllCapabilities: (embedding) => [
+    scoreAllCapabilities: (_embedding) => [
       {
         capabilityId: "cap-high-score",
         score: 0.85,
@@ -102,7 +105,7 @@ function createMockDRDSPPathfinder(): IDRDSPPathfinder {
 
 function createMockEmbeddingModel(): IEmbeddingModel {
   return {
-    encode: async (text) => Array(384).fill(0.1), // Mock 384-dim embedding
+    encode: async (_text) => Array(384).fill(0.1), // Mock 384-dim embedding
   };
 }
 

@@ -18,8 +18,8 @@
  */
 
 import * as log from "@std/log";
-import { DenoSandboxExecutor } from "../sandbox/executor.ts";
-import type { PredictedNode, SpeculationCache } from "../graphrag/types.ts";
+import { DenoSandboxExecutor } from "../../sandbox/executor.ts";
+import type { PredictedNode, SpeculationCache } from "../../graphrag/types.ts";
 import type { SpeculationManager, SpeculationOutcome } from "./speculation-manager.ts";
 
 /**

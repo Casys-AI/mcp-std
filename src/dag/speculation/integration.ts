@@ -14,11 +14,11 @@ import type {
   SpeculationConfig,
   SpeculationMetrics,
 } from "../../graphrag/types.ts";
-import { SpeculativeExecutor } from "../../speculation/speculative-executor.ts";
+import { SpeculativeExecutor } from "./speculative-executor.ts";
 import {
   DEFAULT_SPECULATION_CONFIG,
   SpeculationManager,
-} from "../../speculation/speculation-manager.ts";
+} from "./speculation-manager.ts";
 import { getLogger } from "../../telemetry/logger.ts";
 
 const log = getLogger("default");

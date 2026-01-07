@@ -12,7 +12,7 @@
 import * as log from "@std/log";
 import type { VectorSearch } from "../vector/search.ts";
 import type { GraphRAGEngine } from "./graph-engine.ts";
-import type { EpisodicMemoryStore } from "../learning/episodic-memory-store.ts";
+import type { EpisodicMemoryStore } from "../dag/episodic/store.ts";
 import type { CapabilityMatcher } from "../capabilities/matcher.ts";
 import type { Capability, CapabilityMatch } from "../capabilities/types.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";

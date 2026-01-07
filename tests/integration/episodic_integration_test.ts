@@ -15,7 +15,7 @@
 
 import { assertEquals, assertExists, assertLess } from "@std/assert";
 import { ControlledExecutor } from "../../src/dag/controlled-executor.ts";
-import { EpisodicMemoryStore } from "../../src/learning/episodic-memory-store.ts";
+import { EpisodicMemoryStore } from "../../src/dag/episodic/store.ts";
 import { PGliteClient } from "../../src/db/client.ts";
 import { getAllMigrations, MigrationRunner } from "../../src/db/migrations.ts";
 import type { DAGStructure } from "../../src/graphrag/types.ts";

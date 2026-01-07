@@ -5,9 +5,32 @@
  * Supports graceful degradation when episodic memory is not available.
  *
  * @module dag/episodic/capture
+ *
+ * TODO(episodic-memory): Current limitations to address:
+ *
+ * 1. SPECULATION VALIDATION NOT IMPLEMENTED
+ *    - `wasCorrect` field in speculation_start events is never updated
+ *    - Need to add updateSpeculationResult() called after task completion
+ *    - Would allow learning which predictions were accurate
+ *
+ * 2. TOOL-LEVEL STATS vs CAPABILITY-LEVEL SCORING
+ *    - Episodic memory tracks stats per TOOL (toolId)
+ *    - SHGAT scores per CAPABILITY (capabilityId)
+ *    - Mismatch means episodic stats aren't used in main SHGAT scoring
+ *    - Only used in DAGSuggester.predictNextNodes() for speculation
+ *
+ * 3. CONTEXT HASH TOO SIMPLISTIC
+ *    - Current: "workflowType:dag-execution|domain:pml|complexity:medium"
+ *    - Should include: intent category, tool types used, error patterns
+ *    - Better context = better retrieval of similar episodes
+ *
+ * 4. NO SHGAT INTEGRATION
+ *    - SHGAT uses cap.successRate from capability_records table (aggregated)
+ *    - Could benefit from episodic memory for context-aware success rates
+ *    - E.g., "this capability works 90% for web tasks, 50% for CLI tasks"
  */
 
-import type { EpisodicMemoryStore } from "../../learning/episodic-memory-store.ts";
+import type { EpisodicMemoryStore } from "./store.ts";
 import type { WorkflowState } from "../state.ts";
 import { getLogger } from "../../telemetry/logger.ts";
 
@@ -211,8 +234,12 @@ export function captureHILDecision(
  * Capture episodic event for speculation start (Story 4.1d - Task 5)
  *
  * Non-blocking capture with prediction data.
- * Note: wasCorrect field is captured but not currently updated post-validation.
- * Future enhancement: Add updateSpeculationResult() when prediction validation is implemented.
+ *
+ * TODO(episodic-memory): wasCorrect is NEVER updated!
+ * - We capture speculation_start with wasCorrect=undefined
+ * - But never call back to update it after we know if prediction was correct
+ * - Need: updateSpeculationResult(eventId, wasCorrect: boolean) function
+ * - Call it in layer-results.ts after comparing predicted vs actual next tool
  *
  * @param ctx - Capture context with state and episodic memory
  * @param workflowId - Workflow identifier

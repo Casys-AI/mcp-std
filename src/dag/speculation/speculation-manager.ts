@@ -10,9 +10,9 @@
  */
 
 import * as log from "@std/log";
-import type { AdaptiveThresholdManager } from "../mcp/adaptive-threshold.ts";
-import type { GraphRAGEngine } from "../graphrag/graph-engine.ts";
-import type { PredictedNode, SpeculationConfig, SpeculationMetrics } from "../graphrag/types.ts";
+import type { AdaptiveThresholdManager } from "../../mcp/adaptive-threshold.ts";
+import type { GraphRAGEngine } from "../../graphrag/graph-engine.ts";
+import type { PredictedNode, SpeculationConfig, SpeculationMetrics } from "../../graphrag/types.ts";
 
 /**
  * Default speculation configuration (ADR-006)

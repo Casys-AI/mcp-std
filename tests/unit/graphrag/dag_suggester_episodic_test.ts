@@ -10,7 +10,7 @@ import { GraphRAGEngine } from "../../../src/graphrag/graph-engine.ts";
 import { VectorSearch } from "../../../src/vector/search.ts";
 import { MockEmbeddingModel } from "../../fixtures/mock-embedding-model.ts";
 import type { EmbeddingModel } from "../../../src/vector/embeddings.ts";
-import { EpisodicMemoryStore } from "../../../src/learning/episodic-memory-store.ts";
+import { EpisodicMemoryStore } from "../../../src/dag/episodic/store.ts";
 import { PGliteClient } from "../../../src/db/client.ts";
 import { getAllMigrations, MigrationRunner } from "../../../src/db/migrations.ts";
 

@@ -66,6 +66,20 @@ export interface SHGATTrainingConfig {
 }
 
 /**
+ * Capability score from SHGAT attention
+ */
+export interface CapabilityScore {
+  /** Capability ID */
+  capabilityId: string;
+  /** Overall attention score (0-1) */
+  score: number;
+  /** Per-head attention scores (K-head) */
+  headScores?: number[];
+  /** Learned head weights */
+  headWeights?: number[];
+}
+
+/**
  * Interface for SHGAT training operations
  *
  * This interface abstracts the SHGAT training subsystem,
@@ -118,4 +132,15 @@ export interface ISHGATTrainer {
     embedding: number[],
     toolsUsed: string[],
   ): Promise<void>;
+
+  /**
+   * Score all capabilities for an intent using K-head attention
+   *
+   * Uses the trained SHGAT model to compute attention scores
+   * for all registered capabilities given an intent embedding.
+   *
+   * @param intentEmbedding - Intent embedding vector
+   * @returns Sorted capability scores (highest first)
+   */
+  scoreCapabilities?(intentEmbedding: number[]): CapabilityScore[];
 }

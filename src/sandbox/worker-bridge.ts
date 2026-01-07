@@ -21,8 +21,6 @@
 
 import type { MCPClientBase } from "../mcp/types.ts";
 import type { JsonValue, TraceTaskResult } from "../capabilities/types.ts";
-// Story 13.5: Import getCapModule for cap_* tool handling
-import { getCapModule } from "../../lib/std/cap.ts";
 import type {
   CapabilityTraceEvent,
   ExecutionCompleteMessage,
@@ -37,12 +35,11 @@ import type {
 } from "./types.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import type { Capability } from "../capabilities/types.ts";
-import { getCapabilityFqdn } from "../capabilities/capability-registry.ts";
 import type { GraphRAGEngine } from "../graphrag/graph-engine.ts";
 import { CapabilityCodeGenerator } from "../capabilities/code-generator.ts";
 import { getLogger } from "../telemetry/logger.ts";
-// Story 6.5: EventBus integration (ADR-036)
 import { eventBus } from "../events/mod.ts";
+import { RpcRouter } from "./rpc-router.ts";
 
 const logger = getLogger("default");
 
@@ -166,6 +163,7 @@ export class WorkerBridge {
   // Story 7.3b: BroadcastChannel for real-time capability trace collection (ADR-036)
   private traceChannel: BroadcastChannel;
   private codeGenerator: CapabilityCodeGenerator;
+  private rpcRouter: RpcRouter;
 
   constructor(
     private mcpClients: Map<string, MCPClientBase>,
@@ -178,6 +176,19 @@ export class WorkerBridge {
     this.capabilityStore = config?.capabilityStore;
     this.graphRAG = config?.graphRAG;
     this.capabilityRegistry = config?.capabilityRegistry;
+
+    // Initialize RPC router with bridge factory for capability execution
+    this.rpcRouter = new RpcRouter(
+      {
+        mcpClients: this.mcpClients,
+        capabilityStore: this.capabilityStore,
+        capabilityRegistry: this.capabilityRegistry,
+        graphRAG: this.graphRAG,
+        timeout: this.config.timeout,
+      },
+      // Factory creates new WorkerBridge for nested capability execution
+      (cfg) => new WorkerBridge(this.mcpClients, cfg),
+    );
 
     // Story 7.3b: Setup BroadcastChannel for capability traces
     // Story 6.5: Bridge capability traces to unified EventBus (ADR-036)
@@ -734,7 +745,7 @@ export class WorkerBridge {
   }
 
   /**
-   * Handle RPC call from Worker - route to MCPClient with native tracing
+   * Handle RPC call from Worker - route via RpcRouter with native tracing
    * Story 6.5: Also emits events to EventBus (ADR-036)
    * ADR-041: Extracts parentTraceId for hierarchical tracking
    */
@@ -743,294 +754,97 @@ export class WorkerBridge {
     const toolId = `${server}:${tool}`;
     const startTime = Date.now();
 
-    // TRACE START - native tracing in bridge!
-    // ADR-041: Include args and parentTraceId for hierarchical tracking
+    // TRACE START - native tracing in bridge
     this.traces.push({
       type: "tool_start",
       tool: toolId,
       traceId: id,
       ts: startTime,
       args: args,
-      parentTraceId: parentTraceId, // ADR-041: Propagate hierarchy
+      parentTraceId: parentTraceId,
     });
 
-    // Story 6.5: Emit tool.start event to EventBus
-    // ADR-041: Include parentTraceId in event payload
     eventBus.emit({
       type: "tool.start",
       source: "worker-bridge",
-      payload: {
-        toolId: toolId,
-        traceId: id,
-        args: args,
-        parentTraceId: parentTraceId, // ADR-041
-      },
+      payload: { toolId, traceId: id, args, parentTraceId },
     });
 
     logger.debug("RPC call received", { id, server, tool, argsKeys: Object.keys(args || {}) });
 
     try {
-      // Story 13.5: Intercept cap_* tools and handle via global CapModule
-      // These tools require gateway's CapModule, not the std MCP server
-      if (server === "std" && tool.startsWith("cap_")) {
-        const capModule = getCapModule(); // Uses global set by PmlStdServer
-        // Map cap_list → cap:list, cap_rename → cap:rename, etc.
-        const capToolName = "cap:" + tool.slice(4); // "cap_list" → "cap:list"
-        logger.debug("Routing cap tool to CapModule", { tool, capToolName });
-        const capResult = await capModule.call(capToolName, args || {});
-        // Format as MCP-like response
-        const result = {
-          content: capResult.content,
-          isError: capResult.isError,
-        };
-        const endTime = Date.now();
-        const durationMs = endTime - startTime;
-        const safeResult = safeSerializeResult(result);
-        this.traces.push({
-          type: "tool_end",
-          tool: toolId,
-          traceId: id,
-          ts: endTime,
-          success: !capResult.isError,
-          durationMs: durationMs,
-          parentTraceId: parentTraceId,
-          result: safeResult,
-        });
-        eventBus.emit({
-          type: "tool.end",
-          source: "worker-bridge",
-          payload: {
-            toolId,
-            traceId: id,
-            success: !capResult.isError,
-            durationMs,
-            parentTraceId,
-            result: safeResult,
-          },
-        });
-        // Send result back to Worker
-        const response: RPCResultMessage = {
-          type: "rpc_result",
-          id,
-          success: true,
-          result: result as JsonValue,
-        };
-        this.worker?.postMessage(response);
-        logger.debug("Cap tool RPC call succeeded", { id, tool: toolId, durationMs });
-        return;
-      }
+      // Route via RpcRouter (handles cap_*, $cap:uuid, capabilities, MCP servers)
+      const routeResult = await this.rpcRouter.route(server, tool, args || {});
 
-      // Handle $cap:<uuid> capability references (from code-transformer)
-      // server="$cap", tool=uuid → look up by UUID directly
-      if (server === "$cap" && this.capabilityRegistry && this.capabilityStore) {
-        const uuid = tool; // tool is the UUID
-        const record = await this.capabilityRegistry.getById(uuid);
-        if (record && record.workflowPatternId) {
-          const pattern = await this.capabilityStore.findById(record.workflowPatternId);
-          if (pattern?.codeSnippet) {
-            logger.info("Routing $cap:<uuid> to capability", { uuid, id: record.id });
-
-            // Create NEW WorkerBridge for capability execution
-            const capBridge = new WorkerBridge(this.mcpClients, {
-              timeout: this.config.timeout,
-              capabilityStore: this.capabilityStore,
-              graphRAG: this.graphRAG,
-              capabilityRegistry: this.capabilityRegistry,
-            });
-
-            try {
-              const capResult = await capBridge.execute(
-                pattern.codeSnippet,
-                [],
-                { ...args, __capability_id: record.id },
-              );
-              const endTime = Date.now();
-              const durationMs = endTime - startTime;
-              this.traces.push({
-                type: "tool_end",
-                tool: toolId,
-                traceId: id,
-                ts: endTime,
-                success: capResult.success,
-                durationMs,
-                parentTraceId,
-                result: capResult.result,
-              });
-              const response: RPCResultMessage = {
-                type: "rpc_result",
-                id,
-                success: capResult.success,
-                result: capResult.result as JsonValue,
-              };
-              this.worker?.postMessage(response);
-              logger.debug("$cap UUID RPC call succeeded", { id, uuid, durationMs });
-              return;
-            } finally {
-              capBridge.cleanup();
-            }
-          }
-        }
-        // UUID not found
-        throw new Error(`Capability UUID not found: ${uuid}`);
-      }
-
-      // Unified routing: Check capabilities FIRST, then MCP servers
-      // This allows capabilities to use namespaces like "filesystem" without conflict
-      if (this.capabilityRegistry && this.capabilityStore) {
-        const capabilityName = `${server}:${tool}`;
-        const record = await this.capabilityRegistry.resolveByName(
-          capabilityName,
-          { org: "local", project: "default" },
-        );
-        if (record && record.workflowPatternId) {
-          // Found capability - execute via NEW WorkerBridge (avoid re-entrance bug)
-          const pattern = await this.capabilityStore.findById(record.workflowPatternId);
-          if (pattern?.codeSnippet) {
-            logger.info("Routing to capability (unified)", {
-              server,
-              tool,
-              fqdn: getCapabilityFqdn(record),
-            });
-
-            // Create NEW WorkerBridge for capability execution
-            // IMPORTANT: Cannot use this.execute() - it would overwrite this.worker!
-            // Pass capabilityRegistry to allow nested capability calls
-            const capBridge = new WorkerBridge(this.mcpClients, {
-              timeout: this.config.timeout,
-              capabilityStore: this.capabilityStore,
-              graphRAG: this.graphRAG,
-              capabilityRegistry: this.capabilityRegistry,
-            });
-
-            try {
-              const capResult = await capBridge.execute(
-                pattern.codeSnippet,
-                [], // toolDefinitions - capability code is self-contained
-                { ...args, __capability_id: record.id },
-              );
-              const endTime = Date.now();
-              const durationMs = endTime - startTime;
-              this.traces.push({
-                type: "tool_end",
-                tool: toolId,
-                traceId: id,
-                ts: endTime,
-                success: capResult.success,
-                durationMs,
-                parentTraceId,
-                result: capResult.result,
-              });
-              const response: RPCResultMessage = {
-                type: "rpc_result",
-                id,
-                success: capResult.success,
-                result: capResult.result as JsonValue,
-              };
-              this.worker?.postMessage(response);
-            } finally {
-              capBridge.cleanup();
-            }
-            return;
-          }
-        }
-      }
-
-      // No capability found - route to MCP server
-      const client = this.mcpClients.get(server);
-      if (!client) {
-        throw new Error(
-          `MCP server "${server}" not connected and no capability "${server}:${tool}" found`,
-        );
-      }
-
-      const result = await client.callTool(tool, args || {});
       const endTime = Date.now();
       const durationMs = endTime - startTime;
+      const safeResult = safeSerializeResult(routeResult.result);
 
-      // ADR-043: Check if MCP tool returned isError (soft failure)
-      // Note: Use optional chaining since result can be null (valid MCP response)
-      const mcpResult = result as { isError?: boolean; content?: Array<{ text?: string }> } | null;
-      const isToolError = mcpResult?.isError === true;
-      const errorMessage = isToolError && mcpResult?.content?.[0]?.text
-        ? mcpResult.content[0].text
-        : undefined;
-
-      // Story 11.1: Safely serialize result for tracing
-      const safeResult = safeSerializeResult(result);
-
-      // TRACE END - success or soft failure
-      // ADR-041: Include parentTraceId for hierarchical tracking
-      // Story 11.1: Include result for learning
+      // TRACE END
       this.traces.push({
         type: "tool_end",
         tool: toolId,
         traceId: id,
         ts: endTime,
-        success: !isToolError,
-        durationMs: durationMs,
-        parentTraceId: parentTraceId, // ADR-041
-        result: safeResult, // Story 11.1
-        ...(isToolError && errorMessage ? { error: errorMessage } : {}),
+        success: routeResult.success,
+        durationMs,
+        parentTraceId,
+        result: safeResult,
+        ...(routeResult.error ? { error: routeResult.error } : {}),
       });
 
-      // Story 6.5: Emit tool.end event to EventBus
-      // Story 11.1: Include result in payload
       eventBus.emit({
         type: "tool.end",
         source: "worker-bridge",
         payload: {
-          toolId: toolId,
+          toolId,
           traceId: id,
-          success: !isToolError,
-          durationMs: durationMs,
-          parentTraceId: parentTraceId, // ADR-041
-          result: safeResult, // Story 11.1
+          success: routeResult.success,
+          durationMs,
+          parentTraceId,
+          result: safeResult,
         },
       });
 
-      // Send result back to Worker (still send the result, let user code handle it)
+      // Send result back to Worker
       const response: RPCResultMessage = {
         type: "rpc_result",
         id,
-        success: true, // RPC succeeded, but tool may have returned isError
-        result: result as JsonValue,
+        success: routeResult.success,
+        result: routeResult.result,
+        ...(routeResult.error ? { error: routeResult.error } : {}),
       };
       this.worker?.postMessage(response);
 
-      logger.debug("RPC call succeeded", { id, tool: toolId, durationMs: durationMs });
+      logger.debug("RPC call completed", {
+        id,
+        tool: toolId,
+        routeType: routeResult.routeType,
+        durationMs,
+      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const endTime = Date.now();
       const durationMs = endTime - startTime;
 
       // TRACE END - failure
-      // ADR-041: Include parentTraceId for hierarchical tracking
       this.traces.push({
         type: "tool_end",
         tool: toolId,
         traceId: id,
         ts: endTime,
         success: false,
-        durationMs: durationMs,
+        durationMs,
         error: errorMessage,
-        parentTraceId: parentTraceId, // ADR-041
+        parentTraceId,
       });
 
-      // Story 6.5: Emit tool.end event to EventBus (failure)
       eventBus.emit({
         type: "tool.end",
         source: "worker-bridge",
-        payload: {
-          toolId: toolId,
-          traceId: id,
-          success: false,
-          durationMs: durationMs,
-          error: errorMessage,
-          parentTraceId: parentTraceId, // ADR-041
-        },
+        payload: { toolId, traceId: id, success: false, durationMs, error: errorMessage, parentTraceId },
       });
 
-      // Send error back to Worker
       const response: RPCResultMessage = {
         type: "rpc_result",
         id,

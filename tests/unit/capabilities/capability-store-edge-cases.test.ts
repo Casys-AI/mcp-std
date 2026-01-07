@@ -562,21 +562,19 @@ Deno.test("CapabilityStore - listWithSchemas() joins with capability_records", a
   // Create a capability
   const capId = await createTestCapability(store, "const x = 1;", "Test capability");
 
-  // Manually insert a capability_record entry with all required fields
+  // Manually insert a capability_record entry (note: display_name dropped in migration 028)
   await db.query(
     `
     INSERT INTO capability_records (
-      id, org, project, namespace, action, hash, display_name, workflow_pattern_id, visibility, created_by
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      id, org, project, namespace, action, hash, workflow_pattern_id, visibility, created_by
+    ) VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8)
   `,
     [
-      "test.proj.test.myAction.abcd",
       "test",
       "proj",
       "test",
       "myAction",
       "abcd",
-      "My Test Action",
       capId,
       "public",
       "test-user",
@@ -588,7 +586,8 @@ Deno.test("CapabilityStore - listWithSchemas() joins with capability_records", a
   assertEquals(results.length, 1);
   assertEquals(results[0].namespace, "test");
   assertEquals(results[0].action, "myAction");
-  assertEquals(results[0].displayName, "My Test Action");
+  // displayName is now computed as namespace:action
+  assertEquals(results[0].displayName, "test:myAction");
   assertEquals(results[0].id, capId);
 
   await db.close();
@@ -602,34 +601,30 @@ Deno.test("CapabilityStore - listWithSchemas() respects visibility filter", asyn
   const cap1 = await createTestCapability(store, "const a = 1;", "Public cap");
   const cap2 = await createTestCapability(store, "const b = 2;", "Private cap");
 
-  // Create capability_records with different visibility (include all required fields)
+  // Create capability_records with different visibility (note: display_name dropped in migration 028)
   await db.query(
-    `INSERT INTO capability_records (id, org, project, namespace, action, hash, display_name, workflow_pattern_id, visibility, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    `INSERT INTO capability_records (id, org, project, namespace, action, hash, workflow_pattern_id, visibility, created_by)
+     VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8)`,
     [
-      "org.proj.public.action.ab12",
       "org",
       "proj",
       "public",
       "action",
       "ab12",
-      "Public Action",
       cap1,
       "public",
       "user",
     ],
   );
   await db.query(
-    `INSERT INTO capability_records (id, org, project, namespace, action, hash, display_name, workflow_pattern_id, visibility, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    `INSERT INTO capability_records (id, org, project, namespace, action, hash, workflow_pattern_id, visibility, created_by)
+     VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8)`,
     [
-      "org.proj.private.action.cd34",
       "org",
       "proj",
       "private",
       "action",
       "cd34",
-      "Private Action",
       cap2,
       "private",
       "user",
@@ -658,21 +653,19 @@ Deno.test("CapabilityStore - listWithSchemas() respects limit", async () => {
   const model = new MockEmbeddingModel();
   const store = new CapabilityStore(db, model as any);
 
-  // Create 5 capabilities with records
+  // Create 5 capabilities with records (note: display_name dropped in migration 028)
   for (let i = 0; i < 5; i++) {
     const capId = await createTestCapability(store, `const x${i} = ${i};`, `Cap ${i}`);
     const hash = `a${i}${i}${i}`;
     await db.query(
-      `INSERT INTO capability_records (id, org, project, namespace, action, hash, display_name, workflow_pattern_id, visibility, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      `INSERT INTO capability_records (id, org, project, namespace, action, hash, workflow_pattern_id, visibility, created_by)
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8)`,
       [
-        `org.proj.ns.action${i}.${hash}`,
         "org",
         "proj",
         "ns",
         `action${i}`,
         hash,
-        `Action ${i}`,
         capId,
         "public",
         "user",
@@ -711,34 +704,30 @@ Deno.test("CapabilityStore - listWithSchemas() orders by usageCount", async () =
   await store.saveCapability({ code: "const b = 2;", intent: "High usage", durationMs: 100 });
   await store.saveCapability({ code: "const b = 2;", intent: "High usage", durationMs: 100 });
 
-  // Create records with all required fields
+  // Create records (note: display_name dropped in migration 028)
   await db.query(
-    `INSERT INTO capability_records (id, org, project, namespace, action, hash, display_name, workflow_pattern_id, visibility, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    `INSERT INTO capability_records (id, org, project, namespace, action, hash, workflow_pattern_id, visibility, created_by)
+     VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8)`,
     [
-      "org.proj.ns.low.1111",
       "org",
       "proj",
       "ns",
       "low",
       "1111",
-      "Low Usage",
       cap1.id,
       "public",
       "user",
     ],
   );
   await db.query(
-    `INSERT INTO capability_records (id, org, project, namespace, action, hash, display_name, workflow_pattern_id, visibility, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    `INSERT INTO capability_records (id, org, project, namespace, action, hash, workflow_pattern_id, visibility, created_by)
+     VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8)`,
     [
-      "org.proj.ns.high.2222",
       "org",
       "proj",
       "ns",
       "high",
       "2222",
-      "High Usage",
       cap2.id,
       "public",
       "user",

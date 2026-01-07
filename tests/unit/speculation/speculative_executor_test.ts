@@ -8,8 +8,8 @@
  */
 
 import { assertEquals, assertExists } from "@std/assert";
-import { SpeculativeExecutor } from "../../../src/speculation/speculative-executor.ts";
-import { SpeculationManager } from "../../../src/speculation/speculation-manager.ts";
+import { SpeculativeExecutor } from "../../../src/dag/speculation/speculative-executor.ts";
+import { SpeculationManager } from "../../../src/dag/speculation/speculation-manager.ts";
 import type { PredictedNode } from "../../../src/graphrag/types.ts";
 
 // Helper to create test predictions

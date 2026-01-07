@@ -13,7 +13,7 @@ import type { WorkflowState } from "../state.ts";
 import type { EventStream } from "../event-stream.ts";
 import type { CommandQueue } from "../command-queue.ts";
 import type { CheckpointManager } from "../checkpoint-manager.ts";
-import type { EpisodicMemoryStore } from "../../learning/episodic-memory-store.ts";
+import type { EpisodicMemoryStore } from "../episodic/store.ts";
 import type { DAGSuggester } from "../../graphrag/dag-suggester.ts";
 import type { WorkerBridge } from "../../sandbox/worker-bridge.ts";
 import type { ToolDefinition } from "../../sandbox/types.ts";

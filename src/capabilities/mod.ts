@@ -7,6 +7,7 @@
  */
 
 export { CapabilityStore } from "./capability-store.ts";
+export { CapabilityDependencyStore } from "./capability-dependency-store.ts";
 export { ExecutionTraceStore } from "./execution-trace-store.ts";
 export type { SaveTraceInput } from "./execution-trace-store.ts";
 export { CapabilityMatcher } from "./matcher.ts";

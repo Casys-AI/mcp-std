@@ -17,6 +17,7 @@ import type { GatewayHandler } from "../gateway-handler.ts";
 import type { CheckpointManager } from "../../dag/checkpoint-manager.ts";
 import type { AdaptiveThresholdManager } from "../adaptive-threshold.ts";
 import type { AlgorithmTracer } from "../../telemetry/algorithm-tracer.ts";
+import type { EpisodicMemoryStore } from "../../dag/episodic/store.ts";
 
 /**
  * Dependencies required for workflow handler
@@ -36,4 +37,6 @@ export interface WorkflowHandlerDependencies {
   adaptiveThresholdManager?: AdaptiveThresholdManager;
   /** Story 7.6: Algorithm tracer for observability */
   algorithmTracer?: AlgorithmTracer;
+  /** ADR-008: Episodic memory for learning from workflow executions */
+  episodicMemory?: EpisodicMemoryStore;
 }

@@ -1049,6 +1049,11 @@ export class SHGAT {
    *
    * No TraceFeatures - pure structural similarity learned via message passing + attention.
    *
+   * TODO(episodic-memory): This method uses cap.successRate from capability_records (aggregated),
+   * but does NOT use episodic memory for context-aware success rates.
+   * Episodic memory is only used in DAGSuggester.predictNextNodes() for speculation.
+   * Consider: Add optional EpisodicMemoryStore parameter for contextual reliability adjustment.
+   *
    * @param intentEmbedding - User intent embedding (1024 dim)
    * @param _contextToolIds - Unused in v1 (kept for API compatibility)
    */

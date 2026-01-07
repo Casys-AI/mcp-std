@@ -18,10 +18,10 @@ import {
   retrieveRelevantEpisodes,
 } from "../../../../src/graphrag/learning/episodic-adapter.ts";
 import type { WorkflowPredictionState } from "../../../../src/graphrag/types.ts";
-import type { EpisodicMemoryStore } from "../../../../src/learning/episodic-memory-store.ts";
+import type { EpisodicMemoryStore } from "../../../../src/dag/episodic/store.ts";
 import type { DagScoringConfig } from "../../../../src/graphrag/dag-scoring-config.ts";
 import { DEFAULT_DAG_SCORING_CONFIG } from "../../../../src/graphrag/dag-scoring-config.ts";
-import type { RetrieveOptions, ThresholdContext } from "../../../../src/learning/types.ts";
+import type { RetrieveOptions, ThresholdContext } from "../../../../src/dag/episodic/types.ts";
 
 /**
  * Create mock workflow prediction state

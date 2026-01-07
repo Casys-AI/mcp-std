@@ -419,6 +419,10 @@ async function executeStandardWorkflow(
     controlledExecutor.setWorkerBridge(context.bridge);
     // Loop Fix: Set tool definitions for loop code that contains MCP calls
     controlledExecutor.setToolDefinitions(toolDefs);
+    // ADR-008: Set episodic memory for learning capture
+    if (deps.episodicMemory) {
+      controlledExecutor.setEpisodicMemoryStore(deps.episodicMemory);
+    }
 
     const result = await controlledExecutor.execute(dag);
 
@@ -507,6 +511,10 @@ async function executeWithPerLayerValidation(
   controlledExecutor.setWorkerBridge(context.bridge);
   // Loop Fix: Set tool definitions for loop code that contains MCP calls
   controlledExecutor.setToolDefinitions(toolDefs);
+  // ADR-008: Set episodic memory for learning capture
+  if (deps.episodicMemory) {
+    controlledExecutor.setEpisodicMemoryStore(deps.episodicMemory);
+  }
 
   // Start streaming execution
   const generator = controlledExecutor.executeStream(dag, workflowId);
