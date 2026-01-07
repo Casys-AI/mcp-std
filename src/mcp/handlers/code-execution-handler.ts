@@ -47,6 +47,7 @@ import {
   DEFAULT_DAG_SCORING_CONFIG,
 } from "../../graphrag/dag-scoring-config.ts";
 import { buildToolDefinitionsFromDAG } from "./shared/tool-definitions.ts";
+import type { ICodeAnalyzer } from "../../domain/interfaces/code-analyzer.ts";
 
 /**
  * Dependencies required for code execution handler
@@ -66,6 +67,8 @@ export interface CodeExecutionDependencies {
   db?: DbClient;
   /** Scoring config for search thresholds */
   scoringConfig?: DagScoringConfig;
+  /** Code analyzer for static structure analysis (Phase 3.2: DI) */
+  codeAnalyzer?: ICodeAnalyzer;
 }
 
 /**
@@ -180,8 +183,10 @@ async function tryDagExecution(
       return null;
     }
 
-    const structureBuilder = new StaticStructureBuilder(deps.db);
-    const staticStructure = await structureBuilder.buildStaticStructure(request.code);
+    // Phase 3.2: Use DI-injected codeAnalyzer when available
+    const staticStructure = deps.codeAnalyzer
+      ? await deps.codeAnalyzer.analyze(request.code)
+      : await new StaticStructureBuilder(deps.db).buildStaticStructure(request.code);
 
     // AC6: Check if structure is valid for DAG conversion
     if (!isValidForDagConversion(staticStructure)) {
@@ -524,6 +529,7 @@ async function executeSandboxMode(
       deps.capabilityStore,
       deps.adaptiveThresholdManager,
       deps.db,
+      deps.codeAnalyzer,
     );
   }
 
@@ -660,13 +666,16 @@ async function recordCapabilityFeedback(
   capabilityStore: CapabilityStore,
   adaptiveThresholdManager: AdaptiveThresholdManager,
   db?: DbClient,
+  codeAnalyzer?: ICodeAnalyzer,
 ): Promise<void> {
   try {
     // Use semantic hash to match how capabilities are stored
     let codeHash: string;
     if (db) {
-      const builder = new StaticStructureBuilder(db);
-      const structure = await builder.buildStaticStructure(request.code);
+      // Phase 3.2: Use DI-injected codeAnalyzer when available
+      const structure = codeAnalyzer
+        ? await codeAnalyzer.analyze(request.code)
+        : await new StaticStructureBuilder(db).buildStaticStructure(request.code);
       if (structure.nodes.length > 0) {
         codeHash = await hashSemanticStructure(structure);
       } else {

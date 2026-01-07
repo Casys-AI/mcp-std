@@ -283,7 +283,7 @@ development_status:
   14-4-dynamic-mcp-loader-registry: review # Implementation complete 2026-01-06, 192 tests passing, 16 tasks done
   14-5-sandboxed-local-mcp-execution: review # Implementation complete 2026-01-07, 24 tests passing (8 isolation + 7 RPC + 9 integration)
   # Phase 3: Cloud Integration (~4 days)
-  14-6-byok-api-key-management: ready-for-dev # BYOK key detection, HIL for missing keys, sanitization - Rewritten 2026-01-07
+  14-6-byok-api-key-management: review # Implementation complete 2026-01-07 - 76 tests (63 BYOK + 13 loader)
   14-7-mcp-source-resolution: backlog # Registry strategy (depends on 13.8 MCP Server Registry)
   # Phase 4: Quality (~3 days)
   14-8-e2e-integration-testing: backlog # Full flow tests,  offline mode, permission boundaries

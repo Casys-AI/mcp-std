@@ -40,6 +40,7 @@ import {
 import type { AlgorithmTracer } from "../../telemetry/algorithm-tracer.ts";
 import { TelemetryAdapter } from "../../telemetry/decision-logger.ts";
 import { getSuggestion, type SuggestedDag } from "./suggestion-handler.ts";
+import type { ICodeAnalyzer } from "../../domain/interfaces/code-analyzer.ts";
 
 import { formatMCPToolError } from "../server/responses.ts";
 import { ServerDefaults } from "../server/constants.ts";
@@ -99,6 +100,8 @@ export interface ExecuteDependencies {
   algorithmTracer?: AlgorithmTracer;
   /** Callback to save SHGAT params after PER training */
   onSHGATParamsUpdated?: () => Promise<void>;
+  /** Code analyzer for static structure analysis (Phase 3.2: DI) */
+  codeAnalyzer?: ICodeAnalyzer;
 }
 
 /**
@@ -487,8 +490,10 @@ async function executeDirectMode(
   });
 
   // Step 1: Static analysis via SWC (before execution)
-  const structureBuilder = new StaticStructureBuilder(deps.db);
-  const staticStructure = await structureBuilder.buildStaticStructure(code);
+  // Phase 3.2: Use DI-injected codeAnalyzer when available
+  const staticStructure = deps.codeAnalyzer
+    ? await deps.codeAnalyzer.analyze(code)
+    : await new StaticStructureBuilder(deps.db).buildStaticStructure(code);
 
   log.debug("[pml:execute] Static structure built", {
     nodeCount: staticStructure.nodes.length,

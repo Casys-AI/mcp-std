@@ -1,6 +1,6 @@
 # Story 14.5: Sandboxed Capability Code Execution
 
-Status: ready-for-dev
+Status: review
 
 > **Epic:** 14 - JSR Package Local/Cloud MCP Routing
 > **FR Coverage:** FR14-5 (Sandboxed execution for registry capability code)
@@ -147,9 +147,9 @@ Without sandboxing, malicious capability code from registry could:
 
 ### Phase 1: Sandbox Worker Infrastructure (~1h)
 
-- [ ] Task 1: Create sandbox worker runner (AC: #1, #2)
-  - [ ] Create `packages/pml/src/sandbox/execution/worker-runner.ts`
-  - [ ] Implement `SandboxWorker` class with `permissions: "none"`:
+- [x] Task 1: Create sandbox worker runner (AC: #1, #2)
+  - [x] Create `packages/pml/src/sandbox/execution/worker-runner.ts`
+  - [x] Implement `SandboxWorker` class with `permissions: "none"`:
     ```typescript
     class SandboxWorker {
       private worker: Worker;
@@ -168,19 +168,19 @@ Without sandboxing, malicious capability code from registry could:
       shutdown(): void;
     }
     ```
-  - [ ] Handle Worker lifecycle (create, execute, terminate)
-  - [ ] Implement execution timeout (5 minutes)
+  - [x] Handle Worker lifecycle (create, execute, terminate)
+  - [x] Implement execution timeout (5 minutes)
 
-- [ ] Task 2: Create sandbox types (AC: #1-8)
-  - [ ] Create `packages/pml/src/sandbox/types.ts`
-  - [ ] Define `SandboxResult`, `SandboxError`, `RpcMessage` types
-  - [ ] Export from `packages/pml/src/sandbox/mod.ts`
+- [x] Task 2: Create sandbox types (AC: #1-8)
+  - [x] Create `packages/pml/src/sandbox/types.ts`
+  - [x] Define `SandboxResult`, `SandboxError`, `RpcMessage` types
+  - [x] Export from `packages/pml/src/sandbox/mod.ts`
 
 ### Phase 2: Worker Script & RPC Bridge (~1.5h)
 
-- [ ] Task 3: Create sandbox worker script (AC: #3, #4)
-  - [ ] Create `packages/pml/src/sandbox/execution/sandbox-script.ts`
-  - [ ] Implement mcp.* proxy that sends RPC to main thread:
+- [x] Task 3: Create sandbox worker script (AC: #3, #4)
+  - [x] Create `packages/pml/src/sandbox/execution/sandbox-script.ts`
+  - [x] Implement mcp.* proxy that sends RPC to main thread:
     ```typescript
     const mcp = new Proxy({}, {
       get: (_, namespace: string) => new Proxy({}, {
@@ -191,22 +191,22 @@ Without sandboxing, malicious capability code from registry could:
       }),
     });
     ```
-  - [ ] Implement message handler for execute requests
-  - [ ] Inject `mcp` proxy into capability code context
+  - [x] Implement message handler for execute requests
+  - [x] Inject `mcp` proxy into capability code context
 
-- [ ] Task 4: Implement RPC bridge (AC: #3, #4)
-  - [ ] Create `packages/pml/src/sandbox/execution/rpc-bridge.ts`
-  - [ ] Implement bidirectional messaging:
+- [x] Task 4: Implement RPC bridge (AC: #3, #4)
+  - [x] Create `packages/pml/src/sandbox/execution/rpc-bridge.ts`
+  - [x] Implement bidirectional messaging:
     - Worker → Main: `{type: "rpc", id, method, args}`
     - Main → Worker: `{type: "rpc_response", id, result}`
-  - [ ] Track pending requests by ID
-  - [ ] Implement RPC timeout (30 seconds per call)
+  - [x] Track pending requests by ID
+  - [x] Implement RPC timeout (30 seconds per call)
 
 ### Phase 3: Integration with CapabilityLoader (~1h)
 
-- [ ] Task 5: Modify CapabilityLoader for sandboxed execution (AC: all)
-  - [ ] Update `packages/pml/src/loader/capability-loader.ts`
-  - [ ] Route capability execution through sandbox:
+- [x] Task 5: Modify CapabilityLoader for sandboxed execution (AC: all)
+  - [x] Update `packages/pml/src/loader/capability-loader.ts`
+  - [x] Route capability execution through sandbox:
     ```typescript
     async executeCapability(code: string, args: unknown): Promise<unknown> {
       const sandbox = new SandboxWorker();
@@ -218,52 +218,52 @@ Without sandboxing, malicious capability code from registry could:
       }
     }
     ```
-  - [ ] Handle RPC requests from sandbox → route to StdioManager
-  - [ ] Pass results back to sandbox
+  - [x] Handle RPC requests from sandbox → route to StdioManager
+  - [x] Pass results back to sandbox
 
-- [ ] Task 6: Wire RPC to existing infrastructure (AC: #3, #4)
-  - [ ] Route `mcp.{namespace}.{action}` to appropriate handler:
+- [x] Task 6: Wire RPC to existing infrastructure (AC: #3, #4)
+  - [x] Route `mcp.{namespace}.{action}` to appropriate handler:
     - Check if namespace is a loaded MCP dep → StdioManager
     - Check routing config → cloud or local
-  - [ ] Integrate with HIL flow (Story 14.3b)
-  - [ ] Return results through RPC bridge
+  - [x] Integrate with HIL flow (Story 14.3b)
+  - [x] Return results through RPC bridge
 
 ### Phase 4: Constants & Error Handling (~30m)
 
-- [ ] Task 7: Create constants and timeout handler
-  - [ ] Create `packages/pml/src/sandbox/constants.ts`:
+- [x] Task 7: Create constants and timeout handler
+  - [x] Create `packages/pml/src/sandbox/constants.ts`:
     ```typescript
     export const SANDBOX_EXECUTION_TIMEOUT_MS = 5 * 60 * 1000; // 5 min
     export const SANDBOX_RPC_TIMEOUT_MS = 30 * 1000; // 30 sec
     ```
-  - [ ] Create `packages/pml/src/sandbox/execution/timeout-handler.ts` (Phase 2.4 aligned):
+  - [x] Create `packages/pml/src/sandbox/execution/timeout-handler.ts` (Phase 2.4 aligned):
     ```typescript
     export class TimeoutHandler {
       wrap<T>(promise: Promise<T>, timeoutMs: number): Promise<T>;
     }
     ```
 
-- [ ] Task 8: Implement error handling (AC: #1, #2, #5, #6)
-  - [ ] Catch `PermissionDenied` errors in sandbox
-  - [ ] Format clear error messages explaining what was blocked
-  - [ ] Log blocked attempts for debugging
+- [x] Task 8: Implement error handling (AC: #1, #2, #5, #6)
+  - [x] Catch `PermissionDenied` errors in sandbox
+  - [x] Format clear error messages explaining what was blocked
+  - [x] Log blocked attempts for debugging
 
 ### Phase 5: Tests (~1.5h)
 
-- [ ] Task 9: Unit tests for sandbox isolation
-  - [ ] Test that `Deno.readFile()` throws in sandbox
-  - [ ] Test that `fetch()` throws in sandbox
-  - [ ] Test that `Deno.Command` throws in sandbox
+- [x] Task 9: Unit tests for sandbox isolation
+  - [x] Test that `Deno.readFile()` throws in sandbox
+  - [x] Test that `fetch()` throws in sandbox
+  - [x] Test that `Deno.Command` throws in sandbox
 
-- [ ] Task 10: Unit tests for RPC bridge
-  - [ ] Test mcp.* proxy sends RPC messages
-  - [ ] Test response routing back to sandbox
-  - [ ] Test timeout handling
+- [x] Task 10: Unit tests for RPC bridge
+  - [x] Test mcp.* proxy sends RPC messages
+  - [x] Test response routing back to sandbox
+  - [x] Test timeout handling
 
-- [ ] Task 11: Integration tests
-  - [ ] Test full flow: load capability → sandbox → mcp.* call → result
-  - [ ] Test HIL integration via mcp.* calls
-  - [ ] Test execution timeout
+- [x] Task 11: Integration tests
+  - [x] Test full flow: load capability → sandbox → mcp.* call → result
+  - [x] Test HIL integration via mcp.* calls
+  - [x] Test execution timeout
 
 ## Dev Notes
 
@@ -612,11 +612,23 @@ Story 14.5 now uses **identical naming** to Phase 2.4:
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+Claude Opus 4.5 (claude-opus-4-5-20251101)
 
 ### Debug Log References
 
+- All tests pass: 223 tests (including 24 new sandbox tests)
+- `deno test packages/pml/tests/ --allow-all --unstable-worker-options`
+
 ### Completion Notes List
+
+- ✅ Implemented sandboxed execution using Deno Worker with `permissions: "none"`
+- ✅ Created RPC bridge for mcp.* calls from sandbox to main thread
+- ✅ Integrated with existing CapabilityLoader via `executeInSandbox()` method
+- ✅ Sandbox enabled by default (`sandboxEnabled: true`) - secure by default
+- ✅ Full test coverage: isolation tests, RPC tests, integration tests
+- ✅ Blocks direct filesystem, network, subprocess, and env access
+- ✅ mcp.* proxy is the ONLY way capability code can interact with system
+- ✅ Timeout handling: 5 min execution, 30 sec per RPC call
 
 ### Change Log
 
@@ -626,6 +638,25 @@ Story 14.5 now uses **identical naming** to Phase 2.4:
 | 2026-01-06 | Refactored: Sandbox capability code only, not MCP servers | Claude Opus 4.5 |
 | 2026-01-06 | Added Phase 2.4 alignment section - future lib/sandbox/ opportunity | Claude Opus 4.5 |
 | 2026-01-06 | Aligned file naming with Phase 2.4: execution/ subdirectory structure | Claude Opus 4.5 |
+| 2026-01-07 | Implementation complete: sandbox worker, RPC bridge, 24 tests passing | Claude Opus 4.5 |
 
 ### File List
+
+**New Files:**
+- packages/pml/src/sandbox/mod.ts
+- packages/pml/src/sandbox/types.ts
+- packages/pml/src/sandbox/constants.ts
+- packages/pml/src/sandbox/execution/worker-runner.ts
+- packages/pml/src/sandbox/execution/sandbox-script.ts
+- packages/pml/src/sandbox/execution/rpc-bridge.ts
+- packages/pml/src/sandbox/execution/timeout-handler.ts
+- packages/pml/src/loader/code-fetcher.ts
+- packages/pml/tests/sandbox_isolation_test.ts
+- packages/pml/tests/sandbox_rpc_test.ts
+- packages/pml/tests/sandbox_integration_test.ts
+
+**Modified Files:**
+- packages/pml/src/loader/capability-loader.ts (added sandbox integration)
+- packages/pml/src/loader/mod.ts (exported code-fetcher)
+- packages/pml/tests/capability_loader_test.ts (added sandboxEnabled: false for cache test)
 
