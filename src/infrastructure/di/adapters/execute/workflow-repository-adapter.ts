@@ -26,10 +26,16 @@ const workflowStore = new Map<string, WorkflowState>();
 
 /**
  * Checkpoint manager interface (from existing infrastructure)
+ * Matches CheckpointManager from dag/checkpoint-manager.ts
  */
 export interface CheckpointManagerInfra {
-  saveCheckpoint(workflowId: string, state: unknown): Promise<string>;
-  loadCheckpoint(workflowId: string, checkpointId: string): Promise<unknown | null>;
+  saveCheckpoint(
+    workflowId: string,
+    layer: number,
+    state: { workflowId: string; currentLayer: number; messages?: unknown[]; tasks?: unknown[] },
+  ): Promise<{ id: string }>;
+  loadCheckpoint(checkpointId: string): Promise<unknown | null>;
+  getLatestCheckpoint(workflowId: string): Promise<{ id: string; layer: number } | null>;
 }
 
 /**
@@ -101,12 +107,15 @@ export class WorkflowRepositoryAdapter implements IWorkflowRepository {
 
   /**
    * Update workflow state
+   * Saves checkpoint when layer changes (for resume capability)
    */
   async update(workflowId: string, input: UpdateWorkflowInput): Promise<WorkflowState> {
     const workflow = await this.get(workflowId);
     if (!workflow) {
       throw new Error(`Workflow ${workflowId} not found`);
     }
+
+    const layerChanged = input.currentLayer !== undefined && input.currentLayer !== workflow.currentLayer;
 
     const updated: WorkflowState = {
       ...workflow,
@@ -116,6 +125,30 @@ export class WorkflowRepositoryAdapter implements IWorkflowRepository {
       latestCheckpointId: input.latestCheckpointId ?? workflow.latestCheckpointId,
       updatedAt: new Date(),
     };
+
+    // Save checkpoint when layer changes
+    if (layerChanged && this.deps.checkpointManager) {
+      try {
+        const checkpoint = await this.deps.checkpointManager.saveCheckpoint(
+          workflowId,
+          updated.currentLayer,
+          {
+            workflowId: updated.workflowId,
+            currentLayer: updated.currentLayer,
+            messages: [],
+            tasks: updated.results.map(r => ({ id: r.taskId, status: r.status })),
+          },
+        );
+        updated.latestCheckpointId = checkpoint.id;
+        log.debug("[WorkflowRepositoryAdapter] Checkpoint saved", {
+          workflowId,
+          checkpointId: checkpoint.id,
+          layer: updated.currentLayer,
+        });
+      } catch (err) {
+        log.warn("[WorkflowRepositoryAdapter] Failed to save checkpoint", { error: String(err) });
+      }
+    }
 
     workflowStore.set(workflowId, updated);
 

@@ -637,6 +637,3 @@ export class DAGStreamOrchestrator {
     return { newLayers, newDag };
   }
 }
-
-// Singleton for convenience
-export const dagStreamOrchestrator = new DAGStreamOrchestrator();

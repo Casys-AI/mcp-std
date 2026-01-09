@@ -369,6 +369,11 @@ export async function handleGraphHypergraph(
       options.includeTraces = includeTracesParam === "true";
     }
 
+    // Story 9.8: Multi-tenant isolation - filter by logged-in user
+    if (ctx.userId) {
+      options.userId = ctx.userId;
+    }
+
     // Build hypergraph data
     const result = await ctx.capabilityDataService.buildHypergraphData(options);
 

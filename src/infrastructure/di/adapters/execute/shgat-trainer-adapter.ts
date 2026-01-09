@@ -21,7 +21,13 @@ import type {
  */
 export interface SHGATLiveTrainerInfra {
   train(
-    traces: Array<{ type: string; tool?: string; success?: boolean }>,
+    input: {
+      traces: Array<{ type: string; tool?: string; success?: boolean }>;
+      intentEmbedding?: number[];
+      success: boolean;
+      executionTimeMs: number;
+      capabilityId?: string;
+    },
     config?: {
       minTraces?: number;
       maxTraces?: number;
@@ -59,7 +65,25 @@ export interface SHGATTrainerAdapterDeps {
  * Adapts SHGATLiveTrainer to ISHGATTrainer interface
  */
 export class SHGATTrainerAdapter implements ISHGATTrainer {
-  constructor(private readonly deps: SHGATTrainerAdapterDeps) {}
+  private deps: SHGATTrainerAdapterDeps;
+
+  constructor(deps: SHGATTrainerAdapterDeps) {
+    this.deps = deps;
+  }
+
+  /**
+   * Set live trainer (lazy initialization after algorithms are loaded)
+   */
+  setLiveTrainer(liveTrainer: SHGATLiveTrainerInfra): void {
+    this.deps = { ...this.deps, liveTrainer };
+  }
+
+  /**
+   * Set Thompson sampling (lazy initialization)
+   */
+  setThompsonSampling(thompsonSampling: ThompsonSamplingInfra): void {
+    this.deps = { ...this.deps, thompsonSampling };
+  }
 
   /**
    * Check if training should be triggered
@@ -89,7 +113,7 @@ export class SHGATTrainerAdapter implements ISHGATTrainer {
     }
 
     try {
-      const result = await this.deps.liveTrainer.train(input.traces, config);
+      const result = await this.deps.liveTrainer.train(input, config);
 
       return {
         trained: result.trained,

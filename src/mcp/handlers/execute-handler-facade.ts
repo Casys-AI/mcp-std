@@ -68,6 +68,15 @@ export class ExecuteHandlerFacade {
   constructor(private readonly deps: ExecuteHandlerFacadeDeps) {}
 
   /**
+   * Set user ID for multi-tenant trace isolation (Story 9.8)
+   * Called per-request before handle()
+   */
+  setUserId(userId: string | null): void {
+    this.deps.executeSuggestionUC?.setUserId(userId);
+    this.deps.executeDirectUC?.setUserId(userId);
+  }
+
+  /**
    * Handle execute request
    */
   async handle(request: ExecuteRequest): Promise<ExecuteResponse> {
@@ -117,12 +126,8 @@ export class ExecuteHandlerFacade {
       },
     });
 
-    // Trigger SHGAT training in background (fire and forget)
-    if (result.success && result.data?.traces && this.deps.trainSHGATUC) {
-      this.triggerTraining(result.data.traces, result.data.success, result.data.executionTimeMs).catch(
-        (err) => log.warn(`[ExecuteHandlerFacade] Training trigger failed: ${err}`),
-      );
-    }
+    // Phase 3.2: Training is now event-driven via capability.learned events
+    // See TrainingSubscriber in telemetry/subscribers/training-subscriber.ts
 
     if (!result.success) {
       return {
@@ -149,7 +154,12 @@ export class ExecuteHandlerFacade {
 
   private async handleSuggestion(request: ExecuteRequest): Promise<ExecuteResponse> {
     if (!this.deps.executeSuggestionUC) {
-      return this.notConfiguredError("ExecuteSuggestionUseCase not configured");
+      log.warn("[ExecuteHandlerFacade] ExecuteSuggestionUseCase not configured");
+      return {
+        status: "suggestions",
+        suggestions: { confidence: 0 },
+        executionTimeMs: 0,
+      };
     }
 
     const result = await this.deps.executeSuggestionUC.execute({
@@ -166,6 +176,22 @@ export class ExecuteHandlerFacade {
           confidence: 0,
         },
         executionTimeMs: 0,
+      };
+    }
+
+    // Fail-fast: if we have confidence but no suggestedDag, that's an error state
+    if (result.data.confidence > 0 && !result.data.suggestedDag) {
+      log.error("[ExecuteHandlerFacade] Suggestion found capability but failed to build DAG", {
+        confidence: result.data.confidence,
+        bestCapability: result.data.bestCapability,
+      });
+      return {
+        status: "suggestions",
+        suggestions: {
+          confidence: 0,
+          error: "Found matching capability but failed to construct suggested DAG",
+        },
+        executionTimeMs: result.data.executionTimeMs,
       };
     }
 
@@ -237,24 +263,6 @@ export class ExecuteHandlerFacade {
     };
   }
 
-  private async triggerTraining(
-    traces: unknown[],
-    success: boolean,
-    executionTimeMs: number,
-  ): Promise<void> {
-    if (!this.deps.trainSHGATUC) return;
-
-    await this.deps.trainSHGATUC.execute({
-      taskResults: traces as Array<{
-        taskId: string;
-        tool: string;
-        args: Record<string, JsonValue>;
-        result: JsonValue | null;
-        success: boolean;
-        durationMs: number;
-      }>,
-      success,
-      executionTimeMs,
-    });
-  }
+  // Phase 3.2: triggerTraining removed - training is now event-driven
+  // See TrainingSubscriber in telemetry/subscribers/training-subscriber.ts
 }

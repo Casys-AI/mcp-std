@@ -41,7 +41,7 @@ export {
 } from "./responses.ts";
 
 // Lifecycle management
-export { createMCPServer, startStdioServer, stopServer } from "./lifecycle.ts";
+export { createMCPServer, type McpServerInstance, startStdioServer, stopServer } from "./lifecycle.ts";
 
 // Health checks
 export {

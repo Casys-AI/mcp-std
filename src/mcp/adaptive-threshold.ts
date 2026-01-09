@@ -31,6 +31,7 @@ import {
   getToolPermissionConfig,
   type PermissionConfig,
 } from "../capabilities/permission-inferrer.ts";
+import type { TraceTaskResult } from "../capabilities/types.ts";
 
 /**
  * Adaptive threshold configuration
@@ -641,4 +642,36 @@ export function calculateCapabilityRisk(toolsUsed: string[]): RiskCategory {
   });
 
   return maxRisk;
+}
+
+/**
+ * Update Thompson Sampling based on task execution results.
+ *
+ * Records success/failure outcomes for each tool used
+ * in the Thompson Sampler for future threshold calculations.
+ *
+ * @param thresholdManager - AdaptiveThresholdManager with Thompson Sampler
+ * @param taskResults - Task execution results with tool IDs and success status
+ */
+export function updateThompsonSampling(
+  thresholdManager: AdaptiveThresholdManager | undefined,
+  taskResults: TraceTaskResult[],
+): void {
+  if (!thresholdManager) {
+    log.debug("[Thompson] Update skipped - no threshold manager");
+    return;
+  }
+
+  let updated = 0;
+  for (const result of taskResults) {
+    if (result.tool && result.tool !== "unknown") {
+      thresholdManager.recordToolOutcome(result.tool, result.success);
+      updated++;
+    }
+  }
+
+  log.debug("[Thompson] Sampling updated", {
+    toolsUpdated: updated,
+    totalResults: taskResults.length,
+  });
 }

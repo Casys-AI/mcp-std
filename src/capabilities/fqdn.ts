@@ -298,3 +298,209 @@ export function getShortName(fqdn: string): string {
   const { namespace, action } = parseFQDN(fqdn);
   return `${namespace}.${action}`;
 }
+
+// ============================================================================
+// Story 14.7: Extended FQDN Utilities
+// ============================================================================
+
+/**
+ * FQDN components without hash (4-part).
+ */
+export interface FQDNComponentsWithoutHash {
+  org: string;
+  project: string;
+  namespace: string;
+  action: string;
+}
+
+/**
+ * Parse a 4-part FQDN without hash (Story 14.7 AC10).
+ *
+ * Used for lookup requests where client doesn't know the current hash.
+ *
+ * @param fqdn - The 4-part FQDN (org.project.namespace.action)
+ * @returns The parsed components without hash
+ * @throws Error if FQDN is malformed
+ *
+ * @example
+ * ```typescript
+ * const parts = parseFQDNWithoutHash("pml.std.filesystem.read_file");
+ * // Returns: { org: "pml", project: "std", namespace: "filesystem", action: "read_file" }
+ * ```
+ */
+export function parseFQDNWithoutHash(fqdn: string): FQDNComponentsWithoutHash {
+  const parts = fqdn.split(".");
+
+  if (parts.length !== 4) {
+    throw new Error(
+      `Invalid FQDN format: "${fqdn}". Expected 4 parts (org.project.namespace.action), got ${parts.length}.`,
+    );
+  }
+
+  const [org, project, namespace, action] = parts;
+
+  // Validate each component
+  if (!COMPONENT_REGEX.test(org)) {
+    throw new Error(`Invalid org in FQDN: "${org}".`);
+  }
+  if (!COMPONENT_REGEX.test(project)) {
+    throw new Error(`Invalid project in FQDN: "${project}".`);
+  }
+  if (!COMPONENT_REGEX.test(namespace)) {
+    throw new Error(`Invalid namespace in FQDN: "${namespace}".`);
+  }
+  if (!COMPONENT_REGEX.test(action)) {
+    throw new Error(`Invalid action in FQDN: "${action}".`);
+  }
+
+  return { org, project, namespace, action };
+}
+
+/**
+ * Check if a string is a valid 4-part FQDN (without hash).
+ *
+ * @param fqdn - The string to check
+ * @returns true if valid 4-part FQDN, false otherwise
+ */
+export function isValidFQDNWithoutHash(fqdn: string): boolean {
+  try {
+    parseFQDNWithoutHash(fqdn);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Determine if FQDN has hash (5-part) or not (4-part).
+ *
+ * @param fqdn - The FQDN to check
+ * @returns 5 if has hash, 4 if no hash, 0 if invalid
+ */
+export function getFQDNPartCount(fqdn: string): 4 | 5 | 0 {
+  const parts = fqdn.split(".");
+  if (parts.length === 5 && HASH_REGEX.test(parts[4])) {
+    return 5;
+  }
+  if (parts.length === 4) {
+    return 4;
+  }
+  return 0;
+}
+
+/**
+ * Strip hash from a 5-part FQDN to get the 4-part base.
+ *
+ * @param fqdn - Full 5-part FQDN
+ * @returns 4-part FQDN without hash
+ *
+ * @example
+ * ```typescript
+ * stripHash("pml.std.filesystem.read_file.a7f3");
+ * // Returns: "pml.std.filesystem.read_file"
+ * ```
+ */
+export function stripHash(fqdn: string): string {
+  const parts = parseFQDN(fqdn);
+  return `${parts.org}.${parts.project}.${parts.namespace}.${parts.action}`;
+}
+
+/**
+ * Generate full SHA-256 hash from content (for lockfile integrity).
+ *
+ * Unlike `generateHash` which returns 4 chars, this returns the full hash.
+ *
+ * @param content - Content to hash
+ * @returns Full SHA-256 hash as hex string
+ */
+export async function generateFullHash(content: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(content);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = new Uint8Array(hashBuffer);
+  return Array.from(hashArray)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/**
+ * Generate FQDN for a MiniTool (Story 14.7).
+ *
+ * MiniTools use the pattern: pml.std.{module}.{tool}.{hash}
+ *
+ * @param module - Module name (e.g., "filesystem", "json")
+ * @param tool - Tool name (e.g., "read_file", "parse")
+ * @param code - Tool code for hash generation
+ * @returns Full 5-part FQDN
+ *
+ * @example
+ * ```typescript
+ * const fqdn = await generateMiniToolFqdn("filesystem", "read_file", toolCode);
+ * // Returns: "pml.std.filesystem.read_file.b2c4"
+ * ```
+ */
+export async function generateMiniToolFqdn(
+  module: string,
+  tool: string,
+  code: string,
+): Promise<string> {
+  const hash = await generateHash(code);
+  return generateFQDN({
+    org: "pml",
+    project: "std",
+    namespace: module,
+    action: tool,
+    hash,
+  });
+}
+
+/**
+ * Generate FQDN for an MCP server (Story 14.7).
+ *
+ * MCP servers use the pattern: pml.mcp.{server}.server.{hash}
+ *
+ * @param serverName - Server name (e.g., "serena", "memory", "tavily")
+ * @param metadata - Server metadata for hash generation (JSON stringified)
+ * @returns Full 5-part FQDN
+ *
+ * @example
+ * ```typescript
+ * const fqdn = await generateMcpServerFqdn("serena", serverConfig);
+ * // Returns: "pml.mcp.serena.server.c5d6"
+ * ```
+ */
+export async function generateMcpServerFqdn(
+  serverName: string,
+  metadata: Record<string, unknown>,
+): Promise<string> {
+  const content = JSON.stringify(metadata, Object.keys(metadata).sort());
+  const hash = await generateHash(content);
+  return generateFQDN({
+    org: "pml",
+    project: "mcp",
+    namespace: serverName,
+    action: "server",
+    hash,
+  });
+}
+
+/**
+ * Check if FQDN is a MiniTool (pml.std.*)
+ */
+export function isMiniToolFqdn(fqdn: string): boolean {
+  return fqdn.startsWith("pml.std.");
+}
+
+/**
+ * Check if FQDN is an MCP server (pml.mcp.*)
+ */
+export function isMcpServerFqdn(fqdn: string): boolean {
+  return fqdn.startsWith("pml.mcp.");
+}
+
+/**
+ * Check if FQDN is a user capability (not pml.*)
+ */
+export function isCapabilityFqdn(fqdn: string): boolean {
+  return !fqdn.startsWith("pml.");
+}

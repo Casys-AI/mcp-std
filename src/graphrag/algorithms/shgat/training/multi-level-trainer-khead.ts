@@ -131,6 +131,8 @@ export function resetMultiLevelKHeadGradients(
  * score = sigmoid(Q · K / √dim)
  * where Q = W_q @ intentProjected, K = W_k @ capEmbedding
  *
+ * Uses BLAS acceleration for matrix-vector multiplication when available.
+ *
  * @returns score and intermediates for backprop
  */
 export function computeKHeadScoreWithCache(
@@ -141,23 +143,12 @@ export function computeKHeadScoreWithCache(
 ): { score: number; logit: number; Q: number[]; K: number[]; dotQK: number } {
   // Use actual W_q dimensions (scoringDim = numHeads * 16, adaptive)
   const scoringDim = headParams.W_q.length;
-  const inputDim = headParams.W_q[0]?.length ?? intentProjected.length;
 
-  // Q = W_q @ intentProjected
-  const Q = new Array(scoringDim).fill(0);
-  for (let i = 0; i < scoringDim; i++) {
-    for (let j = 0; j < inputDim; j++) {
-      Q[i] += (headParams.W_q[i]?.[j] ?? 0) * (intentProjected[j] ?? 0);
-    }
-  }
+  // Q = W_q @ intentProjected (BLAS accelerated for inputDim >= 64)
+  const Q = math.matVecBlas(headParams.W_q, intentProjected);
 
-  // K = W_k @ capEmbedding
-  const K = new Array(scoringDim).fill(0);
-  for (let i = 0; i < scoringDim; i++) {
-    for (let j = 0; j < inputDim; j++) {
-      K[i] += (headParams.W_k[i]?.[j] ?? 0) * (capEmbedding[j] ?? 0);
-    }
-  }
+  // K = W_k @ capEmbedding (BLAS accelerated for inputDim >= 64)
+  const K = math.matVecBlas(headParams.W_k, capEmbedding);
 
   // dot(Q, K) / sqrt(dim)
   const dotQK = math.dot(Q, K);
@@ -206,6 +197,10 @@ export function computeMultiHeadKHeadScoresWithCache(
  * Given: dLoss/dScore
  * Compute: dLoss/dW_q, dLoss/dW_k, dLoss/dIntentProjected, dLoss/dCapEmbedding
  *
+ * Uses BLAS acceleration for:
+ * - Gradient accumulation via outer product (cblas_sger)
+ * - Backprop via transpose matrix-vector (cblas_sgemv)
+ *
  * Chain rule:
  *   score = sigmoid(Q·K / √d)
  *   dScore/d(Q·K) = score * (1 - score) / √d
@@ -234,7 +229,6 @@ export function backpropKHeadScore(
 ): { dIntentProjected: number[]; dCapEmbedding: number[] } {
   // Use actual W_q dimensions (scoringDim = numHeads * 16, adaptive)
   const scoringDim = headParams.W_q.length;
-  const inputDim = headParams.W_q[0]?.length ?? intentProjected.length;
   const scale = Math.sqrt(scoringDim);
 
   // d(score)/d(Q·K) = sigmoid'(x) = score * (1 - score)
@@ -246,36 +240,17 @@ export function backpropKHeadScore(
   const dQ = K.map((k) => dDotQK * k);
   const dK = Q.map((q) => dDotQK * q);
 
-  // Accumulate gradients for W_q: dQ[i]/dW_q[i][j] = intent[j]
-  for (let i = 0; i < scoringDim; i++) {
-    for (let j = 0; j < inputDim; j++) {
-      grads.dW_q[headIdx][i][j] += (dQ[i] ?? 0) * (intentProjected[j] ?? 0);
-    }
-  }
+  // Accumulate gradients for W_q: dW_q += dQ @ intent^T (outer product, BLAS accelerated)
+  math.outerProductAdd(grads.dW_q[headIdx], dQ, intentProjected);
 
-  // Accumulate gradients for W_k: dK[i]/dW_k[i][j] = cap[j]
-  for (let i = 0; i < scoringDim; i++) {
-    for (let j = 0; j < inputDim; j++) {
-      grads.dW_k[headIdx][i][j] += (dK[i] ?? 0) * (capEmbedding[j] ?? 0);
-    }
-  }
+  // Accumulate gradients for W_k: dW_k += dK @ cap^T (outer product, BLAS accelerated)
+  math.outerProductAdd(grads.dW_k[headIdx], dK, capEmbedding);
 
-  // Gradient w.r.t. inputs (for further backprop if needed)
-  // dQ/dIntent[j] = W_q[:][j]
-  const dIntentProjected = new Array(inputDim).fill(0);
-  for (let j = 0; j < inputDim; j++) {
-    for (let i = 0; i < scoringDim; i++) {
-      dIntentProjected[j] += (dQ[i] ?? 0) * (headParams.W_q[i]?.[j] ?? 0);
-    }
-  }
+  // Gradient w.r.t. inputs: dIntent = W_q^T @ dQ (transpose matmul, BLAS accelerated)
+  const dIntentProjected = math.matVecTransposeBlas(headParams.W_q, dQ);
 
-  // dK/dCap[j] = W_k[:][j]
-  const dCapEmbedding = new Array(inputDim).fill(0);
-  for (let j = 0; j < inputDim; j++) {
-    for (let i = 0; i < scoringDim; i++) {
-      dCapEmbedding[j] += (dK[i] ?? 0) * (headParams.W_k[i]?.[j] ?? 0);
-    }
-  }
+  // dCap = W_k^T @ dK (transpose matmul, BLAS accelerated)
+  const dCapEmbedding = math.matVecTransposeBlas(headParams.W_k, dK);
 
   return { dIntentProjected, dCapEmbedding };
 }
@@ -285,6 +260,8 @@ export function backpropKHeadScore(
  *
  * Unlike backpropKHeadScore, this does NOT use sigmoid derivative.
  * For InfoNCE, the gradient flows directly through the logit.
+ *
+ * Uses BLAS acceleration for gradient accumulation and backprop.
  *
  * logit = Q · K / √dim
  * dLoss/dLogit flows directly (no sigmoid in InfoNCE path)
@@ -300,7 +277,6 @@ export function backpropKHeadScoreLogit(
   headIdx: number,
 ): { dIntentProjected: number[]; dCapEmbedding: number[] } {
   const scoringDim = headParams.W_q.length;
-  const inputDim = headParams.W_q[0]?.length ?? intentProjected.length;
   const scale = Math.sqrt(scoringDim);
 
   // Direct gradient: dLoss/d(Q·K) = dLoss/dLogit * (1/√dim)
@@ -311,34 +287,17 @@ export function backpropKHeadScoreLogit(
   const dQ = K.map((k) => dDotQK * k);
   const dK = Q.map((q) => dDotQK * q);
 
-  // Accumulate gradients for W_q: dQ[i]/dW_q[i][j] = intent[j]
-  for (let i = 0; i < scoringDim; i++) {
-    for (let j = 0; j < inputDim; j++) {
-      grads.dW_q[headIdx][i][j] += (dQ[i] ?? 0) * (intentProjected[j] ?? 0);
-    }
-  }
+  // Accumulate gradients for W_q: dW_q += dQ @ intent^T (outer product, BLAS accelerated)
+  math.outerProductAdd(grads.dW_q[headIdx], dQ, intentProjected);
 
-  // Accumulate gradients for W_k: dK[i]/dW_k[i][j] = cap[j]
-  for (let i = 0; i < scoringDim; i++) {
-    for (let j = 0; j < inputDim; j++) {
-      grads.dW_k[headIdx][i][j] += (dK[i] ?? 0) * (capEmbedding[j] ?? 0);
-    }
-  }
+  // Accumulate gradients for W_k: dW_k += dK @ cap^T (outer product, BLAS accelerated)
+  math.outerProductAdd(grads.dW_k[headIdx], dK, capEmbedding);
 
-  // Gradient w.r.t. inputs (for further backprop if needed)
-  const dIntentProjected = new Array(inputDim).fill(0);
-  for (let j = 0; j < inputDim; j++) {
-    for (let i = 0; i < scoringDim; i++) {
-      dIntentProjected[j] += (dQ[i] ?? 0) * (headParams.W_q[i]?.[j] ?? 0);
-    }
-  }
+  // Gradient w.r.t. inputs: dIntent = W_q^T @ dQ (transpose matmul, BLAS accelerated)
+  const dIntentProjected = math.matVecTransposeBlas(headParams.W_q, dQ);
 
-  const dCapEmbedding = new Array(inputDim).fill(0);
-  for (let j = 0; j < inputDim; j++) {
-    for (let i = 0; i < scoringDim; i++) {
-      dCapEmbedding[j] += (dK[i] ?? 0) * (headParams.W_k[i]?.[j] ?? 0);
-    }
-  }
+  // dCap = W_k^T @ dK (transpose matmul, BLAS accelerated)
+  const dCapEmbedding = math.matVecTransposeBlas(headParams.W_k, dK);
 
   return { dIntentProjected, dCapEmbedding };
 }
@@ -448,22 +407,18 @@ export function backpropMultiHeadKHead(
  * Backprop through W_intent projection
  *
  * intentProjected = W_intent @ intentOriginal
+ * dW_intent += dIntentProjected @ intentOriginal^T (outer product)
+ *
+ * Uses BLAS acceleration for outer product when available.
  */
 export function backpropWIntent(
   dIntentProjected: number[],
   intentOriginal: number[],
   grads: MultiLevelKHeadGradientAccumulators,
-  config: SHGATConfig,
+  _config: SHGATConfig,
 ): void {
-  const { hiddenDim, embeddingDim } = config;
-  const inputDim = Math.min(intentOriginal.length, embeddingDim);
-  const outputDim = Math.min(dIntentProjected.length, hiddenDim);
-
-  for (let i = 0; i < outputDim; i++) {
-    for (let j = 0; j < inputDim; j++) {
-      grads.dW_intent[i][j] += (dIntentProjected[i] ?? 0) * (intentOriginal[j] ?? 0);
-    }
-  }
+  // dW_intent += dIntentProjected @ intentOriginal^T (outer product, BLAS accelerated)
+  math.outerProductAdd(grads.dW_intent, dIntentProjected, intentOriginal);
 }
 
 // ============================================================================

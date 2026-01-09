@@ -76,6 +76,14 @@ export interface Scope {
 }
 
 /**
+ * Default scope for local/self-hosted executions
+ */
+export const DEFAULT_SCOPE: Scope = {
+  org: "local",
+  project: "default",
+};
+
+/**
  * A named capability in the registry (Story 13.1)
  *
  * This is the registry record type stored in `capability_records` table.

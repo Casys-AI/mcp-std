@@ -161,6 +161,7 @@ export interface AlgorithmTraceRecord {
   thresholdUsed: number;
   decision: DecisionType;
   outcome?: TraceOutcome;
+  userId?: string; // Story 9.8: Multi-tenant isolation
 }
 
 /**
@@ -376,7 +377,8 @@ export class AlgorithmTracer {
           ${t.finalScore},
           ${t.thresholdUsed},
           '${t.decision}',
-          ${outcomeJson ? `'${outcomeJson}'::jsonb` : "NULL"}
+          ${outcomeJson ? `'${outcomeJson}'::jsonb` : "NULL"},
+          ${t.userId ? `'${escapeSql(t.userId)}'` : "NULL"}
         )`;
       });
 
@@ -385,7 +387,7 @@ export class AlgorithmTracer {
         INSERT INTO algorithm_traces (
           trace_id, timestamp, correlation_id, algorithm_name, algorithm_mode, target_type,
           intent, context_hash, signals, params,
-          final_score, threshold_used, decision, outcome
+          final_score, threshold_used, decision, outcome, user_id
         ) VALUES ${values.join(",\n")}
       `);
 
@@ -753,14 +755,18 @@ export class AlgorithmTracer {
    *
    * @param limit - Max number of traces to return (default: 50)
    * @param since - Only return traces after this timestamp (ISO string)
+   * @param userId - Filter by user ID (Story 9.8: Multi-tenant isolation)
    * @returns Array of trace records
    */
   async getRecentTraces(
     limit: number = 50,
     since?: string,
+    userId?: string,
   ): Promise<AlgorithmTraceRecord[]> {
     try {
       const sinceClause = since ? `AND timestamp > '${since}'::timestamptz` : "";
+      // Story 9.8: Filter by user_id if provided
+      const userClause = userId ? `AND user_id = '${escapeSql(userId)}'` : "";
 
       const result = await this.db.query(`
         SELECT
@@ -777,9 +783,10 @@ export class AlgorithmTracer {
           final_score,
           threshold_used,
           decision,
-          outcome
+          outcome,
+          user_id
         FROM algorithm_traces
-        WHERE 1=1 ${sinceClause}
+        WHERE 1=1 ${sinceClause} ${userClause}
         ORDER BY timestamp DESC
         LIMIT ${limit}
       `);

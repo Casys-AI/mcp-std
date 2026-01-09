@@ -48,6 +48,8 @@ import {
 } from "../../graphrag/dag-scoring-config.ts";
 import { buildToolDefinitionsFromDAG } from "./shared/tool-definitions.ts";
 import type { ICodeAnalyzer } from "../../domain/interfaces/code-analyzer.ts";
+// Hybrid routing support
+import { resolveRouting, getToolRouting } from "../../capabilities/routing-resolver.ts";
 
 /**
  * Dependencies required for code execution handler
@@ -69,6 +71,11 @@ export interface CodeExecutionDependencies {
   scoringConfig?: DagScoringConfig;
   /** Code analyzer for static structure analysis (Phase 3.2: DI) */
   codeAnalyzer?: ICodeAnalyzer;
+  /**
+   * Whether the request comes from the PML package (X-PML-Client: package header).
+   * Used for hybrid routing - if true and client tools detected, return execute_locally.
+   */
+  isPackageClient?: boolean;
 }
 
 /**
@@ -217,6 +224,49 @@ async function tryDagExecution(
       fusionRate: Math.round((1 - optimizedDAG.tasks.length / logicalDAG.tasks.length) * 100),
       tools: optimizedDAG.tasks.map((t) => t.tool),
     });
+
+    // Hybrid routing check: if any tool requires client, return execute_locally
+    const toolsUsed = optimizedDAG.tasks.map((t) => t.tool);
+    const routing = resolveRouting(toolsUsed);
+
+    if (routing === "client") {
+      // Code contains client tools - check if caller is PML package
+      const clientTools = toolsUsed.filter((t) => getToolRouting(t) === "client");
+
+      if (deps.isPackageClient) {
+        // Package can execute locally - return execute_locally response
+        log.info("[Hybrid Routing] Returning execute_locally for client tools", {
+          clientTools,
+          totalTools: toolsUsed.length,
+        });
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              status: "execute_locally",
+              code: request.code,
+              dag: { tasks: optimizedDAG.tasks },
+              tools_used: toolsUsed,
+              client_tools: clientTools,
+            }),
+          }],
+        };
+      } else {
+        // Not a package client - return error with install instructions
+        log.warn("[Hybrid Routing] Client tools requested without package", {
+          clientTools,
+        });
+
+        return formatMCPToolError(
+          "Client tools require PML package. Install: deno install -Agf jsr:@casys/pml",
+          {
+            error_code: "CLIENT_TOOLS_REQUIRE_PACKAGE",
+            client_tools: clientTools,
+          },
+        );
+      }
+    }
 
     // Step 3: Build tool definitions for WorkerBridge context (AC10)
     const toolDefs = await buildToolDefinitionsFromDAG({ tasks: optimizedDAG.tasks }, deps);

@@ -79,6 +79,10 @@ monitoring/data/
 # Personal MCP config files
 .mcp.json
 
+# PML per-project config and state (contains permissions, lockfile, deps)
+.pml.json
+.pml/
+
 # Deployment scripts (contain server-specific info)
 scripts/deploy.sh
 
@@ -122,3 +126,10 @@ playground/
 tests/debug-*.ts
 coverage_data/
 src/web/.vite/
+
+# Prometheus auth token
+monitoring/pml_token
+
+# PML temp/debug files
+packages/pml/test-*.ts
+.pml-client-id

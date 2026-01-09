@@ -39,6 +39,7 @@ export class CapabilityMatcher {
   private static readonly CACHE_TTL_MS = 60_000;
   private cacheTimestamp = 0;
   private scoringConfig: DagScoringConfig | null = null;
+  private userId: string | null = null; // Story 9.8: Multi-tenant isolation
 
   constructor(
     private capabilityStore: CapabilityStore,
@@ -46,6 +47,11 @@ export class CapabilityMatcher {
     algorithmTracer?: AlgorithmTracer,
   ) {
     this.algorithmTracer = algorithmTracer || null;
+  }
+
+  /** Story 9.8: Set user ID for multi-tenant trace isolation */
+  setUserId(userId: string | null): void {
+    this.userId = userId;
   }
 
   /**
@@ -236,6 +242,7 @@ export class CapabilityMatcher {
         finalScore: score,
         thresholdUsed: threshold,
         decision,
+        userId: this.userId ?? undefined, // Story 9.8: Multi-tenant isolation
       });
 
       // Story 7.6: Emit algorithm.scored event for real-time tracing UI

@@ -306,36 +306,36 @@ export class EdgeToEdgePhase implements MessagePassingPhase {
       }
     }
 
-    // Step 6: Through projection matrices
-    for (let c = 0; c < numChildCaps; c++) {
-      for (let i = 0; i < headDim; i++) {
-        for (let j = 0; j < embDim; j++) {
-          dW_source[i][j] += dE_k_proj[c][i] * E_k[c][j];
-        }
+    // Step 6: Through projection matrices (BLAS-accelerated matrix multiplications)
+    // dW_source = dE_k_proj.T @ E_k (BLAS-accelerated)
+    const dW_source_contrib = math.matmulTranspose(math.transpose(dE_k_proj), E_k);
+    for (let i = 0; i < headDim; i++) {
+      for (let j = 0; j < embDim; j++) {
+        dW_source[i][j] += dW_source_contrib[i]?.[j] ?? 0;
       }
     }
 
-    for (let p = 0; p < numParentCaps; p++) {
-      for (let i = 0; i < headDim; i++) {
-        for (let j = 0; j < embDim; j++) {
-          dW_target[i][j] += dE_kPlus1_proj[p][i] * E_kPlus1[p][j];
-        }
+    // dW_target = dE_kPlus1_proj.T @ E_kPlus1 (BLAS-accelerated)
+    const dW_target_contrib = math.matmulTranspose(math.transpose(dE_kPlus1_proj), E_kPlus1);
+    for (let i = 0; i < headDim; i++) {
+      for (let j = 0; j < embDim; j++) {
+        dW_target[i][j] += dW_target_contrib[i]?.[j] ?? 0;
       }
     }
 
+    // dE_k = dE_k_proj @ W_source (BLAS-accelerated)
+    const dE_k_contrib = math.matmul(dE_k_proj, params.W_source);
     for (let c = 0; c < numChildCaps; c++) {
       for (let j = 0; j < embDim; j++) {
-        for (let i = 0; i < headDim; i++) {
-          dE_k[c][j] += dE_k_proj[c][i] * params.W_source[i][j];
-        }
+        dE_k[c][j] += dE_k_contrib[c]?.[j] ?? 0;
       }
     }
 
+    // dE_kPlus1 = dE_kPlus1_proj @ W_target (BLAS-accelerated)
+    const dE_kPlus1_contrib = math.matmul(dE_kPlus1_proj, params.W_target);
     for (let p = 0; p < numParentCaps; p++) {
       for (let j = 0; j < embDim; j++) {
-        for (let i = 0; i < headDim; i++) {
-          dE_kPlus1[p][j] += dE_kPlus1_proj[p][i] * params.W_target[i][j];
-        }
+        dE_kPlus1[p][j] += dE_kPlus1_contrib[p]?.[j] ?? 0;
       }
     }
 

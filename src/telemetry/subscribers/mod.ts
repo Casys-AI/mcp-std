@@ -86,3 +86,5 @@ export function getOTELSubscriber(): AlgorithmOTELSubscriber | null {
 // Re-export subscriber classes for direct use if needed
 export { AlgorithmDBSubscriber } from "./db-subscriber.ts";
 export { AlgorithmOTELSubscriber } from "./otel-subscriber.ts";
+export { TrainingSubscriber } from "./training-subscriber.ts";
+export type { TrainingSubscriberDeps, ISHGATTrainer, IEmbeddingCache } from "./training-subscriber.ts";

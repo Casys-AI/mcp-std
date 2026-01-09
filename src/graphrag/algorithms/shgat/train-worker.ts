@@ -24,7 +24,8 @@
  */
 
 import { createSHGATFromCapabilities, type TrainingExample } from "../shgat.ts";
-import { random } from "./initialization/parameters.ts";
+import { initBlasAcceleration } from "./utils/math.ts";
+import { PERBuffer, annealBeta } from "./training/per-buffer.ts";
 import postgres from "postgres";
 
 interface WorkerInput {
@@ -89,6 +90,10 @@ async function saveParamsToDb(
 }
 
 async function main() {
+  // Initialize BLAS acceleration for training (ADR-058)
+  const blasAvailable = await initBlasAcceleration();
+  console.error(`[SHGAT Worker] BLAS: ${blasAvailable ? "enabled (OpenBLAS)" : "disabled (JS fallback)"}`);
+
   // Read input from stdin
   const decoder = new TextDecoder();
   const chunks: Uint8Array[] = [];
@@ -117,59 +122,75 @@ async function main() {
       shgat.importParams(input.existingParams);
     }
 
-    // Train with PER: multiple epochs, collect TD errors from last epoch for priority updates
+    // Train with PER: prioritized sampling based on TD errors
     const { epochs, batchSize } = input.config;
-    const totalBatches = Math.ceil(input.examples.length / batchSize);
+    const numBatchesPerEpoch = Math.ceil(input.examples.length / batchSize);
     console.error(
-      `[SHGAT Worker] Starting training: ${input.examples.length} examples, ${epochs} epochs, ` +
-      `batch_size=${batchSize}, ${totalBatches} batches/epoch, ${input.capabilities.length} capabilities`
+      `[SHGAT Worker] Starting PER training: ${input.examples.length} examples, ${epochs} epochs, ` +
+      `batch_size=${batchSize}, ${numBatchesPerEpoch} batches/epoch, ${input.capabilities.length} capabilities`
     );
+
+    // Initialize PER buffer with all examples
+    const perBuffer = new PERBuffer(input.examples, {
+      alpha: 0.6,    // Priority exponent (0=uniform, 1=full prioritization)
+      beta: 0.4,     // IS weight exponent (annealed to 1.0)
+      epsilon: 1e-6, // Small constant for non-zero priorities
+    });
 
     let finalLoss = 0;
     let finalAccuracy = 0;
     let lastEpochTdErrors: number[] = [];
 
     for (let epoch = 0; epoch < epochs; epoch++) {
-      // Shuffle examples each epoch
-      const shuffled = [...input.examples].sort(() => random() - 0.5);
+      // Anneal beta from 0.4 to 1.0 over training (reduces bias correction over time)
+      const beta = annealBeta(epoch, epochs, 0.4);
 
       let epochLoss = 0;
       let epochAccuracy = 0;
       let epochBatches = 0;
       const epochTdErrors: number[] = [];
+      const allIndices: number[] = [];
+      const allTdErrors: number[] = [];
 
-      const totalBatches = Math.ceil(shuffled.length / batchSize);
-      const progressInterval = Math.max(1, Math.floor(totalBatches / 10)); // Log ~10 times per epoch
+      const progressInterval = Math.max(1, Math.floor(numBatchesPerEpoch / 10));
 
-      for (let i = 0; i < shuffled.length; i += batchSize) {
-        const batch = shuffled.slice(i, i + batchSize);
-        // Use trainBatchV1KHead (uses levelParams + headParams)
-        // NOT trainBatch which uses deprecated layerParams
-        const result = shgat.trainBatchV1KHead(batch);
+      for (let b = 0; b < numBatchesPerEpoch; b++) {
+        // Sample batch using PER (prioritized by TD error magnitude)
+        const { items: batch, indices, weights: isWeights } = perBuffer.sample(batchSize, beta);
+
+        // Train on batch with IS weight correction (BATCHED version - single forward pass)
+        const result = shgat.trainBatchV1KHeadBatched(batch, isWeights);
         epochLoss += result.loss;
         epochAccuracy += result.accuracy;
         epochTdErrors.push(...result.tdErrors);
         epochBatches++;
 
+        // Collect indices and TD errors for priority update
+        allIndices.push(...indices);
+        allTdErrors.push(...result.tdErrors);
+
         // Progress log every ~10% of batches
-        if (epochBatches % progressInterval === 0 || epochBatches === totalBatches) {
-          const pct = Math.round((epochBatches / totalBatches) * 100);
+        if (epochBatches % progressInterval === 0 || epochBatches === numBatchesPerEpoch) {
+          const pct = Math.round((epochBatches / numBatchesPerEpoch) * 100);
           const avgLoss = epochLoss / epochBatches;
           const avgAcc = epochAccuracy / epochBatches;
           console.error(
-            `[SHGAT Worker] Epoch ${epoch} progress: ${pct}% (${epochBatches}/${totalBatches} batches, loss=${avgLoss.toFixed(4)}, acc=${avgAcc.toFixed(2)})`
+            `[SHGAT Worker] Epoch ${epoch} progress: ${pct}% (${epochBatches}/${numBatchesPerEpoch} batches, loss=${avgLoss.toFixed(4)}, acc=${avgAcc.toFixed(2)})`
           );
         }
       }
+
+      // Update priorities based on TD errors from this epoch
+      perBuffer.updatePriorities(allIndices, allTdErrors);
+      const stats = perBuffer.getStats();
 
       finalLoss = epochLoss / epochBatches;
       finalAccuracy = epochAccuracy / epochBatches;
       lastEpochTdErrors = epochTdErrors;
 
       console.error(
-        `[SHGAT Worker] Epoch ${epoch}: loss=${finalLoss.toFixed(4)}, acc=${
-          finalAccuracy.toFixed(2)
-        }`,
+        `[SHGAT Worker] Epoch ${epoch}: loss=${finalLoss.toFixed(4)}, acc=${finalAccuracy.toFixed(2)}, ` +
+        `priority=[${stats.min.toFixed(3)}-${stats.max.toFixed(3)}], β=${beta.toFixed(2)}`
       );
     }
 

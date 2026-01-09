@@ -10,12 +10,18 @@ import { random } from "../initialization/parameters.ts";
 
 /**
  * Matrix multiplication with transpose: A · B^T
+ * Uses BLAS acceleration for larger matrices (~10x speedup).
  *
  * @param A - Matrix A [m][k]
  * @param B - Matrix B [n][k] (will be transposed)
  * @returns Result matrix [m][n]
  */
 export function matmulTranspose(A: number[][], B: number[][]): number[][] {
+  // Use BLAS for larger matrices (message passing projections: ~105×1024 × 64×1024^T)
+  if (isBlasReady() && A.length >= 10 && (A[0]?.length || 0) >= 64) {
+    return blasModule!.blasMatmulTranspose(A, B);
+  }
+  // JS fallback
   return A.map((row) =>
     B.map((bRow) => row.reduce((sum, val, i) => sum + val * (bRow[i] || 0), 0))
   );
@@ -70,7 +76,11 @@ export function sigmoid(x: number): number {
 export function softmax(values: number[]): number[] {
   if (values.length === 0) return [];
 
-  const maxVal = Math.max(...values);
+  // Use loop instead of Math.max(...) to avoid stack overflow with large arrays
+  let maxVal = -Infinity;
+  for (const v of values) {
+    if (v > maxVal) maxVal = v;
+  }
   const exps = values.map((v) => Math.exp(v - maxVal));
   const sum = exps.reduce((a, b) => a + b, 0);
 
@@ -190,3 +200,189 @@ export function normalize(vector: number[]): number[] {
   const norm = Math.sqrt(vector.reduce((s, x) => s + x * x, 0));
   return norm > 0 ? vector.map((x) => x / norm) : new Array(vector.length).fill(0);
 }
+
+// ============================================================================
+// Batch Matrix Operations (for K-head scoring optimization)
+// ============================================================================
+
+// BLAS acceleration (lazy-loaded)
+let blasModule: typeof import("./blas-ffi.ts") | null = null;
+let blasLoadAttempted = false;
+
+async function tryLoadBlas(): Promise<boolean> {
+  if (blasLoadAttempted) return blasModule !== null;
+  blasLoadAttempted = true;
+
+  try {
+    blasModule = await import("./blas-ffi.ts");
+    return blasModule.isBlasAvailable();
+  } catch {
+    return false;
+  }
+}
+
+// Synchronous check (after first async load)
+function isBlasReady(): boolean {
+  return blasModule !== null && blasModule.isBlasAvailable();
+}
+
+/**
+ * Initialize BLAS acceleration (call once at startup for best performance)
+ */
+export async function initBlasAcceleration(): Promise<boolean> {
+  return await tryLoadBlas();
+}
+
+/**
+ * Standard matrix multiplication: A · B
+ * Uses BLAS if available for ~10x speedup on large matrices.
+ *
+ * @param A - Matrix A [m][k]
+ * @param B - Matrix B [k][n]
+ * @returns Result matrix [m][n]
+ */
+export function matmul(A: number[][], B: number[][]): number[][] {
+  // Use BLAS for larger matrices (overhead not worth it for small)
+  if (isBlasReady() && A.length >= 10 && (A[0]?.length || 0) >= 64) {
+    return blasModule!.blasMatmul(A, B);
+  }
+  return matmulJS(A, B);
+}
+
+/**
+ * Pure JS matrix multiplication (fallback)
+ */
+export function matmulJS(A: number[][], B: number[][]): number[][] {
+  const m = A.length;
+  const k = A[0]?.length || 0;
+  const n = B[0]?.length || 0;
+
+  const result: number[][] = new Array(m);
+  for (let i = 0; i < m; i++) {
+    result[i] = new Array(n).fill(0);
+    for (let j = 0; j < n; j++) {
+      let sum = 0;
+      for (let p = 0; p < k; p++) {
+        sum += A[i][p] * B[p][j];
+      }
+      result[i][j] = sum;
+    }
+  }
+  return result;
+}
+
+/**
+ * Batch matrix-vector multiplication: M · v for each row
+ *
+ * Computes M @ v where M is [m][k] and v is [k], returning [m] scores.
+ *
+ * @param M - Matrix [m][k]
+ * @param v - Vector [k]
+ * @returns Vector of dot products [m]
+ */
+export function matVec(M: number[][], v: number[]): number[] {
+  const m = M.length;
+  const result = new Array(m);
+  for (let i = 0; i < m; i++) {
+    let sum = 0;
+    const row = M[i];
+    const len = Math.min(row.length, v.length);
+    for (let j = 0; j < len; j++) {
+      sum += row[j] * v[j];
+    }
+    result[i] = sum;
+  }
+  return result;
+}
+
+/**
+ * Transpose a matrix
+ *
+ * @param M - Matrix [m][n]
+ * @returns Transposed matrix [n][m]
+ */
+export function transpose(M: number[][]): number[][] {
+  if (M.length === 0) return [];
+  const m = M.length;
+  const n = M[0].length;
+  const result: number[][] = new Array(n);
+  for (let j = 0; j < n; j++) {
+    result[j] = new Array(m);
+    for (let i = 0; i < m; i++) {
+      result[j][i] = M[i][j];
+    }
+  }
+  return result;
+}
+
+// ============================================================================
+// BLAS-accelerated Training Operations
+// ============================================================================
+
+/**
+ * Matrix-vector multiplication with optional BLAS acceleration: y = A @ x
+ * Uses BLAS for larger matrices (threshold: 64 rows).
+ *
+ * @param A - Matrix [m][n]
+ * @param x - Vector [n]
+ * @returns Vector [m]
+ */
+export function matVecBlas(A: number[][], x: number[]): number[] {
+  // Use BLAS for larger matrices (high threshold to avoid FFI overhead)
+  if (isBlasReady() && A.length >= 256) {
+    return blasModule!.blasMatVec(A, x);
+  }
+  return matVec(A, x);
+}
+
+/**
+ * Matrix-vector multiplication with transpose: y = A^T @ x
+ * Uses BLAS for larger matrices (threshold: 64 rows).
+ *
+ * @param A - Matrix [m][n]
+ * @param x - Vector [m]
+ * @returns Vector [n]
+ */
+export function matVecTransposeBlas(A: number[][], x: number[]): number[] {
+  // Use BLAS for larger matrices (high threshold to avoid FFI overhead)
+  if (isBlasReady() && A.length >= 256) {
+    return blasModule!.blasMatVecTranspose(A, x);
+  }
+  // JS fallback: transpose then multiply
+  const result = new Array(A[0]?.length || 0).fill(0);
+  for (let i = 0; i < A.length; i++) {
+    const xi = x[i] || 0;
+    for (let j = 0; j < A[i].length; j++) {
+      result[j] += A[i][j] * xi;
+    }
+  }
+  return result;
+}
+
+/**
+ * Outer product (rank-1 update): A = A + alpha * x @ y^T
+ * Used for gradient accumulation in training.
+ * Uses BLAS for larger matrices (threshold: 64 dimensions).
+ *
+ * @param A - Matrix [m][n] (modified in-place)
+ * @param x - Vector [m]
+ * @param y - Vector [n]
+ * @param alpha - Scalar multiplier (default 1.0)
+ * @returns Modified matrix A
+ */
+export function outerProductAdd(A: number[][], x: number[], y: number[], alpha: number = 1.0): number[][] {
+  // Use BLAS for larger dimensions (high threshold to avoid FFI overhead for small ops)
+  if (isBlasReady() && x.length >= 256 && y.length >= 256) {
+    return blasModule!.blasOuterProduct(A, x, y, alpha);
+  }
+  // JS fallback
+  for (let i = 0; i < x.length; i++) {
+    if (!A[i]) A[i] = new Array(y.length).fill(0);
+    const xi = x[i] * alpha;
+    for (let j = 0; j < y.length; j++) {
+      A[i][j] += xi * y[j];
+    }
+  }
+  return A;
+}
+

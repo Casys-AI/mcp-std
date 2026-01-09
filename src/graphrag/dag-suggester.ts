@@ -81,6 +81,7 @@ export class DAGSuggester {
   private algorithmTracer: AlgorithmTracer | null = null;
   private localAlphaCalculator: LocalAlphaCalculator | null = null;
   private scoringConfig: DagScoringConfig = DEFAULT_DAG_SCORING_CONFIG;
+  private userId: string | null = null; // Story 9.8: Multi-tenant isolation
 
   constructor(
     private graphEngine: GraphRAGEngine,
@@ -139,6 +140,13 @@ export class DAGSuggester {
   setAlgorithmTracer(tracer: AlgorithmTracer): void {
     this.algorithmTracer = tracer;
     log.debug("[DAGSuggester] Algorithm tracing enabled");
+  }
+
+  /** Story 9.8: Set user ID for multi-tenant trace isolation */
+  setUserId(userId: string | null): void {
+    this.userId = userId;
+    // Propagate to capabilityMatcher if available
+    this.capabilityMatcher?.setUserId(userId);
   }
 
   setLocalAlphaCalculator(calculator: LocalAlphaCalculator): void {
@@ -599,6 +607,7 @@ export class DAGSuggester {
         finalScore: c.combinedScore,
         thresholdUsed: this.scoringConfig.thresholds.dependencyThreshold,
         decision: "accepted",
+        userId: this.userId ?? undefined, // Story 9.8: Multi-tenant isolation
       });
 
       const toolName = c.toolId.split("__").pop() ?? c.toolId;

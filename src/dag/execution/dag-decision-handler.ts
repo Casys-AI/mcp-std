@@ -206,6 +206,3 @@ export class DAGDecisionHandler
     }
   }
 }
-
-// Singleton instance
-export const dagDecisionHandler = new DAGDecisionHandler();

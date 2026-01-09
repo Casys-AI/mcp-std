@@ -2,34 +2,64 @@
  * Database Access for Auth Operations
  *
  * Provides a shared Drizzle database instance for Fresh auth routes.
- * Uses the same DB path as API Server for data consistency.
+ * Supports dual-mode:
+ * - Cloud: PostgreSQL (DATABASE_URL set)
+ * - Local: PGlite (embedded)
  *
  * @module server/auth/db
  */
 
 import { PGlite } from "@electric-sql/pglite";
 import { vector } from "@electric-sql/pglite/vector";
-import { createDrizzleClient, type DrizzleDB, runDrizzleMigrations } from "../../db/drizzle.ts";
+import {
+  createDrizzleClient,
+  createDrizzlePostgresClient,
+  type DrizzleDB,
+  type DrizzlePostgresDB,
+  runDrizzleMigrations,
+} from "../../db/drizzle.ts";
 import { getAgentCardsDatabasePath } from "../../cli/utils.ts";
+import postgres from "postgres";
 
-let db: DrizzleDB | null = null;
+// Unified type for both PGlite and Postgres Drizzle instances
+type AnyDrizzleDB = DrizzleDB | DrizzlePostgresDB;
+
+let db: AnyDrizzleDB | null = null;
 let pgliteInstance: PGlite | null = null;
+let postgresInstance: ReturnType<typeof postgres> | null = null;
+
+/**
+ * Check if running in cloud mode (DATABASE_URL is set)
+ */
+function isCloudMode(): boolean {
+  return !!Deno.env.get("DATABASE_URL");
+}
 
 /**
  * Get shared Drizzle database instance for auth operations
  * Lazily initializes on first call.
- * Uses same DB path as API server for data consistency.
+ *
+ * - Cloud mode: Uses PostgreSQL via DATABASE_URL
+ * - Local mode: Uses PGlite (embedded)
  *
  * @returns Drizzle database instance
  */
-export async function getDb(): Promise<DrizzleDB> {
+export async function getDb(): Promise<AnyDrizzleDB> {
   if (!db) {
-    // Initialize PGlite with vector extension (consistent with src/db/client.ts)
-    pgliteInstance = new PGlite(getAgentCardsDatabasePath(), {
-      extensions: { vector },
-    });
-    db = createDrizzleClient(pgliteInstance);
-    await runDrizzleMigrations(db);
+    if (isCloudMode()) {
+      // Cloud mode: PostgreSQL
+      const databaseUrl = Deno.env.get("DATABASE_URL")!;
+      postgresInstance = postgres(databaseUrl);
+      db = createDrizzlePostgresClient(postgresInstance);
+      // Note: Migrations should be run separately via runDrizzleMigrationsAuto()
+    } else {
+      // Local mode: PGlite
+      pgliteInstance = new PGlite(getAgentCardsDatabasePath(), {
+        extensions: { vector },
+      });
+      db = createDrizzleClient(pgliteInstance);
+      await runDrizzleMigrations(db as DrizzleDB);
+    }
   }
   return db;
 }
@@ -41,8 +71,12 @@ export async function closeDb(): Promise<void> {
   if (pgliteInstance) {
     await pgliteInstance.close();
     pgliteInstance = null;
-    db = null;
   }
+  if (postgresInstance) {
+    await postgresInstance.end();
+    postgresInstance = null;
+  }
+  db = null;
 }
 
 /**

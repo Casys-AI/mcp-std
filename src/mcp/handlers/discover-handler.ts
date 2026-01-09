@@ -108,13 +108,14 @@ export async function handleDiscover(
     const filterType = params.filter?.type ?? "all";
     const minScore = params.filter?.minScore ?? 0.0;
     const limit = Math.min(params.limit ?? 1, 50);
+    const includeRelated = params.include_related ?? false;
 
     transaction.setData("intent", intent);
     transaction.setData("filter_type", filterType);
     transaction.setData("limit", limit);
     addBreadcrumb("mcp", "Processing discover request", { intent, filterType });
 
-    log.info(`discover: intent="${intent}", filter=${filterType}, limit=${limit}`);
+    log.info(`discover: intent="${intent}", filter=${filterType}, limit=${limit}, includeRelated=${includeRelated}`);
 
     const results: DiscoverResultItem[] = [];
     let toolsCount = 0;
@@ -135,6 +136,7 @@ export async function handleDiscover(
         intent,
         limit,
         minScore,
+        includeRelated,
         correlationId,
       });
 

@@ -312,43 +312,39 @@ export class EdgeToVertexPhase implements MessagePassingPhase {
       }
     }
 
-    // Step 6: Through projection matrices
+    // Step 6: Through projection matrices (BLAS-accelerated matrix multiplications)
     // E_proj = E @ W_source.T → dW_source += dE_proj.T @ E, dE += dE_proj @ W_source
     // H_proj = H @ W_target.T → dW_target += dH_proj.T @ H, dH += dH_proj @ W_target
 
-    // dW_source[i][j] = Σ_c dE_proj[c][i] * E[c][j]
-    for (let c = 0; c < numCaps; c++) {
-      for (let i = 0; i < headDim; i++) {
-        for (let j = 0; j < embDim; j++) {
-          dW_source[i][j] += dE_proj[c][i] * E[c][j];
-        }
+    // dW_source = dE_proj.T @ E (BLAS-accelerated)
+    const dW_source_contrib = math.matmulTranspose(math.transpose(dE_proj), E);
+    for (let i = 0; i < headDim; i++) {
+      for (let j = 0; j < embDim; j++) {
+        dW_source[i][j] += dW_source_contrib[i]?.[j] ?? 0;
       }
     }
 
-    // dW_target[i][j] = Σ_t dH_proj[t][i] * H[t][j]
-    for (let t = 0; t < numTools; t++) {
-      for (let i = 0; i < headDim; i++) {
-        for (let j = 0; j < embDim; j++) {
-          dW_target[i][j] += dH_proj[t][i] * H[t][j];
-        }
+    // dW_target = dH_proj.T @ H (BLAS-accelerated)
+    const dW_target_contrib = math.matmulTranspose(math.transpose(dH_proj), H);
+    for (let i = 0; i < headDim; i++) {
+      for (let j = 0; j < embDim; j++) {
+        dW_target[i][j] += dW_target_contrib[i]?.[j] ?? 0;
       }
     }
 
-    // dE[c] = dE_proj[c] @ W_source
+    // dE = dE_proj @ W_source (BLAS-accelerated)
+    const dE_contrib = math.matmul(dE_proj, params.W_source);
     for (let c = 0; c < numCaps; c++) {
       for (let j = 0; j < embDim; j++) {
-        for (let i = 0; i < headDim; i++) {
-          dE[c][j] += dE_proj[c][i] * params.W_source[i][j];
-        }
+        dE[c][j] += dE_contrib[c]?.[j] ?? 0;
       }
     }
 
-    // dH[t] = dH_proj[t] @ W_target
+    // dH = dH_proj @ W_target (BLAS-accelerated)
+    const dH_contrib = math.matmul(dH_proj, params.W_target);
     for (let t = 0; t < numTools; t++) {
       for (let j = 0; j < embDim; j++) {
-        for (let i = 0; i < headDim; i++) {
-          dH[t][j] += dH_proj[t][i] * params.W_target[i][j];
-        }
+        dH[t][j] += dH_contrib[t]?.[j] ?? 0;
       }
     }
 

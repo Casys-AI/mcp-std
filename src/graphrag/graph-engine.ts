@@ -90,6 +90,7 @@ export class GraphRAGEngine {
   private eventEmitter: GraphEventEmitter;
   private localAlphaCalculator: LocalAlphaCalculator | null = null;
   private algorithmTracer: AlgorithmTracer | null = null;
+  private userId: string | null = null; // Story 9.8: Multi-tenant isolation
 
   /** Counter for incremental node additions - triggers metrics recalc at threshold */
   private pendingMetricsCount = 0;
@@ -517,6 +518,7 @@ export class GraphRAGEngine {
       localAlphaCalculator: this.localAlphaCalculator,
       algorithmTracer: this.algorithmTracer,
       correlationId,
+      userId: this.userId ?? undefined, // Story 9.8: Multi-tenant isolation
     });
   }
 
@@ -536,6 +538,10 @@ export class GraphRAGEngine {
   }
   setAlgorithmTracer(tracer: AlgorithmTracer): void {
     this.algorithmTracer = tracer;
+  }
+  /** Story 9.8: Set user ID for multi-tenant trace isolation */
+  setUserId(userId: string | null): void {
+    this.userId = userId;
   }
   getPageRankTop(n: number) {
     return getTopPageRankNodes(this.pageRanks, n);

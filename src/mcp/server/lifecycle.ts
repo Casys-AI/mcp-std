@@ -6,20 +6,25 @@
  * @module mcp/server/lifecycle
  */
 
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as log from "@std/log";
 import type { MCPClientBase } from "../types.ts";
 import type { ResolvedGatewayConfig } from "./types.ts";
 import { SERVER_TITLE } from "./constants.ts";
 
+/** Type alias for the underlying MCP Server (avoids deprecated import) */
+export type McpServerInstance = McpServer["server"];
+
 /**
  * Initialize MCP Server instance
+ * Returns the underlying Server for backward compatibility with setRequestHandler API
  */
-export function createMCPServer(config: ResolvedGatewayConfig): Server {
-  return new Server(
+export function createMCPServer(config: ResolvedGatewayConfig): McpServerInstance {
+  const mcpServer = new McpServer(
     {
       name: config.name,
+      // @ts-ignore - title is valid in Implementation
       title: SERVER_TITLE,
       version: config.version,
     },
@@ -30,13 +35,15 @@ export function createMCPServer(config: ResolvedGatewayConfig): Server {
       },
     },
   );
+  // Return underlying Server for low-level setRequestHandler API
+  return mcpServer.server;
 }
 
 /**
  * Start server with stdio transport
  */
 export async function startStdioServer(
-  server: Server,
+  server: McpServerInstance,
   config: ResolvedGatewayConfig,
   mcpClients: Map<string, MCPClientBase>,
 ): Promise<void> {
@@ -53,7 +60,7 @@ export async function startStdioServer(
  * Graceful shutdown
  */
 export async function stopServer(
-  server: Server,
+  server: McpServerInstance,
   mcpClients: Map<string, MCPClientBase>,
   httpServer: Deno.HttpServer | null,
 ): Promise<void> {

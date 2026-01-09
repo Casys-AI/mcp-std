@@ -145,7 +145,16 @@ export class GraphSyncController {
     // 3. Register in SHGAT if available (need to fetch embedding)
     const shgat = this.getSHGAT();
     if (shgat) {
-      await this.registerInSHGAT(shgat, capabilityId, toolIds);
+      const registered = await this.registerInSHGAT(shgat, capabilityId, toolIds);
+
+      // Phase 3.2: Emit event AFTER SHGAT registration for TrainingSubscriber
+      if (registered) {
+        eventBus.emit({
+          type: "capability.shgat.registered",
+          source: "graph-sync-controller",
+          payload: { capabilityId, toolIds },
+        });
+      }
     }
 
     // 4. Compute and save entropy after graph change
@@ -157,7 +166,7 @@ export class GraphSyncController {
   ): Promise<void> {
     const { capabilityId, toolIds } = payload;
 
-    log.debug(`[GraphSyncController] Capability updated: ${capabilityId}`);
+    log.debug(`[GraphSyncController] Capability updated: ${capabilityId}, toolIds=${toolIds?.length ?? "undefined"}`);
 
     // 1. Update graph engine (idempotent - adds edges if not exist)
     if (this.graphEngine) {
@@ -167,7 +176,20 @@ export class GraphSyncController {
     // 2. Update hyperedge cache
     await updateHyperedge(capabilityId, toolIds);
 
-    // 3. Compute and save entropy after graph change
+    // 3. Phase 3.2: Emit event for training (capability already in SHGAT from first execution)
+    // TrainingSubscriber will train on each execution, not just the first
+    if (toolIds && toolIds.length > 0) {
+      log.debug(`[GraphSyncController] Emitting capability.shgat.registered for ${capabilityId}`);
+      eventBus.emit({
+        type: "capability.shgat.registered",
+        source: "graph-sync-controller",
+        payload: { capabilityId, toolIds },
+      });
+    } else {
+      log.debug(`[GraphSyncController] Skipping shgat.registered - no toolIds for ${capabilityId}`);
+    }
+
+    // 4. Compute and save entropy after graph change
     await this.saveEntropyAfterChange();
   }
 
@@ -277,7 +299,7 @@ export class GraphSyncController {
     shgat: SHGAT,
     capabilityId: string,
     toolsUsed: string[],
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       // Fetch embedding from DB
       const result = await this.db.query(
@@ -289,7 +311,7 @@ export class GraphSyncController {
         log.debug(
           `[GraphSyncController] No embedding for capability ${capabilityId}, skipping SHGAT registration`,
         );
-        return;
+        return false;
       }
 
       // Parse embedding
@@ -304,10 +326,10 @@ export class GraphSyncController {
           log.warn(
             `[GraphSyncController] Failed to parse embedding for ${capabilityId}`,
           );
-          return;
+          return false;
         }
       } else {
-        return;
+        return false;
       }
 
       // Build members array from toolsUsed
@@ -331,8 +353,11 @@ export class GraphSyncController {
       log.debug(
         `[GraphSyncController] Registered capability ${capabilityId} in SHGAT`,
       );
+
+      return true;
     } catch (err) {
       log.warn(`[GraphSyncController] Failed to register in SHGAT: ${err}`);
+      return false;
     }
   }
 }

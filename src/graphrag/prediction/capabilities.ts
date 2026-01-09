@@ -31,6 +31,7 @@ export interface CapabilityPredictionDeps {
   algorithmTracer: AlgorithmTracer | null;
   localAlphaCalculator: LocalAlphaCalculator | null;
   config: DagScoringConfig;
+  userId?: string; // Story 9.8: Multi-tenant isolation
 }
 
 /**
@@ -352,6 +353,7 @@ export async function predictCapabilities(
         finalScore: adjusted.confidence,
         thresholdUsed: 0.3,
         decision: "accepted",
+        userId: deps.userId, // Story 9.8: Multi-tenant isolation
       });
 
       seenTools.add(capabilityToolId);

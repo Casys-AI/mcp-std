@@ -35,6 +35,8 @@ export interface AlgorithmDecision {
   targetType: "tool" | "capability";
   /** User intent (truncated) */
   intent: string;
+  /** User ID for multi-tenant isolation */
+  userId?: string;
   /** Final computed score */
   finalScore: number;
   /** Threshold used for decision */
@@ -110,6 +112,15 @@ export interface IDecisionLogger {
  * Subscribers handle persistence (DB) and observability (OTEL).
  */
 export class TelemetryAdapter implements IDecisionLogger {
+  private userId: string | null = null;
+
+  /**
+   * Set user ID for multi-tenant trace isolation (Story 9.8)
+   */
+  setUserId(userId: string | null): void {
+    this.userId = userId;
+  }
+
   /**
    * Log algorithm decision by emitting event
    *
@@ -121,9 +132,10 @@ export class TelemetryAdapter implements IDecisionLogger {
     // Auto-detect pure flag from targetId if not explicitly set
     const pure = decision.targetId ? isPureOperation(decision.targetId) : undefined;
 
-    // Build full payload
+    // Build full payload (use decision.userId or fallback to instance userId)
     const payload: AlgorithmDecisionPayload = {
       traceId,
+      userId: decision.userId ?? this.userId ?? undefined,
       correlationId: decision.correlationId,
       algorithmName: decision.algorithm,
       algorithmMode: decision.mode,

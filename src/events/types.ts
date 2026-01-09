@@ -59,6 +59,7 @@ export type EventType =
   | "capability.dependency.removed"
   | "capability.zone.created"
   | "capability.zone.updated"
+  | "capability.shgat.registered" // Phase 3.2: Emitted after SHGAT registration
   | "capability.permission.updated" // Story 7.7c: HIL permission escalation
   // ──────────────────────────────────────────────────────────────────────────
   // EXECUTION TRACE EVENTS (Story 11.2 - Epic 11)
@@ -342,6 +343,10 @@ export interface CapabilityLearnedPayload {
   usageCount: number;
   /** Success rate */
   successRate: number;
+  /** Correlation ID for fetching cached embedding (Phase 3.2) */
+  correlationId?: string;
+  /** Execution time in milliseconds */
+  executionTimeMs?: number;
 }
 
 /**
@@ -421,6 +426,18 @@ export interface CapabilityZoneUpdatedPayload {
   successRate: number;
   /** Updated usage count */
   usageCount: number;
+}
+
+/**
+ * Payload for capability.shgat.registered events
+ * Emitted AFTER a capability is registered in the SHGAT graph
+ * Phase 3.2: Used by TrainingSubscriber to trigger SHGAT training
+ */
+export interface CapabilitySHGATRegisteredPayload {
+  /** Capability identifier */
+  capabilityId: string;
+  /** Tool IDs in this capability */
+  toolIds: string[];
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -586,6 +603,8 @@ export interface GraphEdgeUpdatedPayload {
 export interface AlgorithmDecisionPayload {
   /** Unique trace ID (UUID) */
   traceId: string;
+  /** User ID for multi-tenant isolation */
+  userId?: string;
   /** Correlation ID for grouping related decisions */
   correlationId?: string;
   /** Algorithm name (e.g., "SHGAT", "DRDSP", "CapabilityMatcher") */
@@ -851,6 +870,15 @@ export type CapabilityZoneCreatedEvent = PmlEvent<
 export type CapabilityZoneUpdatedEvent = PmlEvent<
   "capability.zone.updated",
   CapabilityZoneUpdatedPayload
+>;
+
+/**
+ * Typed event for capability.shgat.registered
+ * Phase 3.2: Emitted after SHGAT registration, triggers training
+ */
+export type CapabilitySHGATRegisteredEvent = PmlEvent<
+  "capability.shgat.registered",
+  CapabilitySHGATRegisteredPayload
 >;
 
 /**

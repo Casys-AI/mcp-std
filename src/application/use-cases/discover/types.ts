@@ -13,6 +13,7 @@ export interface DiscoverRequest {
   intent: string;
   limit?: number;
   minScore?: number;
+  includeRelated?: boolean;
   correlationId?: string;
 }
 

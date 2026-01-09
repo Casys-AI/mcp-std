@@ -29,7 +29,7 @@ import {
 import { spawnSHGATTraining } from "../../graphrag/algorithms/shgat/spawn-training.ts";
 import type { DRDSP } from "../../graphrag/algorithms/dr-dsp.ts";
 import { GraphSyncController } from "../graph-sync/mod.ts";
-import { trainingLock } from "../handlers/mod.ts";
+import { trainingLock } from "../../graphrag/learning/mod.ts";
 import {
   AlgorithmFactory,
   type AlgorithmCapabilityInput,

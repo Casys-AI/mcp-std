@@ -53,7 +53,7 @@ export {
 export { DAGLayerExecutor, type DAGExecutionContext, type TaskExecutorFn } from "./dag-layer-executor.ts";
 
 // DAG Decision Handler (Strategy implementation)
-export { DAGDecisionHandler, dagDecisionHandler, type DecisionContext } from "./dag-decision-handler.ts";
+export { DAGDecisionHandler, type DecisionContext } from "./dag-decision-handler.ts";
 
 // DAG Stream Orchestrator
-export { DAGStreamOrchestrator, dagStreamOrchestrator, type OrchestratorDeps } from "./dag-stream-orchestrator.ts";
+export { DAGStreamOrchestrator, type OrchestratorDeps } from "./dag-stream-orchestrator.ts";

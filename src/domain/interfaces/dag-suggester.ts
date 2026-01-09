@@ -77,7 +77,8 @@ export interface IDAGSuggester {
    *
    * @param intent - Natural language description
    * @param correlationId - Optional correlation ID for tracing
+   * @param intentEmbedding - Optional pre-computed embedding (avoids duplicate encoding)
    * @returns Suggestion result with DAG and confidence
    */
-  suggest(intent: string, correlationId?: string): Promise<SuggestionResult>;
+  suggest(intent: string, correlationId?: string, intentEmbedding?: number[]): Promise<SuggestionResult>;
 }

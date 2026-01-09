@@ -15,6 +15,41 @@ import * as log from "@std/log";
 export const PUBLIC_ROUTES = ["/health", "/events/stream", "/dashboard"];
 
 /**
+ * Routes with special authentication (not user-based)
+ * These bypass normal user auth but have their own validation
+ */
+export const PROMETHEUS_ROUTE = "/api/metrics/prometheus";
+
+/**
+ * Validate Prometheus scraper authentication
+ * Uses PROMETHEUS_TOKEN from environment (Bearer token)
+ *
+ * @param req - HTTP Request
+ * @returns true if valid Prometheus token, false otherwise
+ */
+export function validatePrometheusToken(req: Request): boolean {
+  const prometheusToken = Deno.env.get("PROMETHEUS_TOKEN");
+
+  // If no token configured, deny access in cloud mode
+  if (!prometheusToken) {
+    log.debug("PROMETHEUS_TOKEN not configured");
+    return false;
+  }
+
+  // Check Authorization header (Bearer token)
+  const authHeader = req.headers.get("Authorization");
+  if (authHeader?.startsWith("Bearer ")) {
+    const token = authHeader.slice(7);
+    if (token === prometheusToken) {
+      return true;
+    }
+  }
+
+  log.debug("Invalid Prometheus token");
+  return false;
+}
+
+/**
  * Check if a route is public (no auth required)
  * Supports exact matches and prefix matches (e.g., /dashboard/*)
  */

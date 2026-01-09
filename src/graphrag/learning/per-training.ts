@@ -258,7 +258,11 @@ export async function trainSHGATOnPathTraces(
   const tracePriorities = traces.map((t) => Math.pow(t.priority + 1e-6, alpha));
   const totalPriority = tracePriorities.reduce((a, b) => a + b, 0);
   const probs = tracePriorities.map((p) => p / totalPriority);
-  const minProb = Math.min(...probs);
+  // Use loop instead of Math.min(...) to avoid stack overflow with large arrays
+  let minProb = Infinity;
+  for (const p of probs) {
+    if (p < minProb) minProb = p;
+  }
   const maxWeight = Math.pow(traces.length * minProb, -beta);
   const traceWeights = probs.map((p) => Math.pow(traces.length * p, -beta) / maxWeight);
 

@@ -43,6 +43,7 @@ import { up as entropyHistory032Up, down as entropyHistory032Down } from "./migr
 import { createWorkflowPatternCreatedByMigration } from "./migrations/033_workflow_pattern_created_by.ts";
 import { up as dropCapUsageCols034Up, down as dropCapUsageCols034Down } from "./migrations/034_drop_capability_records_usage_columns.ts";
 import { createRoutingClientServerMigration } from "./migrations/037_routing_client_server.ts";
+import { createAlgorithmTracesUserIdMigration } from "./migrations/038_algorithm_traces_user_id.ts";
 
 /**
  * Migration definition
@@ -439,5 +440,6 @@ export function getAllMigrations(): Migration[] {
     createPmlRegistryViewMigration(), // Story 13.8: Unified pml_registry VIEW (version 35)
     createPmlRegistryVisibilityMigration(), // Catalog: Expose visibility in pml_registry VIEW
     createRoutingClientServerMigration(), // Story 13.9: Align DB constraint with client/server terminology
+    createAlgorithmTracesUserIdMigration(), // Story 9.8: Multi-tenant algorithm traces
   ];
 }

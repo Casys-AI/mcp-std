@@ -19,6 +19,32 @@ import { users } from "../db/schema/users.ts";
 import { eq } from "drizzle-orm";
 
 /**
+ * Check if user is in ALLOWED_GITHUB_USERS whitelist
+ * If whitelist is not set or empty, all users are allowed.
+ *
+ * @param username - GitHub username to check
+ * @returns true if allowed, false if blocked
+ */
+export function isUserAllowed(username: string | undefined): boolean {
+  if (!username) return false;
+
+  const allowedUsers = Deno.env.get("ALLOWED_GITHUB_USERS");
+
+  // If not set or empty, allow all users
+  if (!allowedUsers || allowedUsers.trim() === "") {
+    return true;
+  }
+
+  // Parse comma-separated list and check membership
+  const whitelist = allowedUsers
+    .split(",")
+    .map((u) => u.trim().toLowerCase())
+    .filter((u) => u.length > 0);
+
+  return whitelist.includes(username.toLowerCase());
+}
+
+/**
  * Check if running in cloud mode (multi-tenant with auth)
  * Cloud mode is enabled when GITHUB_CLIENT_ID is set.
  */
@@ -43,8 +69,12 @@ export interface AuthResult {
 }
 
 /**
- * Validate API Key from request header
+ * Validate request authentication
  * Used by API Server (port 3003) for MCP and API routes.
+ *
+ * Supports two auth methods:
+ * 1. API Key header (x-api-key) - for PML package/CLI
+ * 2. Session cookie - for dashboard (via getSessionFromRequest)
  *
  * @param req - HTTP Request
  * @returns AuthResult if valid, null if invalid/missing
@@ -57,14 +87,39 @@ export async function validateRequest(
     return { user_id: "local", username: "local" };
   }
 
-  // Cloud mode: require API Key header
+  // Try API Key first (preferred for programmatic access)
   const apiKey = req.headers.get("x-api-key");
-  if (!apiKey) {
-    log.debug("Missing x-api-key header");
-    return null;
+  if (apiKey) {
+    const result = await validateApiKeyFromDb(apiKey);
+    // Check whitelist even for API key auth
+    if (result && !isUserAllowed(result.username)) {
+      log.warn("API key user not in whitelist", { username: result.username });
+      return null;
+    }
+    return result;
   }
 
-  return await validateApiKeyFromDb(apiKey);
+  // Fallback to session cookie (for dashboard)
+  try {
+    const { getSessionFromRequest } = await import("../server/auth/session.ts");
+    const session = await getSessionFromRequest(req);
+    if (session) {
+      // Check whitelist for session auth
+      if (!isUserAllowed(session.username)) {
+        log.warn("Session user not in whitelist", { username: session.username });
+        return null;
+      }
+      return {
+        user_id: session.userId,
+        username: session.username,
+      };
+    }
+  } catch (error) {
+    log.debug("Session validation failed", { error });
+  }
+
+  log.debug("No valid auth found (no API key or session)");
+  return null;
 }
 
 /**

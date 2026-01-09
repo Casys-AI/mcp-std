@@ -25,6 +25,7 @@
 import { load } from "@std/dotenv";
 import { getDb, isCloudMode } from "../src/db/mod.ts";
 import { ExecutionTraceStore } from "../src/capabilities/execution-trace-store.ts";
+import { EmbeddingModel } from "../src/vector/embeddings.ts";
 
 // Load environment
 await load({ export: true });
@@ -144,6 +145,28 @@ for (const trace of tracesWithEmbeddings) {
 
 console.log(`   Found: ${toolIds.size} unique tools`);
 
+// Generate tool embeddings using BGE-M3
+console.log("\n🧮 Generating tool embeddings...");
+const embeddingModel = new EmbeddingModel();
+await embeddingModel.load();
+
+const toolEmbeddings = new Map<string, number[]>();
+const toolList = Array.from(toolIds);
+
+for (let i = 0; i < toolList.length; i++) {
+  const toolId = toolList[i];
+  // Use tool ID as text for embedding (e.g., "std:psql_query" -> "psql query")
+  const toolText = toolId.replace(/[_:]/g, " ").replace(/std\s+/g, "");
+  const embedding = await embeddingModel.encode(toolText);
+  toolEmbeddings.set(toolId, embedding);
+
+  if ((i + 1) % 10 === 0 || i === toolList.length - 1) {
+    console.log(`   Processed ${i + 1}/${toolList.length} tools`);
+  }
+}
+
+console.log(`   Generated embeddings for ${toolEmbeddings.size} tools`);
+
 // Build training examples from traces
 console.log("\n🎓 Building training examples...");
 const trainingExamples: Array<{
@@ -222,7 +245,7 @@ const output = {
     })),
     tools: Array.from(toolIds).map((id) => ({
       id,
-      // Note: tool embeddings need to be generated separately
+      embedding: toolEmbeddings.get(id),
     })),
   },
   episodicEvents: trainingExamples.map((ex, i) => ({

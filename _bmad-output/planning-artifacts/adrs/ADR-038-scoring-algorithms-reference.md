@@ -34,7 +34,7 @@ atomiques).
 | :---------------------- | :------------------ | :--------------------------------------------- | :--------------- |
 | **Search (Actif)**      | `unifiedSearch()`   | `(semantic × α + graph × (1-α)) × reliability` | intent           |
 | **Prediction (Passif)** | `predictNextNode()` | DR-DSP → SHGAT                                 | intent + context |
-| **Suggestion (DAG)**    | `suggestDAG()`      | DR-DSP seul                                    | intent           |
+| **Suggestion (DAG)**    | `suggest()`         | SHGAT (scoring) + DR-DSP (pathfinding)         | intent           |
 
 ### Matrice Legacy (pour référence)
 
@@ -273,13 +273,20 @@ Les valeurs utilisées dans les formules doivent être monitorées et ajustées.
 │                       - Co-occurrence (episodic)                            │
 │                       - Recency, Reliability                                │
 │                                                                             │
-│  3. SUGGESTION (DAG) - suggestDAG(intent)                                   │
-│  ┌──────────────┐                                                           │
-│  │   DR-DSP     │ → DAG complet (shortest hyperpath)                        │
-│  └──────────────┘   Remplace Dijkstra (natif hypergraph)                    │
+│  3. SUGGESTION (DAG) - suggest(intent)                                      │
+│  ┌──────────────┐    ┌──────────────┐                                       │
+│  │    SHGAT     │ →  │   DR-DSP     │ → DAG (tool OU capability OU path)   │
+│  │  (scoring)   │    │ (pathfinding)│                                       │
+│  └──────────────┘    └──────────────┘                                       │
+│                                                                             │
+│  Stratégie (DAGSuggesterAdapter):                                          │
+│  1. SHGAT score capabilities ET tools en parallèle                         │
+│  2. Compare bestCap vs bestTool                                            │
+│  3. Si meilleur score >= 0.6 → retourne capability OU tool directement     │
+│  4. Sinon → DR-DSP compose chemin (pathfinding, pas scoring!)              │
 │                                                                             │
 │  Structure sous-jacente : DASH (Directed Acyclic SuperHyperGraph)           │
-│  Tout est capability (tools = capabilities atomiques)                       │
+│  DR-DSP aligné : tools ET capabilities sont des nodes                       │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 

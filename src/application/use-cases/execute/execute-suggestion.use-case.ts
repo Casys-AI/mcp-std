@@ -72,6 +72,7 @@ export interface IAlgorithmTracer {
     finalScore: number;
     thresholdUsed: number;
     decision: string;
+    userId?: string; // Story 9.8: Multi-tenant isolation
   }): void;
 }
 
@@ -100,6 +101,8 @@ export interface ExecuteSuggestionDependencies {
   speculationScoreThreshold?: number;
   /** Speculation success rate threshold (default: 0.8) */
   speculationSuccessRateThreshold?: number;
+  /** User ID for multi-tenant isolation (Story 9.8) */
+  userId?: string;
 }
 
 // ============================================================================
@@ -115,7 +118,17 @@ const DEFAULT_SPECULATION_SUCCESS_RATE_THRESHOLD = 0.8;
  * Generates workflow suggestions using SHGAT + DR-DSP.
  */
 export class ExecuteSuggestionUseCase {
+  private userId: string | null = null;
+
   constructor(private readonly deps: ExecuteSuggestionDependencies) {}
+
+  /**
+   * Set user ID for multi-tenant trace isolation (Story 9.8)
+   * Called per-request before execute()
+   */
+  setUserId(userId: string | null): void {
+    this.userId = userId;
+  }
 
   /**
    * Execute the use case
@@ -192,7 +205,7 @@ export class ExecuteSuggestionUseCase {
           id: bestMatch.capabilityId,
         });
         // Still return the suggestion using DR-DSP if available
-        const suggestion = await this.buildSuggestion(intent, bestMatch, correlationId);
+        const suggestion = await this.buildSuggestion(intent, bestMatch, correlationId, intentEmbedding);
         return {
           success: true,
           data: {
@@ -239,8 +252,8 @@ export class ExecuteSuggestionUseCase {
         canSpeculate,
       });
 
-      // Step 6: Build suggestion using DR-DSP
-      const suggestion = await this.buildSuggestion(intent, bestMatch, correlationId);
+      // Step 6: Build suggestion using DR-DSP (pass embedding to avoid regeneration)
+      const suggestion = await this.buildSuggestion(intent, bestMatch, correlationId, intentEmbedding);
 
       return {
         success: true,
@@ -271,10 +284,11 @@ export class ExecuteSuggestionUseCase {
     intent: string,
     bestMatch: CapabilityMatch,
     correlationId: string,
+    intentEmbedding?: number[],
   ): Promise<SuggestionResult> {
-    // Delegate to DAG suggester if available
+    // Delegate to DAG suggester if available (pass embedding to avoid regeneration)
     if (this.deps.dagSuggester) {
-      return await this.deps.dagSuggester.suggest(intent, correlationId);
+      return await this.deps.dagSuggester.suggest(intent, correlationId, intentEmbedding);
     }
 
     // Fallback: return best match as single capability
@@ -330,6 +344,7 @@ export class ExecuteSuggestionUseCase {
         finalScore: cap.score,
         thresholdUsed: threshold,
         decision: cap.score >= threshold ? "accepted" : "rejected_by_threshold",
+        userId: this.userId ?? this.deps.userId, // Story 9.8: Multi-tenant isolation
       });
     }
   }
@@ -366,6 +381,7 @@ export class ExecuteSuggestionUseCase {
       finalScore: pathResult.found ? (1.0 / (1 + pathResult.totalWeight)) : 0,
       thresholdUsed: 0,
       decision: pathResult.found ? "accepted" : "rejected_by_threshold",
+      userId: this.userId ?? this.deps.userId, // Story 9.8: Multi-tenant isolation
     });
   }
 }

@@ -53,3 +53,5 @@ export {
   OnlineLearningController,
   startOnlineLearning,
 } from "./online-learning.ts";
+
+export { trainingLock } from "./training-lock.ts";

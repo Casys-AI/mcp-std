@@ -639,7 +639,11 @@ export function computeSemanticEntropy(
   // Transform similarities to probability distribution
   // Use softmax-like transformation: shift to positive and normalize
   // This ensures we capture the distribution shape, not just values
-  const minSim = Math.min(...similarities);
+  // Note: Using loop instead of Math.min(...) to avoid stack overflow with large arrays
+  let minSim = Infinity;
+  for (const s of similarities) {
+    if (s < minSim) minSim = s;
+  }
   const shifted = similarities.map((s) => s - minSim + 0.01); // Add small constant
   const total = shifted.reduce((sum, s) => sum + s, 0);
   const probs = shifted.map((s) => s / total);

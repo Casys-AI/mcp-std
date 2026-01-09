@@ -51,13 +51,16 @@ import {
 } from "../../../graphrag/algorithms/shgat.ts";
 import {
   buildDRDSPFromCapabilities,
+  buildDRDSPAligned,
   type DRDSP,
+  type AlignedToolInput,
 } from "../../../graphrag/algorithms/dr-dsp.ts";
 import { loadCooccurrenceData } from "../../../graphrag/algorithms/shgat/message-passing/index.ts";
 import {
   buildHyperedgesFromSHGAT,
   cacheHyperedges,
 } from "../../../cache/hyperedge-cache.ts";
+import { initBlasAcceleration } from "../../../graphrag/algorithms/shgat/utils/math.ts";
 
 /**
  * Capability data for algorithm initialization
@@ -107,6 +110,32 @@ export interface SHGATFactoryResult {
  * capability matching and DAG suggestion.
  */
 export class AlgorithmFactory {
+  /** Track if BLAS has been initialized */
+  private static blasInitialized = false;
+
+  /**
+   * Initialize BLAS acceleration (called once, idempotent)
+   *
+   * Loads OpenBLAS via FFI for ~15x speedup on matrix operations.
+   * Falls back to JS implementation if BLAS is unavailable.
+   */
+  private static async initBlas(): Promise<void> {
+    if (this.blasInitialized) return;
+
+    try {
+      const available = await initBlasAcceleration();
+      this.blasInitialized = true;
+      if (available) {
+        log.info("[AlgorithmFactory] BLAS acceleration enabled (OpenBLAS)");
+      } else {
+        log.debug("[AlgorithmFactory] BLAS not available, using JS fallback");
+      }
+    } catch (e) {
+      log.debug(`[AlgorithmFactory] BLAS init failed: ${e}`);
+      this.blasInitialized = true; // Don't retry
+    }
+  }
+
   /**
    * Create SHGAT instance from capabilities
    *
@@ -118,6 +147,9 @@ export class AlgorithmFactory {
     capabilities: AlgorithmCapabilityInput[],
     options: SHGATFactoryOptions = {},
   ): Promise<SHGATFactoryResult> {
+    // Initialize BLAS for matrix acceleration (ADR-058)
+    await this.initBlas();
+
     // Create SHGAT with capabilities
     const shgat = createSHGATFromCapabilities(capabilities);
     log.info(
@@ -166,14 +198,18 @@ export class AlgorithmFactory {
    *
    * Capabilities can be added dynamically via shgat.registerCapability()
    */
-  static createEmptySHGAT(): SHGAT {
+  static async createEmptySHGAT(): Promise<SHGAT> {
+    // Initialize BLAS for matrix acceleration (ADR-058)
+    await this.initBlas();
+
     const shgat = createSHGATFromCapabilities([]);
     log.info(`[AlgorithmFactory] Empty SHGAT initialized`);
     return shgat;
   }
 
   /**
-   * Create DR-DSP instance from capabilities
+   * Create DR-DSP instance from capabilities (legacy - tools only as nodes)
+   * @deprecated Use createDRDSPAligned for capabilities as nodes
    *
    * @param capabilities Array of capabilities (embeddings not required)
    * @returns DR-DSP instance
@@ -181,7 +217,44 @@ export class AlgorithmFactory {
   static createDRDSP(capabilities: DRDSPCapabilityInput[]): DRDSP {
     const drdsp = buildDRDSPFromCapabilities(capabilities);
     log.info(
-      `[AlgorithmFactory] DR-DSP initialized with ${capabilities.length} capabilities`,
+      `[AlgorithmFactory] DR-DSP (legacy) initialized with ${capabilities.length} capabilities`,
+    );
+    return drdsp;
+  }
+
+  /**
+   * Create DR-DSP aligned with SHGAT model
+   *
+   * Both tools AND capabilities are nodes in the hypergraph.
+   * This enables capability-to-capability pathfinding.
+   *
+   * @param tools Tool nodes to register
+   * @param capabilities Capability nodes with members
+   * @param cooccurrences Optional co-occurrence data for sequence edges
+   * @returns DR-DSP instance with aligned model
+   */
+  static createDRDSPAligned(
+    tools: AlignedToolInput[],
+    capabilities: AlgorithmCapabilityInput[],
+    cooccurrences?: Array<{ from: string; to: string; weight: number }>,
+  ): DRDSP {
+    const drdsp = buildDRDSPAligned(
+      tools,
+      capabilities.map((cap) => ({
+        id: cap.id,
+        toolsUsed: cap.toolsUsed,
+        children: cap.children,
+        parents: cap.parents,
+        hierarchyLevel: cap.children?.length ? 1 : 0,
+        successRate: cap.successRate,
+        embedding: cap.embedding,
+      })),
+      cooccurrences,
+    );
+
+    const stats = drdsp.getStats();
+    log.info(
+      `[AlgorithmFactory] DR-DSP (aligned) initialized: ${stats.nodeCount} nodes, ${stats.hyperedgeCount} hyperedges`,
     );
     return drdsp;
   }
@@ -189,7 +262,7 @@ export class AlgorithmFactory {
   /**
    * Create both SHGAT and DR-DSP from the same capabilities
    *
-   * Convenience method for initializing both algorithms together.
+   * Uses aligned DR-DSP model where capabilities are nodes.
    *
    * @param capabilities Capabilities with embeddings
    * @param options SHGAT options
@@ -202,9 +275,45 @@ export class AlgorithmFactory {
     shgat: SHGATFactoryResult;
     drdsp: DRDSP;
   }> {
+    // Extract unique tools from all capabilities
+    const toolSet = new Set<string>();
+    for (const cap of capabilities) {
+      for (const tool of cap.toolsUsed) {
+        toolSet.add(tool);
+      }
+    }
+    const tools: AlignedToolInput[] = Array.from(toolSet).map((id) => ({ id }));
+
+    // Load co-occurrence for both SHGAT and DR-DSP
+    let cooccurrences: Array<{ from: string; to: string; weight: number }> | undefined;
+    if (options.withCooccurrence) {
+      try {
+        // Create temporary tool index for co-occurrence loading
+        const toolIndex = new Map<string, number>();
+        tools.forEach((t, i) => toolIndex.set(t.id, i));
+        const coocData = await loadCooccurrenceData(toolIndex);
+        if (coocData.entries.length > 0) {
+          // CooccurrenceEntry has: from (index), to (index), weight
+          // We need to convert indices back to tool IDs
+          const indexToTool = new Map<number, string>();
+          toolIndex.forEach((idx, id) => indexToTool.set(idx, id));
+
+          cooccurrences = coocData.entries
+            .filter((e) => indexToTool.has(e.from) && indexToTool.has(e.to))
+            .map((e) => ({
+              from: indexToTool.get(e.from)!,
+              to: indexToTool.get(e.to)!,
+              weight: e.weight,
+            }));
+        }
+      } catch {
+        // Co-occurrence not available, continue without
+      }
+    }
+
     const [shgatResult, drdsp] = await Promise.all([
       this.createSHGAT(capabilities, options),
-      Promise.resolve(this.createDRDSP(capabilities)),
+      Promise.resolve(this.createDRDSPAligned(tools, capabilities, cooccurrences)),
     ]);
 
     return {

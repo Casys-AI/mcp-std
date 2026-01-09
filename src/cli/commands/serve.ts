@@ -28,6 +28,7 @@ import type { MCPClientBase, MCPServer } from "../../mcp/types.ts";
 import type { ToolExecutor } from "../../dag/types.ts";
 import { CapabilityMatcher } from "../../capabilities/matcher.ts";
 import { CapabilityStore } from "../../capabilities/capability-store.ts";
+import { CapabilityRegistry } from "../../capabilities/capability-registry.ts";
 import { SchemaInferrer } from "../../capabilities/schema-inferrer.ts";
 import { checkAndSyncRouting } from "../../capabilities/routing-resolver.ts";
 import { StaticStructureBuilder } from "../../capabilities/static-structure-builder.ts";
@@ -349,15 +350,20 @@ export function createServeCommand() {
         dagSuggester.setEpisodicMemoryStore(episodicMemory);
         log.info("✓ Episodic memory enabled (ADR-008)");
 
+        // Create CapabilityRegistry for namespace:action resolution
+        const capabilityRegistry = new CapabilityRegistry(db);
+
         // Phase 2.2: Bootstrap DI container with real implementations
-        // Container available for future DI-aware components
-        const { container: _diContainer, mcpRegistry } = bootstrapDI({
+        // Phase 3.1: Also creates execute adapters for use cases
+        const { container: _diContainer, mcpRegistry, codeAnalyzer, executeAdapters } = bootstrapDI({
           db,
           embeddingModel,
           vectorSearch,
           graphEngine,
           capabilityStore,
           mcpClients,
+          capabilityRegistry,
+          // Note: shgat/drdsp not available yet, will be set via setters after gateway.start()
         });
         await mcpRegistry.refreshTools();
         log.info(`✓ DI container initialized (${mcpRegistry.getAllTools().length} tools registered)`);
@@ -442,6 +448,12 @@ export function createServeCommand() {
 
         // ADR-008: Wire EpisodicMemoryStore to gateway for workflow learning
         gateway.setEpisodicMemoryStore(episodicMemory);
+
+        // Phase 3.2: Wire CodeAnalyzer to gateway for static structure analysis
+        gateway.setCodeAnalyzer(codeAnalyzer);
+
+        // Phase 3.1: Wire execute adapters for use cases (DI)
+        gateway.setExecuteAdapters(executeAdapters);
 
         // Connect gateway to tool tracking callback (Story 3.7)
         gatewayRef = gateway;

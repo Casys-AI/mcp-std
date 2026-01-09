@@ -86,6 +86,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/pml_token:/etc/prometheus/pml_token:ro
       - pml-prometheus-data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"

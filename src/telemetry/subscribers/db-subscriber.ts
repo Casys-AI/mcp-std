@@ -137,7 +137,8 @@ export class AlgorithmDBSubscriber {
           ${t.finalScore},
           ${t.thresholdUsed},
           '${t.decision}',
-          NULL
+          NULL,
+          ${t.userId ? `'${escapeSql(t.userId)}'` : "NULL"}
         )`;
       });
 
@@ -145,7 +146,7 @@ export class AlgorithmDBSubscriber {
         INSERT INTO algorithm_traces (
           trace_id, timestamp, correlation_id, algorithm_name, algorithm_mode, target_type,
           intent, context_hash, signals, params,
-          final_score, threshold_used, decision, outcome
+          final_score, threshold_used, decision, outcome, user_id
         ) VALUES ${values.join(",\n")}
       `);
 

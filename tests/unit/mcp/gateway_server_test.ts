@@ -82,6 +82,7 @@ function createMockGraphEngine(): GraphRAGEngine {
   return {
     getPageRank: () => 0.5,
     updateFromExecution: async () => {}, // Required for workflow execution
+    setUserId: () => {}, // Story 9.8: Multi-tenant trace isolation
   } as unknown as GraphRAGEngine;
 }
 
@@ -91,6 +92,7 @@ function createMockGraphEngine(): GraphRAGEngine {
 function createMockDAGSuggester(): DAGSuggester {
   return {
     suggestDAG: async () => null,
+    setUserId: () => {}, // Story 9.8: Multi-tenant trace isolation
   } as unknown as DAGSuggester;
 }
 

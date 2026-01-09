@@ -27,6 +27,11 @@ export interface HypergraphOptions {
    * When true, each capability node includes up to 10 recent traces
    */
   includeTraces?: boolean;
+  /**
+   * Filter by user ID (Story 9.8 - Multi-tenant isolation)
+   * When set, only shows capabilities created by or executed by this user
+   */
+  userId?: string;
 }
 
 /**

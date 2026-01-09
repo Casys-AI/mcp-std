@@ -158,15 +158,19 @@ export async function getAlgorithmMetrics(
 
 /**
  * Get recent algorithm traces
+ * @param limit - Max traces to return
+ * @param since - Filter traces after this timestamp
+ * @param userId - Filter by user ID (Story 9.8: Multi-tenant isolation)
  */
 export async function getRecentTraces(
   limit: number,
   since?: string,
+  userId?: string,
 ): Promise<TracesResult> {
   const db = await getDb();
   const tracer = new AlgorithmTracer(db);
 
-  const traces = await tracer.getRecentTraces(limit, since);
+  const traces = await tracer.getRecentTraces(limit, since, userId);
 
   // Map to snake_case for external API
   const mappedTraces = traces.map((t) => ({

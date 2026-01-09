@@ -413,16 +413,18 @@ export class CapabilityDataService {
       minSuccessRate = 0,
       minUsage = 0,
       includeTraces = false, // Story 11.4
+      userId, // Story 9.8: Multi-tenant isolation
     } = options;
 
-    logger.debug("Building hypergraph data", { options, includeTraces });
+    logger.debug("Building hypergraph data", { options, includeTraces, userId });
 
     try {
-      // 1. Fetch capabilities
+      // 1. Fetch capabilities (filtered by userId if provided)
       const capabilityList = await this.listCapabilities({
         minSuccessRate,
         minUsage,
         limit: 100, // Reasonable max for visualization
+        userId, // Story 9.8: Filter by user
       });
 
       const capabilities = capabilityList.capabilities;

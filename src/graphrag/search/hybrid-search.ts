@@ -50,6 +50,8 @@ export interface HybridSearchOptions {
   algorithmTracer?: AlgorithmTracer | null;
   /** Correlation ID for grouping related traces (Story 7.6+) */
   correlationId?: string;
+  /** User ID for multi-tenant isolation (Story 9.8) */
+  userId?: string;
 }
 
 /**
@@ -97,6 +99,7 @@ export async function searchToolsHybrid(
     includeRelated = false,
     localAlphaCalculator = null,
     algorithmTracer = null,
+    userId, // Story 9.8: Multi-tenant isolation
   } = options;
 
   try {
@@ -242,6 +245,7 @@ export async function searchToolsHybrid(
           finalScore: result.finalScore,
           thresholdUsed: minScore,
           decision: "accepted",
+          userId, // Story 9.8: Multi-tenant isolation
         });
       }
     }

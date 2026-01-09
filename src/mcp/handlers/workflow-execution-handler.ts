@@ -31,8 +31,8 @@ import type { WorkflowHandlerDependencies } from "./workflow-handler-types.ts";
 import { getTaskType } from "../../dag/execution/task-router.ts";
 import type { CapabilityStore } from "../../capabilities/capability-store.ts";
 import { getToolPermissionConfig } from "../../capabilities/permission-inferrer.ts";
-import type { AdaptiveThresholdManager, ThresholdMode } from "../adaptive-threshold.ts";
-import { DEFAULT_SCOPE, updateThompsonSampling } from "./execute-handler.ts";
+import { type AdaptiveThresholdManager, type ThresholdMode, updateThompsonSampling } from "../adaptive-threshold.ts";
+import { DEFAULT_SCOPE } from "../../capabilities/types/fqdn.ts";
 // Story 10.5 AC10: WorkerBridge-based executor for 100% traceability
 import {
   cleanupWorkerBridgeExecutor,

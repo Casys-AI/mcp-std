@@ -280,13 +280,13 @@ development_status:
   14-3-routing-config-permission-inferrer: done # Code review passed, 97 tests, scope: permissions only (routing=cloud)
   14-3b-hil-approval-flow: done # Code review APPROVED 2026-01-06, 199 tests passing, 3 issues fixed
   # Phase 2: Local Execution (~5 days)
-  14-4-dynamic-mcp-loader-registry: review # Implementation complete 2026-01-06, 192 tests passing, 16 tasks done
-  14-5-sandboxed-local-mcp-execution: review # Implementation complete 2026-01-07, 24 tests passing (8 isolation + 7 RPC + 9 integration)
+  14-4-dynamic-mcp-loader-registry: done # Implementation complete 2026-01-06, 192 tests passing, 16 tasks done
+  14-5-sandboxed-local-mcp-execution: done # Implementation complete 2026-01-07, 24 tests passing (8 isolation + 7 RPC + 9 integration)
   # Phase 3: Cloud Integration (~4 days)
-  14-6-byok-api-key-management: review # Implementation complete 2026-01-07 - 76 tests (63 BYOK + 13 loader)
-  14-7-mcp-source-resolution: backlog # Registry strategy (depends on 13.8 MCP Server Registry)
+  14-6-byok-api-key-management: done # Implementation complete 2026-01-07 - 76 tests (63 BYOK + 13 loader)
+  14-7-mcp-source-resolution: done # Code Review PASSED 2026-01-07: 8 issues fixed, 22 tests, Task 4 deferred (MiniTools bundled)
   # Phase 4: Quality (~3 days)
-  14-8-e2e-integration-testing: backlog # Full flow tests,  offline mode, permission boundaries
+  14-8-e2e-integration-testing: done # Code Review APPROVED 2026-01-08: 47 tests passing, all 10 ACs validated
   14-9-custom-mcp-servers-support: backlog # User's .mcp-servers.json - deferred until 14.1-14.8 complete
   14-10-standalone-capability-distribution: backlog # pml add/run/remove/list for standalone caps
   # Phase 5: Distribution (~2 days)

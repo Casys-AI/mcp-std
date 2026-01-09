@@ -10,14 +10,9 @@
 export { GraphEngineAdapter } from "./graph-engine-adapter.ts";
 export { CapabilityRepositoryAdapter } from "./capability-repository-adapter.ts";
 export { MCPClientRegistryAdapter } from "./mcp-client-registry-adapter.ts";
-export { DecisionStrategyAdapter } from "./decision-strategy-adapter.ts";
-export { StreamOrchestratorAdapter } from "./stream-orchestrator-adapter.ts";
 
-// Phase 3.2: New adapters
+// Phase 3.2: Code analyzer
 export { CodeAnalyzerAdapter } from "./code-analyzer-adapter.ts";
-export { DAGSuggesterAdapter } from "./dag-suggester-adapter.ts";
-export { SHGATTrainerAdapter } from "./shgat-trainer-adapter.ts";
-export { WorkflowRepositoryImpl } from "./workflow-repository-impl.ts";
 
-// Execute adapters (Phase 3.1)
+// Phase 3.1: Execute adapters (DAGSuggester, SHGAT, Workflow, etc.)
 export * from "./execute/mod.ts";

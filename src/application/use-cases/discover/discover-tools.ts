@@ -36,6 +36,14 @@ export interface DiscoverToolsDeps {
 }
 
 /**
+ * Extended request with pre-computed embedding
+ */
+export interface DiscoverToolsRequest extends DiscoverRequest {
+  /** Pre-computed intent embedding (avoids duplicate encoding) */
+  intentEmbedding?: number[];
+}
+
+/**
  * Discover Tools Use Case
  *
  * Uses SHGAT K-head for tool scoring when available, falls back to HybridSearch.
@@ -46,8 +54,8 @@ export class DiscoverToolsUseCase {
   /**
    * Execute tool discovery
    */
-  async execute(request: DiscoverRequest): Promise<UseCaseResult<DiscoverToolsResult>> {
-    const { intent, limit = 5, minScore = 0, correlationId } = request;
+  async execute(request: DiscoverToolsRequest): Promise<UseCaseResult<DiscoverToolsResult>> {
+    const { intent, limit = 5, minScore = 0, includeRelated = false, correlationId, intentEmbedding } = request;
 
     if (!intent || intent.trim().length === 0) {
       return {
@@ -58,14 +66,14 @@ export class DiscoverToolsUseCase {
 
     try {
       // Try SHGAT first (unified scoring)
-      if (this.deps.shgat && this.deps.embeddingModel) {
-        const result = await this.discoverWithSHGAT(intent, limit, minScore, correlationId);
+      if (this.deps.shgat && (intentEmbedding || this.deps.embeddingModel)) {
+        const result = await this.discoverWithSHGAT(intent, limit, minScore, correlationId, intentEmbedding);
         if (result) return { success: true, data: result };
       }
 
       // Fallback to HybridSearch
       if (this.deps.graphEngine && this.deps.vectorSearch) {
-        const result = await this.discoverWithHybridSearch(intent, limit, minScore, correlationId);
+        const result = await this.discoverWithHybridSearch(intent, limit, minScore, includeRelated, correlationId);
         return { success: true, data: result };
       }
 
@@ -90,18 +98,24 @@ export class DiscoverToolsUseCase {
     limit: number,
     minScore: number,
     correlationId?: string,
+    precomputedEmbedding?: number[],
   ): Promise<DiscoverToolsResult | null> {
     const { shgat, embeddingModel, toolStore, decisionLogger } = this.deps;
-    if (!shgat || !embeddingModel) return null;
+    if (!shgat) return null;
 
-    const intentEmbedding = await embeddingModel.encode(intent);
-    if (!intentEmbedding || intentEmbedding.length === 0) {
+    // Use pre-computed embedding if available, otherwise generate
+    let embedding = precomputedEmbedding;
+    if (!embedding) {
+      if (!embeddingModel) return null;
+      embedding = await embeddingModel.encode(intent);
+    }
+    if (!embedding || embedding.length === 0) {
       log.warn("[DiscoverTools] Failed to generate intent embedding");
       return null;
     }
 
     // Score tools with SHGAT K-head
-    const shgatResults = shgat.scoreAllTools(intentEmbedding);
+    const shgatResults = shgat.scoreAllTools(embedding);
 
     log.debug("[DiscoverTools] SHGAT scored", {
       count: shgatResults.length,
@@ -159,6 +173,7 @@ export class DiscoverToolsUseCase {
     intent: string,
     limit: number,
     minScore: number,
+    includeRelated: boolean,
     correlationId?: string,
   ): Promise<DiscoverToolsResult> {
     const { graphEngine, vectorSearch, decisionLogger } = this.deps;
@@ -173,7 +188,7 @@ export class DiscoverToolsUseCase {
       intent,
       limit,
       [], // contextTools - empty for discover
-      false, // includeRelated
+      includeRelated,
       undefined,
       correlationId,
     );

@@ -70,6 +70,14 @@ export interface DiscoverCapabilitiesDeps {
 }
 
 /**
+ * Extended request with pre-computed embedding
+ */
+export interface DiscoverCapabilitiesRequest extends DiscoverRequest {
+  /** Pre-computed intent embedding (avoids duplicate encoding) */
+  intentEmbedding?: number[];
+}
+
+/**
  * Discover Capabilities Use Case
  *
  * Uses SHGAT K-head for capability scoring when available, falls back to legacy matcher.
@@ -80,8 +88,8 @@ export class DiscoverCapabilitiesUseCase {
   /**
    * Execute capability discovery
    */
-  async execute(request: DiscoverRequest): Promise<UseCaseResult<DiscoverCapabilitiesResult>> {
-    const { intent, limit = 5, minScore = 0, correlationId } = request;
+  async execute(request: DiscoverCapabilitiesRequest): Promise<UseCaseResult<DiscoverCapabilitiesResult>> {
+    const { intent, limit = 5, minScore = 0, correlationId, intentEmbedding } = request;
 
     if (!intent || intent.trim().length === 0) {
       return {
@@ -92,8 +100,8 @@ export class DiscoverCapabilitiesUseCase {
 
     try {
       // Try SHGAT first (unified scoring)
-      if (this.deps.shgat && this.deps.embeddingModel) {
-        const result = await this.discoverWithSHGAT(intent, limit, minScore, correlationId);
+      if (this.deps.shgat && (intentEmbedding || this.deps.embeddingModel)) {
+        const result = await this.discoverWithSHGAT(intent, limit, minScore, correlationId, intentEmbedding);
         if (result) return { success: true, data: result };
       }
 
@@ -117,18 +125,24 @@ export class DiscoverCapabilitiesUseCase {
     limit: number,
     minScore: number,
     correlationId?: string,
+    precomputedEmbedding?: number[],
   ): Promise<DiscoverCapabilitiesResult | null> {
     const { shgat, embeddingModel, capabilityMatcher, decisionLogger } = this.deps;
-    if (!shgat || !embeddingModel) return null;
+    if (!shgat) return null;
 
-    const intentEmbedding = await embeddingModel.encode(intent);
-    if (!intentEmbedding || intentEmbedding.length === 0) {
+    // Use pre-computed embedding if available, otherwise generate
+    let embedding = precomputedEmbedding;
+    if (!embedding) {
+      if (!embeddingModel) return null;
+      embedding = await embeddingModel.encode(intent);
+    }
+    if (!embedding || embedding.length === 0) {
       log.warn("[DiscoverCapabilities] Failed to generate intent embedding");
       return null;
     }
 
     // Score capabilities with SHGAT K-head
-    const shgatResults = shgat.scoreAllCapabilities(intentEmbedding);
+    const shgatResults = shgat.scoreAllCapabilities(embedding);
     const capStore = capabilityMatcher.getCapabilityStore();
 
     log.debug("[DiscoverCapabilities] SHGAT scored", {

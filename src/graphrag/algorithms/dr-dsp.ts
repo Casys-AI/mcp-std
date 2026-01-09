@@ -27,17 +27,47 @@ void _log; // Mark as intentionally unused for now
 // ============================================================================
 
 /**
+ * Node types in the hypergraph (aligned with SHGAT)
+ */
+export type NodeType = "tool" | "capability";
+
+/**
+ * Hyperedge types for different relationships
+ */
+export type HyperedgeType =
+  | "contains"    // capability contains tools/sub-capabilities
+  | "sequence"    // cap/tool followed by another (temporal)
+  | "provides"    // output of one feeds into another
+  | "cooccurrence"; // frequently used together
+
+/**
+ * A node in the hypergraph (tool or capability)
+ */
+export interface HypergraphNode {
+  id: string;
+  type: NodeType;
+  /** Hierarchy level (0 = tool, 1+ = capability) */
+  hierarchyLevel: number;
+  /** Optional embedding for scoring */
+  embedding?: number[];
+  /** Success rate for capabilities */
+  successRate?: number;
+}
+
+/**
  * A hyperedge connecting multiple sources to multiple targets
- * In our case: a capability connecting its tools
+ * Now supports both tools and capabilities as nodes
  */
 export interface Hyperedge {
   id: string;
-  /** Source nodes (prerequisites) */
+  /** Source nodes (prerequisites) - can be tools or capabilities */
   sources: string[];
-  /** Target nodes (what this edge provides) */
+  /** Target nodes (what this edge provides) - can be tools or capabilities */
   targets: string[];
   /** Weight/cost of traversing this hyperedge */
   weight: number;
+  /** Type of relationship */
+  edgeType?: HyperedgeType;
   /** Optional metadata */
   metadata?: Record<string, unknown>;
 }
@@ -88,12 +118,15 @@ export interface DynamicUpdate {
  * DR-DSP Algorithm
  *
  * Finds shortest hyperpaths in directed hypergraphs.
- * Optimized for DAGs (our capability structure).
+ * Now aligned with SHGAT: both tools and capabilities are nodes.
  */
 export class DRDSP {
   private hyperedges: Map<string, Hyperedge> = new Map();
   private nodeToIncomingEdges: Map<string, Set<string>> = new Map();
   private nodeToOutgoingEdges: Map<string, Set<string>> = new Map();
+
+  // Explicit node tracking (aligned with SHGAT)
+  private nodes: Map<string, HypergraphNode> = new Map();
 
   // B-tree for shortest path tracking
   private bTree: Map<string, BTreeNode> = new Map();
@@ -102,6 +135,89 @@ export class DRDSP {
     for (const edge of hyperedges) {
       this.addHyperedge(edge);
     }
+  }
+
+  // ==========================================================================
+  // Node Management (aligned with SHGAT)
+  // ==========================================================================
+
+  /**
+   * Register a tool as a node
+   */
+  registerTool(id: string, embedding?: number[]): void {
+    this.nodes.set(id, {
+      id,
+      type: "tool",
+      hierarchyLevel: 0,
+      embedding,
+    });
+  }
+
+  /**
+   * Register a capability as a node
+   */
+  registerCapability(
+    id: string,
+    options: {
+      hierarchyLevel?: number;
+      embedding?: number[];
+      successRate?: number;
+    } = {},
+  ): void {
+    this.nodes.set(id, {
+      id,
+      type: "capability",
+      hierarchyLevel: options.hierarchyLevel ?? 1,
+      embedding: options.embedding,
+      successRate: options.successRate,
+    });
+  }
+
+  /**
+   * Check if a node exists
+   */
+  hasNode(id: string): boolean {
+    return this.nodes.has(id);
+  }
+
+  /**
+   * Get node by ID
+   */
+  getNode(id: string): HypergraphNode | undefined {
+    return this.nodes.get(id);
+  }
+
+  /**
+   * Get all nodes of a specific type
+   */
+  getNodesByType(type: NodeType): HypergraphNode[] {
+    return Array.from(this.nodes.values()).filter((n) => n.type === type);
+  }
+
+  /**
+   * Get all capability nodes
+   */
+  getCapabilityNodes(): Map<string, HypergraphNode> {
+    const caps = new Map<string, HypergraphNode>();
+    for (const [id, node] of this.nodes) {
+      if (node.type === "capability") {
+        caps.set(id, node);
+      }
+    }
+    return caps;
+  }
+
+  /**
+   * Get all tool nodes
+   */
+  getToolNodes(): Map<string, HypergraphNode> {
+    const tools = new Map<string, HypergraphNode>();
+    for (const [id, node] of this.nodes) {
+      if (node.type === "tool") {
+        tools.set(id, node);
+      }
+    }
+    return tools;
   }
 
   /**
@@ -375,6 +491,7 @@ export class DRDSP {
       avgHyperedgeSize: this.hyperedges.size > 0 ? totalSize / this.hyperedges.size : 0,
     };
   }
+
 }
 
 // ============================================================================
@@ -434,7 +551,8 @@ export function capabilityToHyperedge(
 }
 
 /**
- * Build DR-DSP from capability store data
+ * Build DR-DSP from capability store data (legacy - tools as nodes only)
+ * @deprecated Use buildDRDSPAligned for the new model
  */
 export function buildDRDSPFromCapabilities(
   capabilities: Array<{
@@ -454,6 +572,132 @@ export function buildDRDSPFromCapabilities(
       cap.successRate ?? 1.0,
     );
     drdsp.addHyperedge(hyperedge);
+  }
+
+  return drdsp;
+}
+
+/**
+ * Capability input for aligned DR-DSP (matches SHGAT structure)
+ */
+export interface AlignedCapabilityInput {
+  id: string;
+  /** Tools this capability uses */
+  toolsUsed: string[];
+  /** Child capabilities (for meta-capabilities) */
+  children?: string[];
+  /** Parent capabilities (contains relationship) */
+  parents?: string[];
+  /** Hierarchy level (0 = uses only tools, 1+ = has child capabilities) */
+  hierarchyLevel?: number;
+  /** Success rate for weighting */
+  successRate?: number;
+  /** Optional embedding */
+  embedding?: number[];
+}
+
+/**
+ * Tool input for aligned DR-DSP
+ */
+export interface AlignedToolInput {
+  id: string;
+  embedding?: number[];
+}
+
+/**
+ * Build DR-DSP aligned with SHGAT model
+ *
+ * Creates:
+ * - Tool nodes (level 0)
+ * - Capability nodes (level 1+)
+ * - "contains" hyperedges: capability → tools/sub-capabilities
+ * - "sequence" hyperedges: based on co-occurrence patterns
+ */
+export function buildDRDSPAligned(
+  tools: AlignedToolInput[],
+  capabilities: AlignedCapabilityInput[],
+  cooccurrences?: Array<{ from: string; to: string; weight: number }>,
+): DRDSP {
+  const drdsp = new DRDSP();
+
+  // 1. Register all tools as nodes
+  for (const tool of tools) {
+    drdsp.registerTool(tool.id, tool.embedding);
+  }
+
+  // 2. Register all capabilities as nodes
+  for (const cap of capabilities) {
+    drdsp.registerCapability(cap.id, {
+      hierarchyLevel: cap.hierarchyLevel ?? (cap.children?.length ? 1 : 0),
+      embedding: cap.embedding,
+      successRate: cap.successRate,
+    });
+  }
+
+  // 3. Create "contains" hyperedges (capability → members)
+  for (const cap of capabilities) {
+    const members: string[] = [];
+
+    // Add tools
+    if (cap.toolsUsed) {
+      members.push(...cap.toolsUsed);
+    }
+
+    // Add child capabilities
+    if (cap.children) {
+      members.push(...cap.children);
+    }
+
+    if (members.length > 0) {
+      // Hyperedge: capability contains its members
+      // source = capability, targets = members (tools/sub-caps)
+      drdsp.addHyperedge({
+        id: `contains:${cap.id}`,
+        sources: [cap.id],
+        targets: members,
+        weight: 1 / (cap.successRate ?? 1.0),
+        edgeType: "contains",
+      });
+
+      // Reverse edge: members can invoke parent capability
+      // This allows paths like: tool → capability → tool
+      drdsp.addHyperedge({
+        id: `invokes:${cap.id}`,
+        sources: members,
+        targets: [cap.id],
+        weight: 1 / (cap.successRate ?? 1.0),
+        edgeType: "provides",
+      });
+    }
+  }
+
+  // 4. Create "sequence" hyperedges from co-occurrence data
+  if (cooccurrences) {
+    for (const cooc of cooccurrences) {
+      drdsp.addHyperedge({
+        id: `seq:${cooc.from}:${cooc.to}`,
+        sources: [cooc.from],
+        targets: [cooc.to],
+        weight: cooc.weight,
+        edgeType: "sequence",
+      });
+    }
+  }
+
+  // 5. Create parent→child edges for meta-capabilities
+  for (const cap of capabilities) {
+    if (cap.parents) {
+      for (const parentId of cap.parents) {
+        // Parent capability can use this child
+        drdsp.addHyperedge({
+          id: `child:${parentId}:${cap.id}`,
+          sources: [parentId],
+          targets: [cap.id],
+          weight: 0.5, // Low weight = preferred path
+          edgeType: "contains",
+        });
+      }
+    }
   }
 
   return drdsp;

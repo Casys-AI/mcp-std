@@ -58,7 +58,7 @@ export async function spawnSHGATTraining(
   const databaseUrl = input.databaseUrl || Deno.env.get("DATABASE_URL") || Deno.env.get("CAI_DB_PATH");
 
   const command = new Deno.Command(Deno.execPath(), {
-    args: ["run", "--allow-all", workerPath],
+    args: ["run", "--allow-all", "--unstable-ffi", workerPath],
     stdin: "piped",
     stdout: "piped",
     stderr: "piped",
@@ -72,8 +72,8 @@ export async function spawnSHGATTraining(
     capabilities: input.capabilities,
     examples: input.examples,
     config: {
-      epochs: input.epochs ?? 5,
-      batchSize: input.batchSize ?? 16,
+      epochs: input.epochs ?? 20,
+      batchSize: input.batchSize ?? 64,
     },
     existingParams: input.existingParams,
     databaseUrl, // Worker saves params directly to DB
@@ -111,7 +111,14 @@ export async function spawnSHGATTraining(
         if (done) break;
         stderrChunks.push(value);
         const text = decoder.decode(value).trim();
-        if (text) log.debug(text);
+        if (text) {
+          // Show epoch summaries at INFO level, rest at DEBUG
+          if (text.includes("Epoch") && text.includes("priority")) {
+            log.info(text);
+          } else {
+            log.debug(text);
+          }
+        }
       }
     } catch {
       // Ignore read errors on close

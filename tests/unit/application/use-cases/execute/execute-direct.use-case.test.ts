@@ -31,14 +31,8 @@ function createMockStaticStructure(): StaticStructure {
       { id: "task_1", type: "task", tool: "code:parse_json" },
     ],
     edges: [
-      { from: "task_0", to: "task_1", type: "dataflow" },
+      { from: "task_0", to: "task_1", type: "sequence" },
     ],
-    entryPoints: ["task_0"],
-    variables: [],
-    loops: [],
-    branches: [],
-    exports: [],
-    codeHash: "abc123",
   };
 }
 
@@ -61,16 +55,17 @@ function createMockCapabilityRepository(): ICapabilityRepository {
       capability: {
         id: "cap-123",
         codeHash: "abc123",
-        name: "test:capability",
-        displayName: "Test Capability",
-        code: input.code,
-        intent: input.intent,
-        toolsUsed: input.toolsUsed ?? [],
-        successRate: 1.0,
+        codeSnippet: input.code,
+        intentEmbedding: new Float32Array(1024),
+        cacheConfig: { enabled: false, ttl_ms: 0, cacheable: false },
         usageCount: 1,
+        successCount: 1,
+        successRate: 1.0,
         avgDurationMs: input.durationMs,
         createdAt: new Date(),
-        updatedAt: new Date(),
+        lastUsed: new Date(),
+        source: "emergent" as const,
+        toolsUsed: input.toolsUsed ?? [],
       },
     }),
     findById: async () => null,
@@ -83,10 +78,12 @@ function createMockCapabilityRepository(): ICapabilityRepository {
     addDependency: async () => ({
       fromCapabilityId: "",
       toCapabilityId: "",
-      confidence: 0,
-      coOccurrenceCount: 0,
+      observedCount: 0,
+      confidenceScore: 0,
+      edgeType: "dependency" as const,
+      edgeSource: "observed" as const,
+      lastObserved: new Date(),
       createdAt: new Date(),
-      updatedAt: new Date(),
     }),
     removeDependency: async () => {},
     getAllDependencies: async () => [],
@@ -118,8 +115,15 @@ function createMockDAGConverter(): IDAGConverter {
         { id: "task_1", tool: "code:parse_json", arguments: {}, dependsOn: ["task_0"] },
       ],
     }),
-    optimizeDAG: (dag) => ({
-      tasks: dag.tasks as Array<{ id: string; tool: string; metadata?: unknown }>,
+    optimizeDAG: (dag: { tasks: unknown[] }) => ({
+      tasks: dag.tasks.map((t) => {
+        const task = t as { id: string; tool: string; metadata?: Record<string, unknown> };
+        return {
+          id: task.id,
+          tool: task.tool,
+          metadata: task.metadata as { loopId?: string; loopType?: string; loopCondition?: string } | undefined,
+        };
+      }),
       physicalToLogical: new Map([
         ["task_0", ["task_0"]],
         ["task_1", ["task_1"]],

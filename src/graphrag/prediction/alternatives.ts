@@ -25,6 +25,7 @@ export interface AlternativeSuggestionDeps {
   graphEngine: GraphRAGEngine;
   algorithmTracer: AlgorithmTracer | null;
   config: DagScoringConfig;
+  userId?: string; // Story 9.8: Multi-tenant isolation
 }
 
 /**
@@ -126,6 +127,7 @@ export async function suggestAlternatives(
         finalScore: adjusted.confidence,
         thresholdUsed: deps.config.thresholds.alternativeSuccessRate,
         decision: "accepted",
+        userId: deps.userId, // Story 9.8: Multi-tenant isolation
       });
 
       seenTools.add(altCapToolId);
