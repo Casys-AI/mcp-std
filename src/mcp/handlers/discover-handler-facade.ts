@@ -191,7 +191,7 @@ export class DiscoverHandlerFacade {
       results.sort((a, b) => b.score - a.score);
       const limitedResults = results.slice(0, limit);
 
-      // Apply softmax to convert sigmoid scores to relative probabilities
+      // Apply softmax to convert SHGAT scores to relative probabilities
       if (limitedResults.length > 1) {
         const temperature = 0.1; // Sharp distribution for clear ranking
         const scores = limitedResults.map((r) => r.score);
@@ -200,6 +200,7 @@ export class DiscoverHandlerFacade {
         const sumExp = expScores.reduce((a, b) => a + b, 0);
 
         for (let i = 0; i < limitedResults.length; i++) {
+          // TODO: rename to shgat_score - this is the raw SHGAT score before softmax, not pure semantic similarity
           (limitedResults[i] as DiscoverResultItem & { semantic_score: number }).semantic_score =
             limitedResults[i].score;
           limitedResults[i].score = expScores[i] / sumExp;

@@ -147,21 +147,21 @@ Deno.test("exportLevelParams/importLevelParams - round trip", () => {
 });
 
 Deno.test("getAdaptiveHeadsByGraphSize - scales with graph size", () => {
-  // Small graph
+  // Small graph (<200) — 4 heads × 256 dims
   const small = getAdaptiveHeadsByGraphSize(10, 5, 0);
   assertEquals(small.numHeads, 4, "Small graph should have 4 heads");
 
-  // Medium graph
+  // Medium graph (<200) — still 4 heads
   const medium = getAdaptiveHeadsByGraphSize(100, 50, 0);
-  assertEquals(medium.numHeads, 6, "Medium graph should have 6 heads");
+  assertEquals(medium.numHeads, 4, "Medium graph (<200) should have 4 heads");
 
-  // Large graph
+  // Large graph (>=200) — 16 heads × 64 dims = 1024 (matches BGE-M3)
   const large = getAdaptiveHeadsByGraphSize(300, 100, 0);
-  assertEquals(large.numHeads, 8, "Large graph should have 8 heads");
+  assertEquals(large.numHeads, 16, "Large graph (>=200) should have 16 heads");
 
-  // Very large graph
-  const veryLarge = getAdaptiveHeadsByGraphSize(600, 300, 0);
-  assertEquals(veryLarge.numHeads, 12, "Very large graph should have 12 heads");
+  // Massive graph — still 16 heads (max)
+  const massive = getAdaptiveHeadsByGraphSize(600, 500, 0);
+  assertEquals(massive.numHeads, 16, "Massive graph should have 16 heads");
 });
 
 Deno.test("getAdaptiveHeadsByGraphSize - increases for deep hierarchies", () => {

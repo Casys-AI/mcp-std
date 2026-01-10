@@ -119,6 +119,9 @@ export {
 // Export seeded RNG for reproducibility
 export { seedRng } from "./shgat/initialization/parameters.ts";
 
+// Export helper for generating tool embeddings
+export { generateDefaultToolEmbedding } from "./shgat/graph/mod.ts";
+
 import {
   type AttentionResult,
   type CapabilityNode,
@@ -1856,11 +1859,13 @@ export class SHGAT {
    *
    * @param examples Training examples
    * @param isWeights Importance sampling weights for PER (default: uniform)
+   * @param evaluateOnly If true, compute loss/accuracy but skip gradient updates (for health check)
    * @returns Training result with loss, accuracy, tdErrors, gradNorm
    */
   trainBatchV1KHeadBatched(
     examples: TrainingExample[],
     isWeights?: number[],
+    evaluateOnly: boolean = false,
   ): { loss: number; accuracy: number; tdErrors: number[]; gradNorm: number } {
     if (examples.length === 0) {
       return { loss: 0, accuracy: 0, tdErrors: [], gradNorm: 0 };
@@ -1932,11 +1937,18 @@ export class SHGAT {
     // Flatten E for K-head scoring
     const E_flat = this.flattenEmbeddingsByCapabilityOrder(result.E);
 
-    // Build capId → embedding map for batched scoring
+    // Build capId → embedding map for batched scoring (includes both caps AND tools)
     const capEmbeddings = new Map<string, number[]>();
     const capIds = Array.from(capabilityNodes.keys());
     for (let i = 0; i < capIds.length; i++) {
       capEmbeddings.set(capIds[i], E_flat[i]);
+    }
+    // Also add tools - training examples can have tool IDs as candidateId/negativeCapIds
+    const toolNodes = this.graphBuilder.getToolNodes();
+    for (const [toolId, tool] of toolNodes) {
+      if (tool.embedding) {
+        capEmbeddings.set(toolId, tool.embedding);
+      }
     }
 
     // === BATCHED INTENT PROJECTION ===
@@ -1985,12 +1997,14 @@ export class SHGAT {
         // === CONTRASTIVE (InfoNCE) ===
         const negLogits: number[] = [];
         const negCapIndices: number[] = [];
+        const validNegCapIds: string[] = []; // Track which negCapIds were actually used
 
         for (const negCapId of example.negativeCapIds) {
           const negCapIdx = this.graphBuilder.getCapabilityIndex(negCapId);
           if (negCapIdx === undefined) continue;
           negLogits.push(allLogits.get(negCapId)?.[exIdx] ?? 0);
           negCapIndices.push(negCapIdx);
+          validNegCapIds.push(negCapId);
         }
 
         // InfoNCE loss
@@ -2011,40 +2025,49 @@ export class SHGAT {
 
         // Positive cap gradient
         const dLossPos = (softmax[0] - 1) / TEMPERATURE * isWeight;
-        for (let h = 0; h < this.config.numHeads; h++) {
-          const Q = kheadCache.Q_batches[h][exIdx];
-          const K = kheadCache.K_caps.get(example.candidateId)![h];
-          const { dIntentsBatched: dI, dCapEmbedding: dCap } = batchedBackpropKHeadLogit(
-            [dLossPos / this.config.numHeads],
-            [Q],
-            K,
-            [intentsBatched[exIdx]],
-            capEmbeddings.get(example.candidateId)!,
-            this.params.headParams[h],
-            grads.khead,
-            h,
-          );
-          for (let j = 0; j < dIntentAccum.length; j++) {
-            dIntentAccum[j] += dI[0]?.[j] ?? 0;
+        const posKCaps = kheadCache.K_caps.get(example.candidateId);
+        const posCapEmb = capEmbeddings.get(example.candidateId);
+        if (posKCaps && posCapEmb) {
+          for (let h = 0; h < this.config.numHeads; h++) {
+            const Q = kheadCache.Q_batches[h][exIdx];
+            const K = posKCaps[h];
+            if (!K) continue;
+            const { dIntentsBatched: dI, dCapEmbedding: dCap } = batchedBackpropKHeadLogit(
+              [dLossPos / this.config.numHeads],
+              [Q],
+              K,
+              [intentsBatched[exIdx]],
+              posCapEmb,
+              this.params.headParams[h],
+              grads.khead,
+              h,
+            );
+            for (let j = 0; j < dIntentAccum.length; j++) {
+              dIntentAccum[j] += dI[0]?.[j] ?? 0;
+            }
+            this.accumulateDCapGradient(dE_accum, posCapIdx, dCap, capIndexToLevel);
           }
-          this.accumulateDCapGradient(dE_accum, posCapIdx, dCap, capIndexToLevel);
         }
 
         // Negative caps gradients
         for (let i = 0; i < negLogits.length; i++) {
           const dLossNeg = softmax[i + 1] / TEMPERATURE * isWeight;
-          const negCapId = example.negativeCapIds![i];
+          const negCapId = validNegCapIds[i];
           const negCapIdx = negCapIndices[i];
+          const negKCaps = kheadCache.K_caps.get(negCapId);
+          const negCapEmb = capEmbeddings.get(negCapId);
+          if (!negKCaps || !negCapEmb) continue;
 
           for (let h = 0; h < this.config.numHeads; h++) {
             const Q = kheadCache.Q_batches[h][exIdx];
-            const K = kheadCache.K_caps.get(negCapId)![h];
+            const K = negKCaps[h];
+            if (!K) continue;
             const { dIntentsBatched: dI, dCapEmbedding: dCap } = batchedBackpropKHeadLogit(
               [dLossNeg / this.config.numHeads],
               [Q],
               K,
               [intentsBatched[exIdx]],
-              capEmbeddings.get(negCapId)!,
+              negCapEmb,
               this.params.headParams[h],
               grads.khead,
               h,
@@ -2071,27 +2094,32 @@ export class SHGAT {
         const dLoss = dLossRaw * isWeight;
         let dIntentAccum = new Array(this.config.hiddenDim).fill(0);
 
-        for (let h = 0; h < this.config.numHeads; h++) {
-          const Q = kheadCache.Q_batches[h][exIdx];
-          const K = kheadCache.K_caps.get(example.candidateId)![h];
-          const score = allScores.get(example.candidateId)?.[exIdx] ?? 0.5;
-          const scoringDim = K.length;
-          const scale = Math.sqrt(scoringDim);
-          const dDotQK = dLoss * score * (1 - score) / scale / this.config.numHeads;
+        const bceKCaps = kheadCache.K_caps.get(example.candidateId);
+        const bceCapEmb = capEmbeddings.get(example.candidateId);
+        if (bceKCaps && bceCapEmb) {
+          for (let h = 0; h < this.config.numHeads; h++) {
+            const Q = kheadCache.Q_batches[h][exIdx];
+            const K = bceKCaps[h];
+            if (!K) continue;
+            const score = allScores.get(example.candidateId)?.[exIdx] ?? 0.5;
+            const scoringDim = K.length;
+            const scale = Math.sqrt(scoringDim);
+            const dDotQK = dLoss * score * (1 - score) / scale / this.config.numHeads;
 
-          const dQ = K.map((k) => dDotQK * k);
-          const dK = Q.map((q) => dDotQK * q);
+            const dQ = K.map((k) => dDotQK * k);
+            const dK = Q.map((q) => dDotQK * q);
 
-          math.outerProductAdd(grads.khead.dW_q[h], dQ, intentsBatched[exIdx]);
-          math.outerProductAdd(grads.khead.dW_k[h], dK, capEmbeddings.get(example.candidateId)!);
+            math.outerProductAdd(grads.khead.dW_q[h], dQ, intentsBatched[exIdx]);
+            math.outerProductAdd(grads.khead.dW_k[h], dK, bceCapEmb);
 
-          const dIntent = math.matVecTransposeBlas(this.params.headParams[h].W_q, dQ);
-          for (let j = 0; j < dIntentAccum.length; j++) {
-            dIntentAccum[j] += dIntent[j] ?? 0;
+            const dIntent = math.matVecTransposeBlas(this.params.headParams[h].W_q, dQ);
+            for (let j = 0; j < dIntentAccum.length; j++) {
+              dIntentAccum[j] += dIntent[j] ?? 0;
+            }
+
+            const dCap = math.matVecTransposeBlas(this.params.headParams[h].W_k, dK);
+            this.accumulateDCapGradient(dE_accum, posCapIdx, dCap, capIndexToLevel);
           }
-
-          const dCap = math.matVecTransposeBlas(this.params.headParams[h].W_k, dK);
-          this.accumulateDCapGradient(dE_accum, posCapIdx, dCap, capIndexToLevel);
         }
 
         dIntentsBatched.push(dIntentAccum);
@@ -2115,14 +2143,18 @@ export class SHGAT {
       );
 
       const mpGradsConverted = this.convertMPGradsToAccumFormat(mpGrads);
-      applyLevelGradients(mpGradsConverted, this.levelParams, this.config, examples.length);
+      if (!evaluateOnly) {
+        applyLevelGradients(mpGradsConverted, this.levelParams, this.config, examples.length);
+      }
       mpGradNorm = this.computeMPGradNorm(mpGrads);
 
       if (mpGrads.v2vGrads) {
-        const lr = this.config.learningRate;
-        const batchSize = examples.length;
-        this.v2vParams.residualLogit -= lr * mpGrads.v2vGrads.dResidualLogit / batchSize;
-        this.v2vParams.temperatureLogit -= lr * mpGrads.v2vGrads.dTemperatureLogit / batchSize;
+        if (!evaluateOnly) {
+          const lr = this.config.learningRate;
+          const batchSize = examples.length;
+          this.v2vParams.residualLogit -= lr * mpGrads.v2vGrads.dResidualLogit / batchSize;
+          this.v2vParams.temperatureLogit -= lr * mpGrads.v2vGrads.dTemperatureLogit / batchSize;
+        }
         v2vGradNorm = Math.sqrt(
           mpGrads.v2vGrads.dResidualLogit ** 2 + mpGrads.v2vGrads.dTemperatureLogit ** 2
         );
@@ -2136,9 +2168,11 @@ export class SHGAT {
       levelGradNorm ** 2 + kheadGradNorm ** 2 + mpGradNorm ** 2 + v2vGradNorm ** 2
     );
 
-    // Apply gradients
-    applyKHeadGradients(grads.khead, this.params.headParams, this.config, examples.length);
-    applyWIntentGradients(grads, this.params.W_intent, this.config, examples.length);
+    // Apply gradients (skip if evaluateOnly for health check)
+    if (!evaluateOnly) {
+      applyKHeadGradients(grads.khead, this.params.headParams, this.config, examples.length);
+      applyWIntentGradients(grads, this.params.W_intent, this.config, examples.length);
+    }
 
     this.trainingMode = false;
     return {
@@ -2342,6 +2376,19 @@ export class SHGAT {
     return this.graphBuilder.getCapabilityIds();
   }
 
+  /**
+   * Get all tool embeddings for negative sampling in training
+   */
+  getToolEmbeddings(): Map<string, number[]> {
+    const result = new Map<string, number[]>();
+    for (const [toolId, tool] of this.graphBuilder.getToolNodes()) {
+      if (tool.embedding) {
+        result.set(toolId, tool.embedding);
+      }
+    }
+    return result;
+  }
+
   getStats(): {
     numHeads: number;
     hiddenDim: number;
@@ -2435,14 +2482,14 @@ export function createSHGATFromCapabilities(
   };
 
   // Validate config consistency
-  // hiddenDim = numHeads * headDim (adaptive: 4 heads→64, 8 heads→128, etc.)
+  // hiddenDim = numHeads * 64 for scoring (preserveDim only affects message passing)
   const finalHiddenDim = mergedConfig.hiddenDim ?? adaptiveConfig.hiddenDim;
   const finalNumHeads = mergedConfig.numHeads ?? adaptiveConfig.numHeads;
-  const expectedHiddenDim = finalNumHeads * 16;
+  const expectedHiddenDim = finalNumHeads * 64;
   if (finalHiddenDim !== expectedHiddenDim) {
     log.warn(
-      `[SHGAT] hiddenDim should be numHeads * 16 = ${expectedHiddenDim}, got ${finalHiddenDim}. ` +
-      `Each head needs 16 dims for full expressiveness.`
+      `[SHGAT] hiddenDim should be numHeads * 64 = ${expectedHiddenDim}, got ${finalHiddenDim}. ` +
+      `Each head needs 64 dims for full expressiveness.`
     );
   }
 

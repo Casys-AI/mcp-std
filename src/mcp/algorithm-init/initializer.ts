@@ -26,6 +26,7 @@ import {
   type TrainingExample,
   type ToolGraphFeatures,
 } from "../../graphrag/algorithms/shgat.ts";
+import { NUM_NEGATIVES } from "../../graphrag/algorithms/shgat/types.ts";
 import { spawnSHGATTraining } from "../../graphrag/algorithms/shgat/spawn-training.ts";
 import type { DRDSP } from "../../graphrag/algorithms/dr-dsp.ts";
 import { GraphSyncController } from "../graph-sync/mod.ts";
@@ -544,16 +545,9 @@ export class AlgorithmInitializer {
         allEmbeddings.set(cap.id, cap.embedding);
       }
 
-      // Add tools to negative pool for diversity (80% of nodes are tools)
-      // But we'll exclude tools from the anchor capability's toolsUsed when sampling
-      const toolNodes = this.shgat.getRegisteredToolIds();
-      for (const toolId of toolNodes) {
-        const toolEmb = this.deps.graphEngine?.getToolNode(toolId)?.embedding;
-        if (toolEmb && toolEmb.length > 0) {
-          allEmbeddings.set(toolId, toolEmb);
-        }
-      }
-      log.debug(`[Training] Negative pool: ${this.capabilities.length} caps + ${toolNodes.length} tools`);
+      // Note: tools are NOT added to negative pool - only capabilities are used as negatives
+      // Tools and capabilities are different entity types; mixing them confuses contrastive learning
+      log.debug(`[Training] Negative pool: ${this.capabilities.length} caps (tools excluded)`);
 
       // Build capability → toolsUsed map for exclusion during sampling
       const capToTools = new Map<string, Set<string>>();
@@ -561,40 +555,12 @@ export class AlgorithmInitializer {
         capToTools.set(cap.id, new Set(cap.toolsUsed));
       }
 
-      // Build tool clusters using cosine similarity (semantic)
-      // Exclude tools with similar descriptions from negatives
-      const COSINE_THRESHOLD = 0.7;
+      // @deprecated - Tool clusters no longer needed since tools are excluded from negatives
+      // Keeping empty map for backward compatibility with traceToTrainingExamples signature
       const toolClusters = new Map<string, Set<string>>();
-
-      // Get all tool embeddings
-      const toolEmbeddings = new Map<string, number[]>();
-      for (const [id, emb] of allEmbeddings) {
-        if (id.includes(":") && !this.capabilities.find(c => c.id === id)) {
-          toolEmbeddings.set(id, emb);
-        }
-      }
-
-      for (const [toolId, toolEmb] of toolEmbeddings) {
-        const cluster = new Set<string>([toolId]);
-        for (const [otherId, otherEmb] of toolEmbeddings) {
-          if (otherId === toolId) continue;
-          let dot = 0, normA = 0, normB = 0;
-          for (let i = 0; i < Math.min(toolEmb.length, otherEmb.length); i++) {
-            dot += toolEmb[i] * otherEmb[i];
-            normA += toolEmb[i] * toolEmb[i];
-            normB += otherEmb[i] * otherEmb[i];
-          }
-          const sim = dot / (Math.sqrt(normA) * Math.sqrt(normB) + 1e-9);
-          if (sim > COSINE_THRESHOLD) {
-            cluster.add(otherId);
-          }
-        }
-        toolClusters.set(toolId, cluster);
-      }
-      log.debug(`[Training] Built ${toolClusters.size} tool clusters (cosine > ${COSINE_THRESHOLD})`);
+      // log.debug(`[Training] Tool clusters disabled (tools excluded from negatives)`);
 
       const examples: TrainingExample[] = [];
-      const NUM_NEGATIVES = 8;
 
       // Helper: cosine similarity
       const cosineSim = (a: number[], b: number[]): number => {
@@ -702,33 +668,26 @@ export class AlgorithmInitializer {
           candidatesWithSim.push({ id: itemId, sim });
         }
 
-        // Hard negative mining: filter to P80-P95 similarity range (most similar = hardest)
-        const semiHard = candidatesWithSim.filter(
-          (c) => c.sim >= SEMI_HARD_MIN && c.sim <= SEMI_HARD_MAX
-        );
+        // Sort ALL candidates by similarity descending (hard → easy)
+        // Store ALL negatives for curriculum learning (train-worker samples from dynamic tiers)
+        const allSorted = [...candidatesWithSim].sort((a, b) => b.sim - a.sim);
+        const allNegativesSorted = allSorted.map(c => c.id);
 
+        // Default negativeCapIds: sample from middle third for backward compatibility
+        const total = allNegativesSorted.length;
         let negativeCapIds: string[];
-        if (semiHard.length >= NUM_NEGATIVES) {
-          // Enough semi-hard negatives: shuffle and take N
-          for (let i = semiHard.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [semiHard[i], semiHard[j]] = [semiHard[j], semiHard[i]];
-          }
-          negativeCapIds = semiHard.slice(0, NUM_NEGATIVES).map((c) => c.id);
+        if (total >= NUM_NEGATIVES * 3) {
+          // Enough for 3 tiers: use middle third
+          const tierSize = Math.floor(total / 3);
+          const middleStart = tierSize;
+          negativeCapIds = allNegativesSorted.slice(middleStart, middleStart + NUM_NEGATIVES);
+        } else if (total >= NUM_NEGATIVES) {
+          // Not enough for tiers: use middle slice
+          const start = Math.floor((total - NUM_NEGATIVES) / 2);
+          negativeCapIds = allNegativesSorted.slice(start, start + NUM_NEGATIVES);
         } else {
-          // Not enough semi-hard: use semi-hard + random from rest
-          const rest = candidatesWithSim.filter(
-            (c) => c.sim < SEMI_HARD_MIN || c.sim > SEMI_HARD_MAX
-          );
-          for (let i = rest.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [rest[i], rest[j]] = [rest[j], rest[i]];
-          }
-          const needed = NUM_NEGATIVES - semiHard.length;
-          negativeCapIds = [
-            ...semiHard.map((c) => c.id),
-            ...rest.slice(0, needed).map((c) => c.id),
-          ];
+          // Not enough negatives: use all available
+          negativeCapIds = allNegativesSorted;
         }
 
         examples.push({
@@ -737,6 +696,9 @@ export class AlgorithmInitializer {
           candidateId: trace.capability_id,
           outcome: trace.success ? 1.0 : 0.0,
           negativeCapIds,
+          // Curriculum learning: ALL negatives sorted hard → easy
+          // train-worker samples from dynamic tier based on accuracy
+          allNegativesSorted,
         });
       }
 

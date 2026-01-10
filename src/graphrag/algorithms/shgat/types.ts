@@ -243,15 +243,17 @@ export interface SHGATConfig {
  */
 export const DEFAULT_SHGAT_CONFIG: SHGATConfig = {
   // Architecture (overridden by adaptive config in createSHGATFromCapabilities)
-  // hiddenDim = numHeads * headDim (headDim=16 is fixed, hiddenDim scales with numHeads)
+  // hiddenDim/headDim are for SCORING (K-head attention)
+  // Message passing with preserveDim uses embeddingDim/numHeads separately
   numHeads: 4, // Fallback for empty graph, scales up automatically
-  hiddenDim: 64, // = 4 * 16
-  headDim: 16, // Fixed at 16 for consistent per-head expressiveness
+  hiddenDim: 256, // = numHeads * 64 for scoring
+  headDim: 64, // Fixed at 64 for scoring K-head
   embeddingDim: 1024,
   numLayers: 2,
   mlpHiddenDim: 32,
 
   // ADR-055: Keep d=1024 throughout message passing for discriminability
+  // (initializeLevelParametersPreserveDim handles this separately)
   preserveDim: true,
   preserveDimResidual: 0.3, // 30% original + 70% propagated
 
@@ -281,12 +283,17 @@ export const DEFAULT_SHGAT_CONFIG: SHGATConfig = {
 export function getAdaptiveConfig(_traceCount: number): Partial<SHGATConfig> {
   // Deprecated - kept for backward compatibility with tests
   // Use getAdaptiveHeadsByGraphSize() instead
-  return { numHeads: 4, hiddenDim: 64, headDim: 16, mlpHiddenDim: 32 };
+  return { numHeads: 4, hiddenDim: 256, headDim: 64, mlpHiddenDim: 32 };
 }
 
 // ============================================================================
 // Training Types
 // ============================================================================
+
+/**
+ * Number of negatives used per training example (sampled from curriculum tier)
+ */
+export const NUM_NEGATIVES = 8;
 
 /**
  * Training example from episodic events
@@ -306,6 +313,15 @@ export interface TrainingExample {
   outcome: number;
   /** Negative capability IDs for contrastive learning (optional) */
   negativeCapIds?: string[];
+  /**
+   * ALL negatives sorted by similarity (descending: hard → easy)
+   * Excludes only the anchor capability itself.
+   * Used for curriculum learning with dynamic tiers:
+   * - accuracy < 0.35: sample from last third (easy negatives)
+   * - accuracy > 0.55: sample from first third (hard negatives)
+   * - else: sample from middle third (medium negatives)
+   */
+  allNegativesSorted?: string[];
 }
 
 // ============================================================================

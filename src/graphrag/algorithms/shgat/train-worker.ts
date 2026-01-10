@@ -14,7 +14,7 @@
  * const result = await spawnSHGATTraining({
  *   capabilities,
  *   examples,
- *   epochs: 1,      // 1 for live, 3-5 for batch
+ *   epochs: 3,      // 3 for live (PER curriculum), 5+ for batch
  *   batchSize: 16,
  *   databaseUrl: process.env.DATABASE_URL,
  * });
@@ -23,10 +23,29 @@
  * @module graphrag/algorithms/shgat/train-worker
  */
 
-import { createSHGATFromCapabilities, type TrainingExample } from "../shgat.ts";
+import { createSHGATFromCapabilities, generateDefaultToolEmbedding, type TrainingExample } from "../shgat.ts";
+import { NUM_NEGATIVES } from "./types.ts";
 import { initBlasAcceleration } from "./utils/math.ts";
 import { PERBuffer, annealBeta } from "./training/per-buffer.ts";
+import { getLogger, setupLogger } from "../../../telemetry/logger.ts";
 import postgres from "postgres";
+
+// Logger initialized in main() after setupLogger()
+let log: ReturnType<typeof getLogger>;
+
+// Dual logging: both logger and console.error for subprocess visibility
+const logInfo = (msg: string) => {
+  console.error(msg);
+  log?.info(msg);
+};
+const logWarn = (msg: string) => {
+  console.error(msg);
+  log?.warn(msg);
+};
+const logDebug = (msg: string) => {
+  console.error(msg);
+  log?.debug(msg);
+};
 
 interface WorkerInput {
   capabilities: Array<{
@@ -44,6 +63,8 @@ interface WorkerInput {
   existingParams?: Record<string, unknown>;
   /** Database URL for saving params directly (avoids stdout size limits) */
   databaseUrl?: string;
+  /** Additional tools to register (from examples' contextTools not in any capability) */
+  additionalTools?: string[];
 }
 
 interface WorkerOutput {
@@ -55,6 +76,13 @@ interface WorkerOutput {
   error?: string;
   /** Whether params were saved to DB */
   savedToDb?: boolean;
+  /** Health check results per epoch */
+  healthCheck?: {
+    baselineAccuracy: number;
+    finalAccuracy: number;
+    degradationDetected: boolean;
+    earlyStopEpoch?: number;
+  };
 }
 
 /**
@@ -90,9 +118,19 @@ async function saveParamsToDb(
 }
 
 async function main() {
+  // Initialize logger for subprocess (required for Prometheus/file output)
+  try {
+    await setupLogger({ level: "INFO" });
+  } catch (e) {
+    // Fallback to console.error if logger setup fails (e.g., file permission issues)
+    console.error(`[SHGAT Worker] Logger setup failed: ${e}, using console fallback`);
+  }
+  // Get logger AFTER setup so handlers are configured
+  log = getLogger("default");
+
   // Initialize BLAS acceleration for training (ADR-058)
   const blasAvailable = await initBlasAcceleration();
-  console.error(`[SHGAT Worker] BLAS: ${blasAvailable ? "enabled (OpenBLAS)" : "disabled (JS fallback)"}`);
+  logInfo(`[SHGAT Worker] BLAS: ${blasAvailable ? "enabled (OpenBLAS)" : "disabled (JS fallback)"}`);
 
   // Read input from stdin
   const decoder = new TextDecoder();
@@ -114,8 +152,29 @@ async function main() {
   const input: WorkerInput = JSON.parse(inputJson);
 
   try {
+    // Validate input
+    if (!input.capabilities || input.capabilities.length === 0) {
+      throw new Error("No capabilities provided for training");
+    }
+    if (!input.examples || input.examples.length === 0) {
+      throw new Error("No examples provided for training");
+    }
+
     // Create SHGAT from capabilities
     const shgat = createSHGATFromCapabilities(input.capabilities);
+
+    // Register additional tools from examples (not in any capability's toolsUsed)
+    if (input.additionalTools && input.additionalTools.length > 0) {
+      const embeddingDim = input.capabilities[0]?.embedding.length || 1024;
+      for (const toolId of input.additionalTools) {
+        if (!shgat.hasToolNode(toolId)) {
+          shgat.registerTool({
+            id: toolId,
+            embedding: generateDefaultToolEmbedding(toolId, embeddingDim),
+          });
+        }
+      }
+    }
 
     // Import existing params for incremental training (live/PER mode)
     if (input.existingParams) {
@@ -124,26 +183,93 @@ async function main() {
 
     // Train with PER: prioritized sampling based on TD errors
     const { epochs, batchSize } = input.config;
-    const numBatchesPerEpoch = Math.ceil(input.examples.length / batchSize);
-    console.error(
+    logInfo(
       `[SHGAT Worker] Starting PER training: ${input.examples.length} examples, ${epochs} epochs, ` +
-      `batch_size=${batchSize}, ${numBatchesPerEpoch} batches/epoch, ${input.capabilities.length} capabilities`
+      `batch_size=${batchSize}, ${input.capabilities.length} capabilities`
     );
 
-    // Initialize PER buffer with all examples
-    const perBuffer = new PERBuffer(input.examples, {
+    // Split examples: 80% train, 20% held-out test set for health check
+    const shuffled = [...input.examples].sort(() => Math.random() - 0.5);
+    const testSetSize = Math.max(1, Math.floor(shuffled.length * 0.2));
+    const testSet = shuffled.slice(0, testSetSize);
+    const trainSet = shuffled.slice(testSetSize);
+
+    logInfo(`[SHGAT Worker] Health check: ${testSet.length} test examples, ${trainSet.length} train examples`);
+
+    const numBatchesPerEpoch = Math.ceil(trainSet.length / batchSize);
+
+    // Initialize PER buffer with training examples only
+    const perBuffer = new PERBuffer(trainSet, {
       alpha: 0.6,    // Priority exponent (0=uniform, 1=full prioritization)
       beta: 0.4,     // IS weight exponent (annealed to 1.0)
-      epsilon: 1e-6, // Small constant for non-zero priorities
+      epsilon: 0.01, // Minimum priority floor (prevents starvation of easy examples)
     });
 
     let finalLoss = 0;
     let finalAccuracy = 0;
     let lastEpochTdErrors: number[] = [];
 
+    // Health check tracking
+    let baselineTestAccuracy = 0;
+    let lastTestAccuracy = 0;
+    let degradationDetected = false;
+    let earlyStopEpoch: number | undefined;
+    const DEGRADATION_THRESHOLD = 0.15; // 15% drop from baseline = degradation
+
     for (let epoch = 0; epoch < epochs; epoch++) {
       // Anneal beta from 0.4 to 1.0 over training (reduces bias correction over time)
       const beta = annealBeta(epoch, epochs, 0.4);
+
+      // Curriculum learning on negatives: sample from dynamic tier based on accuracy
+      // allNegativesSorted is sorted descending by similarity (hard → easy)
+      // accuracy < 0.35: easy negatives (last third)
+      // accuracy > 0.55: hard negatives (first third)
+      // else: medium negatives (middle third)
+      const prevAccuracy = epoch === 0 ? 0.5 : finalAccuracy; // Start with medium
+      const difficulty = prevAccuracy < 0.35 ? "easy" : (prevAccuracy > 0.55 ? "hard" : "medium");
+
+      // Fisher-Yates shuffle helper
+      const shuffle = <T>(arr: T[]): T[] => {
+        const result = [...arr];
+        for (let i = result.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [result[i], result[j]] = [result[j], result[i]];
+        }
+        return result;
+      };
+
+      // Update negativeCapIds for examples that have allNegativesSorted
+      let curriculumUpdated = 0;
+      let totalNegs = 0;
+      let tierSize = 0;
+      for (const ex of trainSet) {
+        if (ex.allNegativesSorted && ex.allNegativesSorted.length >= NUM_NEGATIVES * 3) {
+          const total = ex.allNegativesSorted.length;
+          tierSize = Math.floor(total / 3);
+          totalNegs = total;
+
+          // Select tier based on accuracy
+          let tierStart: number;
+          if (prevAccuracy < 0.35) {
+            tierStart = tierSize * 2; // Easy: last third
+          } else if (prevAccuracy > 0.55) {
+            tierStart = 0; // Hard: first third
+          } else {
+            tierStart = tierSize; // Medium: middle third
+          }
+
+          // Extract tier and shuffle-sample NUM_NEGATIVES from it
+          const tier = ex.allNegativesSorted.slice(tierStart, tierStart + tierSize);
+          ex.negativeCapIds = shuffle(tier).slice(0, NUM_NEGATIVES);
+          curriculumUpdated++;
+        }
+      }
+      if (curriculumUpdated > 0) {
+        logInfo(
+          `[SHGAT Worker] Curriculum epoch ${epoch}: ${difficulty} tier (${tierSize}/${totalNegs} negs), ` +
+          `sampled ${NUM_NEGATIVES}, updated ${curriculumUpdated}/${trainSet.length}, prevAcc=${prevAccuracy.toFixed(2)}`
+        );
+      }
 
       let epochLoss = 0;
       let epochAccuracy = 0;
@@ -151,8 +277,6 @@ async function main() {
       const epochTdErrors: number[] = [];
       const allIndices: number[] = [];
       const allTdErrors: number[] = [];
-
-      const progressInterval = Math.max(1, Math.floor(numBatchesPerEpoch / 10));
 
       for (let b = 0; b < numBatchesPerEpoch; b++) {
         // Sample batch using PER (prioritized by TD error magnitude)
@@ -168,47 +292,71 @@ async function main() {
         // Collect indices and TD errors for priority update
         allIndices.push(...indices);
         allTdErrors.push(...result.tdErrors);
-
-        // Progress log every ~10% of batches
-        if (epochBatches % progressInterval === 0 || epochBatches === numBatchesPerEpoch) {
-          const pct = Math.round((epochBatches / numBatchesPerEpoch) * 100);
-          const avgLoss = epochLoss / epochBatches;
-          const avgAcc = epochAccuracy / epochBatches;
-          console.error(
-            `[SHGAT Worker] Epoch ${epoch} progress: ${pct}% (${epochBatches}/${numBatchesPerEpoch} batches, loss=${avgLoss.toFixed(4)}, acc=${avgAcc.toFixed(2)})`
-          );
-        }
       }
 
       // Update priorities based on TD errors from this epoch
       perBuffer.updatePriorities(allIndices, allTdErrors);
+      // Decay priorities toward mean (prevents starvation of easy examples, allows high priorities to decrease)
+      perBuffer.decayPriorities(0.9);
       const stats = perBuffer.getStats();
 
       finalLoss = epochLoss / epochBatches;
       finalAccuracy = epochAccuracy / epochBatches;
       lastEpochTdErrors = epochTdErrors;
 
-      console.error(
+      logInfo(
         `[SHGAT Worker] Epoch ${epoch}: loss=${finalLoss.toFixed(4)}, acc=${finalAccuracy.toFixed(2)}, ` +
         `priority=[${stats.min.toFixed(3)}-${stats.max.toFixed(3)}], β=${beta.toFixed(2)}`
       );
+
+      // Health check: evaluate on held-out test set
+      if (testSet.length > 0) {
+        const testResult = shgat.trainBatchV1KHeadBatched(testSet, testSet.map(() => 1.0), false); // evaluate only, no gradient
+        const testAccuracy = testResult.accuracy;
+
+        if (epoch === 0) {
+          baselineTestAccuracy = testAccuracy;
+          lastTestAccuracy = testAccuracy;
+          logInfo(`[SHGAT Worker] Health check baseline: testAcc=${testAccuracy.toFixed(2)}`);
+        } else {
+          const dropFromBaseline = baselineTestAccuracy - testAccuracy;
+          const dropFromLast = lastTestAccuracy - testAccuracy;
+
+          logInfo(
+            `[SHGAT Worker] Health check epoch ${epoch}: testAcc=${testAccuracy.toFixed(2)}, ` +
+            `Δbaseline=${(-dropFromBaseline * 100).toFixed(1)}%, Δlast=${(-dropFromLast * 100).toFixed(1)}%`
+          );
+
+          // Detect degradation: >15% drop from baseline
+          if (dropFromBaseline > DEGRADATION_THRESHOLD) {
+            logWarn(
+              `[SHGAT Worker] DEGRADATION DETECTED: testAcc dropped ${(dropFromBaseline * 100).toFixed(1)}% from baseline. Early stopping.`
+            );
+            degradationDetected = true;
+            earlyStopEpoch = epoch;
+            break; // Early stop
+          }
+
+          lastTestAccuracy = testAccuracy;
+        }
+      }
     }
 
     // Save params directly to DB if URL provided
     let savedToDb = false;
     if (input.databaseUrl) {
       try {
-        console.error(`[SHGAT Worker] Exporting params...`);
+        logInfo(`[SHGAT Worker] Exporting params...`);
         const params = shgat.exportParams();
-        console.error(`[SHGAT Worker] Params exported, keys: ${Object.keys(params).join(", ")}`);
+        logInfo(`[SHGAT Worker] Params exported, keys: ${Object.keys(params).join(", ")}`);
         savedToDb = await saveParamsToDb(input.databaseUrl, params);
-        console.error(`[SHGAT Worker] Params saved to DB`);
+        logInfo(`[SHGAT Worker] Params saved to DB`);
       } catch (e) {
-        console.error(`[SHGAT Worker] Failed to save params to DB: ${e}`);
+        logWarn(`[SHGAT Worker] Failed to save params to DB: ${e}`);
         // Continue - training still succeeded, params just couldn't be saved
       }
     } else {
-      console.error(`[SHGAT Worker] No databaseUrl provided, skipping DB save`);
+      logDebug(`[SHGAT Worker] No databaseUrl provided, skipping DB save`);
     }
 
     // Output lightweight status to stdout (no params - they're in the DB)
@@ -218,6 +366,12 @@ async function main() {
       finalAccuracy,
       tdErrors: lastEpochTdErrors,
       savedToDb,
+      healthCheck: {
+        baselineAccuracy: baselineTestAccuracy,
+        finalAccuracy: lastTestAccuracy,
+        degradationDetected,
+        earlyStopEpoch,
+      },
     };
 
     console.log(JSON.stringify(output));

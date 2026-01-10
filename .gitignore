@@ -133,3 +133,14 @@ monitoring/pml_token
 # PML temp/debug files
 packages/pml/test-*.ts
 .pml-client-id
+
+# Debug scripts (temporary)
+scripts/debug-*.ts
+scripts/test-real-training.ts
+
+# Temp exports
+exports/
+
+# MCP backup
+.mcp.json.backup
+tests/unit/mcp/algorithm-init/

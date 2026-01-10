@@ -15,6 +15,7 @@
  */
 
 import type { SHGAT, TrainingExample } from "../algorithms/shgat.ts";
+import { NUM_NEGATIVES } from "../algorithms/shgat/types.ts";
 import type { ExecutionTraceStore } from "../../capabilities/execution-trace-store.ts";
 import type { ExecutionTrace } from "../../capabilities/types.ts";
 import {
@@ -197,36 +198,9 @@ export async function trainSHGATOnPathTraces(
     capToTools.set(capId, new Set(cap.toolsUsed ?? []));
   }
 
-  // Add tool embeddings and build cosine clusters
-  const COSINE_THRESHOLD = 0.7;
-  const toolEmbeddings = new Map<string, number[]>();
-  for (const [toolId, tool] of graphBuilder.getToolNodes()) {
-    if (tool.embedding) {
-      allEmbeddings.set(toolId, tool.embedding);
-      toolEmbeddings.set(toolId, tool.embedding);
-    }
-  }
-
-  // Build tool clusters using cosine similarity (semantic)
+  // @deprecated - Tool clusters no longer needed since tools are excluded from negatives
+  // Keeping empty map for backward compatibility with traceToTrainingExamples signature
   const toolClusters = new Map<string, Set<string>>();
-  for (const [toolId, toolEmb] of toolEmbeddings) {
-    const cluster = new Set<string>([toolId]);
-    for (const [otherId, otherEmb] of toolEmbeddings) {
-      if (otherId === toolId) continue;
-      let dot = 0, normA = 0, normB = 0;
-      for (let i = 0; i < Math.min(toolEmb.length, otherEmb.length); i++) {
-        dot += toolEmb[i] * otherEmb[i];
-        normA += toolEmb[i] * toolEmb[i];
-        normB += otherEmb[i] * otherEmb[i];
-      }
-      const sim = dot / (Math.sqrt(normA) * Math.sqrt(normB) + 1e-9);
-      if (sim > COSINE_THRESHOLD) {
-        cluster.add(otherId);
-      }
-    }
-    toolClusters.set(toolId, cluster);
-  }
-  log.debug(`[PER-Training] Built ${toolClusters.size} tool clusters (cosine > ${COSINE_THRESHOLD})`);
 
   // Step 5: Flatten paths and generate training examples
   const allExamples: TrainingExample[] = [];
@@ -507,8 +481,8 @@ export function traceToTrainingExamples(
   allEmbeddings?: Map<string, number[]>, // Optional: for semi-hard negative mining (caps + tools)
   capToTools?: Map<string, Set<string>>, // Optional: capability → toolsUsed for exclusion
   toolClusters?: Map<string, Set<string>>, // Optional: tool → community members (Louvain)
-  semiHardMin: number = 0.15, // Adaptive threshold (P25)
-  semiHardMax: number = 0.65, // Adaptive threshold (P75)
+  _semiHardMin: number = 0.15, // @deprecated - kept for backward compatibility
+  _semiHardMax: number = 0.65, // @deprecated - kept for backward compatibility
 ): TrainingExample[] {
   if (flatPath.length === 0) {
     return [];
@@ -530,9 +504,9 @@ export function traceToTrainingExamples(
     adjustedOutcome = outcome * (0.5 + 0.5 * weight);
   }
 
-  const NUM_NEGATIVES = 8;
-  const SEMI_HARD_MIN = semiHardMin; // Adaptive threshold (P25)
-  const SEMI_HARD_MAX = semiHardMax; // Adaptive threshold (P75)
+  // Note: semiHardMin/Max params are kept for backward compatibility but no longer used
+  // Curriculum learning now uses allNegativesSorted sorted by similarity (hard → easy)
+  // train-worker selects slice based on accuracy instead of filtering by thresholds
 
   // Helper: cosine similarity
   const cosineSim = (a: number[], b: number[]): number => {
@@ -546,9 +520,10 @@ export function traceToTrainingExamples(
     return denom > 0 ? dot / denom : 0;
   };
 
-  // Pre-compute SEMI-HARD negatives for the whole trace (same intent for all examples)
-  // Semi-hard: negatives similar to ANCHOR (not intent) for challenging discrimination
+  // Pre-compute negatives for the whole trace (same intent for all examples)
+  // Curriculum learning: store 24 sorted negatives, select 8 based on accuracy
   let semiHardNegativeCapIds: string[] | undefined;
+  let allNegativesSortedIds: string[] | undefined;
   if (allEmbeddings && allEmbeddings.size > NUM_NEGATIVES) {
     // Get tools to exclude: anchor capability's toolsUsed (they're related, not negatives)
     const anchorTools = trace.capabilityId ? (capToTools?.get(trace.capabilityId) ?? new Set<string>()) : new Set<string>();
@@ -576,30 +551,25 @@ export function traceToTrainingExamples(
       candidatesWithSim.push({ id: itemId, sim });
     }
 
-    // Semi-hard negative mining: filter to P25-P75 similarity range
-    // PER handles curriculum learning by prioritizing harder examples within this range
-    const semiHard = candidatesWithSim.filter(
-      (c) => c.sim >= SEMI_HARD_MIN && c.sim <= SEMI_HARD_MAX
-    );
+    // Sort ALL candidates by similarity descending (hard → easy)
+    // Store ALL negatives for curriculum learning (train-worker samples from dynamic tiers)
+    const allSorted = [...candidatesWithSim].sort((a, b) => b.sim - a.sim);
+    allNegativesSortedIds = allSorted.map(c => c.id);
 
-    if (semiHard.length >= NUM_NEGATIVES) {
-      // Enough hard negatives: shuffle and take N
-      for (let i = semiHard.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [semiHard[i], semiHard[j]] = [semiHard[j], semiHard[i]];
-      }
-      semiHardNegativeCapIds = semiHard.slice(0, NUM_NEGATIVES).map((c) => c.id);
+    // Default negativeCapIds: sample from middle third for backward compatibility
+    const total = allNegativesSortedIds.length;
+    if (total >= NUM_NEGATIVES * 3) {
+      // Enough for 3 tiers: use middle third
+      const tierSize = Math.floor(total / 3);
+      const middleStart = tierSize;
+      semiHardNegativeCapIds = allNegativesSortedIds.slice(middleStart, middleStart + NUM_NEGATIVES);
+    } else if (total >= NUM_NEGATIVES) {
+      // Not enough for tiers: use middle slice
+      const start = Math.floor((total - NUM_NEGATIVES) / 2);
+      semiHardNegativeCapIds = allNegativesSortedIds.slice(start, start + NUM_NEGATIVES);
     } else {
-      // Not enough hard negatives: sort by similarity descending and take top
-      const sorted = [...candidatesWithSim].sort((a, b) => b.sim - a.sim);
-      const needed = NUM_NEGATIVES - semiHard.length;
-      const rest = sorted
-        .filter((c) => !semiHard.some(s => s.id === c.id))
-        .slice(0, needed);
-      semiHardNegativeCapIds = [
-        ...semiHard.map((c) => c.id),
-        ...rest.map((c) => c.id),
-      ];
+      // Not enough negatives: use all available
+      semiHardNegativeCapIds = allNegativesSortedIds;
     }
   }
 
@@ -613,6 +583,9 @@ export function traceToTrainingExamples(
       candidateId,
       outcome: adjustedOutcome,
       negativeCapIds: semiHardNegativeCapIds,
+      // Curriculum learning: ALL negatives sorted hard → easy
+      // train-worker samples from dynamic tier based on accuracy
+      allNegativesSorted: allNegativesSortedIds,
     });
   }
 
@@ -759,14 +732,8 @@ export async function trainSHGATOnPathTracesSubprocess(
     capToTools.set(cap.id, new Set(cap.toolsUsed ?? []));
   }
 
-  // Add tool embeddings from SHGAT graphBuilder
-  const graphBuilder = (shgat as unknown as { graphBuilder: {
-    getToolNodes: () => Map<string, { embedding: number[] }>;
-  } }).graphBuilder;
-
-  for (const [toolId, tool] of graphBuilder.getToolNodes()) {
-    if (tool.embedding) allEmbeddings.set(toolId, tool.embedding);
-  }
+  // Note: tools are NOT added to allEmbeddings for negative sampling
+  // Only capabilities are used as negatives to avoid mixing entity types
 
   // Step 5: Generate training examples
   const allExamples: TrainingExample[] = [];

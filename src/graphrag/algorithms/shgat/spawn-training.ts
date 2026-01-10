@@ -24,6 +24,8 @@ interface SpawnTrainingInput {
   existingParams?: Record<string, unknown>;
   /** Database URL for saving params directly (avoids stdout size limits) */
   databaseUrl?: string;
+  /** Additional tools to register (from examples' contextTools not in any capability) */
+  additionalTools?: string[];
 }
 
 interface SpawnTrainingResult {
@@ -55,7 +57,7 @@ export async function spawnSHGATTraining(
   log.info(`[SHGAT] Spawning training subprocess with ${input.examples.length} examples...`);
 
   // Get database URL from env or input
-  const databaseUrl = input.databaseUrl || Deno.env.get("DATABASE_URL") || Deno.env.get("CAI_DB_PATH");
+  const databaseUrl = input.databaseUrl || Deno.env.get("DATABASE_URL");
 
   const command = new Deno.Command(Deno.execPath(), {
     args: ["run", "--allow-all", "--unstable-ffi", workerPath],
@@ -73,10 +75,11 @@ export async function spawnSHGATTraining(
     examples: input.examples,
     config: {
       epochs: input.epochs ?? 20,
-      batchSize: input.batchSize ?? 64,
+      batchSize: input.batchSize ?? 32,
     },
     existingParams: input.existingParams,
     databaseUrl, // Worker saves params directly to DB
+    additionalTools: input.additionalTools,
   });
 
   const writer = process.stdin.getWriter();
@@ -140,16 +143,30 @@ export async function spawnSHGATTraining(
     }
     const stderr = decoder.decode(stderrBytes);
 
-    // Also try to get stdout in case error was printed there
+    // Try to parse stdout for JSON error (train-worker outputs error to stdout)
     const stdoutBytesErr = new Uint8Array(stdoutChunks.reduce((acc, c) => acc + c.length, 0));
     let offsetErr = 0;
     for (const chunk of stdoutChunks) {
       stdoutBytesErr.set(chunk, offsetErr);
       offsetErr += chunk.length;
     }
-    const stdoutErr = decoder.decode(stdoutBytesErr);
+    const stdoutErr = decoder.decode(stdoutBytesErr).trim();
 
-    const errorMsg = stderr || stdoutErr || `Exit code: ${status.code}`;
+    // Extract actual error from JSON if available
+    let errorMsg = `Exit code: ${status.code}`;
+    if (stdoutErr) {
+      try {
+        const parsed = JSON.parse(stdoutErr);
+        if (parsed.error) {
+          errorMsg = parsed.error;
+        }
+      } catch {
+        // Not JSON, use stderr instead
+        errorMsg = stderr || stdoutErr;
+      }
+    } else {
+      errorMsg = stderr || errorMsg;
+    }
     log.error(`[SHGAT] Training subprocess failed (code=${status.code}): ${errorMsg}`);
     return {
       success: false,

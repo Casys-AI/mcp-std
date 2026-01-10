@@ -99,7 +99,7 @@ export class TrainSHGATUseCase {
         minTraces: 1,
         maxTraces: 50,
         batchSize: 16,
-        epochs: 1, // Live mode: single epoch
+        epochs: 3, // Live mode: 3 epochs for PER curriculum learning (ADR-060)
       };
 
       const result = await this.deps.shgatTrainer.train(

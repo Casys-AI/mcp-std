@@ -91,25 +91,34 @@ decayPriorities(decay: number = 0.95): void {
 
 Résultat observé: `priority=[0.082-0.973]` - plus de minimum à 0.000
 
-### 3. Tool Cluster Exclusion
+### 3. Tools Exclus du Negative Pool (Updated 2026-01-09)
 
-Exclure les tools similaires de l'anchor des negatives (cosine > 0.7):
+**Décision finale**: Les tools sont **complètement exclus** du negative pool. Seules les capabilities sont utilisées comme negatives.
 
 ```typescript
-// Build tool clusters using cosine similarity
-const COSINE_THRESHOLD = 0.7;
-for (const [toolId, toolEmb] of toolEmbeddings) {
-  const cluster = new Set<string>([toolId]);
-  for (const [otherId, otherEmb] of toolEmbeddings) {
-    if (cosineSim(toolEmb, otherEmb) > COSINE_THRESHOLD) {
-      cluster.add(otherId);
-    }
-  }
-  toolClusters.set(toolId, cluster);
+// per-training.ts & initializer.ts
+// Tools are NOT added to allEmbeddings for negative sampling
+// Only capabilities are used as negatives to avoid mixing entity types
+const allEmbeddings = new Map<string, number[]>();
+for (const [capId, cap] of capabilities) {
+  if (cap.embedding) allEmbeddings.set(capId, cap.embedding);
 }
+// Note: tools are NOT added - only capabilities
 ```
 
-Ceci évite d'avoir `sqlite_query` comme negative quand l'anchor est `psql_query` (ils sont dans le même cluster).
+**Raisonnement**:
+1. **Types différents**: On entraîne à ranker des *capabilities*, pas des tools. Un tool n'est pas une "mauvaise capability", c'est un autre type d'entité.
+2. **Faux négatifs**: Le tool `std:psql_query` a un embedding similaire à la capability `db:postgresQuery` qui l'utilise. En le mettant en négatif, on pénalise le modèle pour quelque chose de sémantiquement correct.
+3. **Signal contrastif brouillé**: L'apprentissage devrait être "intent X → capability A > capability B", pas "capability A > tool T".
+
+**Résultat**: Accuracy 49% (vs 0-3% avant) après 20 epochs.
+
+**Code legacy deprecated**:
+```typescript
+// @deprecated - Tool clusters no longer needed since tools are excluded from negatives
+// Keeping empty map for backward compatibility with traceToTrainingExamples signature
+const toolClusters = new Map<string, Set<string>>();
+```
 
 ### 4. IS Weights dans le Training
 
@@ -238,12 +247,65 @@ healthCheck: {
 }
 ```
 
+### 8. Curriculum Learning sur Negatives (Implémenté 2026-01-10)
+
+En plus du PER (qui gère le curriculum sur *quels exemples* sampler), on implémente un curriculum sur *quels negatives* utiliser par exemple.
+
+**Mécanisme (v2 - ALL negatives):**
+- On stocke **TOUS les negatives** triés par similarité descending (hard → easy) dans `allNegativesSorted`
+- Avec ~400 capabilities, chaque exemple a ~399 negatives disponibles
+- À chaque epoch, le train-worker **shuffle-sample 8** du tier approprié
+
+**Tiers dynamiques:**
+```typescript
+// train-worker.ts
+const total = ex.allNegativesSorted.length;  // ~399
+const tierSize = Math.floor(total / 3);       // ~133 per tier
+
+// accuracy < 0.35: easy negatives (last third)
+// accuracy > 0.55: hard negatives (first third)
+// else: medium negatives (middle third)
+let tierStart: number;
+if (prevAccuracy < 0.35) {
+  tierStart = tierSize * 2; // Easy
+} else if (prevAccuracy > 0.55) {
+  tierStart = 0;            // Hard
+} else {
+  tierStart = tierSize;     // Medium
+}
+
+const tier = ex.allNegativesSorted.slice(tierStart, tierStart + tierSize);
+ex.negativeCapIds = shuffle(tier).slice(0, NUM_NEGATIVES); // Sample 8 random
+```
+
+**Constante centralisée dans types.ts:**
+```typescript
+export const NUM_NEGATIVES = 8; // Negatives samplés par exemple
+```
+
+**Flow complet:**
+1. `per-training.ts` / `initializer.ts`: Stockent TOUS les negatives triés (hard → easy)
+2. Default `negativeCapIds` = sample du middle tier
+3. `train-worker.ts`: À chaque epoch, shuffle-sample 8 du tier basé sur accuracy
+4. PER: Gère en parallèle le curriculum sur quels *exemples* sampler
+
+**Avantages v2:**
+- **100% couverture**: Tous les negatives disponibles (vs 24 avant)
+- **Diversité**: Shuffle-sampling → différents 8 negatives chaque epoch
+- **Scalable**: Fonctionne avec n'importe quel nombre de capabilities
+- **Double curriculum**: PER (exemples) + tiers (negatives)
+
+**Rationale:**
+- **Progression naturelle**: Débute avec negatives medium, passe aux hard quand accuracy > 55%
+- **Recovery**: Si accuracy chute < 35%, revient aux negatives faciles pour stabiliser
+- **Exploration**: Le shuffle garantit que le modèle voit des negatives variés
+
 ## Spikes futurs
 
 1. **Benchmark script**: Tester systématiquement différentes configs
-2. **Adaptive percentiles**: Ajuster dynamiquement basé sur métriques
+2. ~~**Adaptive percentiles**~~: Remplacé par curriculum sur negatives
 3. **Stratified sampling**: Mix explicite de difficultés
-4. **Curriculum scheduling**: Augmenter difficulté over epochs
+4. ~~**Curriculum scheduling**~~: ✅ Implémenté (section 8)
 
 ## References
 

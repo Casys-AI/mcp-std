@@ -23,6 +23,7 @@ import type { StaticStructure, TraceTaskResult } from "../../capabilities/types/
 import { trainSHGATOnPathTracesSubprocess } from "../../graphrag/learning/mod.ts";
 import { trainingLock } from "../../graphrag/learning/mod.ts";
 import { type AdaptiveThresholdManager, updateThompsonSampling } from "../../mcp/adaptive-threshold.ts";
+import { enrichToolOutputSchema } from "../../capabilities/output-schema-inferrer.ts";
 
 // ============================================================================
 // Interfaces
@@ -112,7 +113,12 @@ export class PostExecutionService {
     // 4. Learn fan-in/fan-out edges from task results
     await this.learnFromTaskResults(taskResults);
 
-    // 5. PER batch training (background, non-blocking)
+    // 5. Enrich tool output schemas from execution results (ADR-061)
+    this.enrichToolOutputSchemas(taskResults).catch((err) =>
+      log.warn("[PostExecutionService] Schema enrichment failed", { error: String(err) })
+    );
+
+    // 6. PER batch training (background, non-blocking)
     this.runPERBatchTraining().catch((err) =>
       log.warn("[PostExecutionService] PER training failed", { error: String(err) })
     );
@@ -246,6 +252,65 @@ export class PostExecutionService {
   }
 
   // ==========================================================================
+  // Tool Output Schema Enrichment (ADR-061)
+  // ==========================================================================
+
+  /**
+   * Enrich tool output schemas from execution results
+   *
+   * ADR-061: Automatically infer output schemas from observed tool outputs.
+   * This populates tool_schema.output_schema which enables provides edge calculation.
+   */
+  private async enrichToolOutputSchemas(taskResults: TraceTaskResult[]): Promise<void> {
+    const { db } = this.deps;
+    if (!db) return;
+
+    let enriched = 0;
+    let edgesCreated = 0;
+
+    for (const task of taskResults) {
+      // Skip failed tasks or tasks without result
+      if (!task.success || task.result === undefined || task.result === null) {
+        continue;
+      }
+
+      // Get tool ID from task.tool field
+      const toolId = task.tool;
+      if (!toolId || toolId.startsWith("$cap:")) continue; // Skip capability references
+
+      try {
+        // Enrich schema (async, non-blocking per tool)
+        // syncEdges=false to batch edge sync at the end
+        const result = await enrichToolOutputSchema(db, toolId, task.result, false);
+        if (result.updated) {
+          enriched++;
+        }
+      } catch (error) {
+        // Non-critical: continue with other tools
+        log.debug("[PostExecutionService] Failed to enrich schema for tool", {
+          toolId,
+          error: String(error),
+        });
+      }
+    }
+
+    // Batch sync provides edges if any schemas were updated
+    if (enriched > 0) {
+      try {
+        const { syncAllProvidesEdges } = await import("../../graphrag/provides-edge-calculator.ts");
+        edgesCreated = await syncAllProvidesEdges(db);
+      } catch (error) {
+        log.warn("[PostExecutionService] Failed to sync provides edges", { error: String(error) });
+      }
+
+      log.info("[PostExecutionService] Enriched tool output schemas", {
+        toolsEnriched: enriched,
+        edgesCreated,
+      });
+    }
+  }
+
+  // ==========================================================================
   // Fan-in/Fan-out Learning
   // ==========================================================================
 
@@ -370,7 +435,7 @@ export class PostExecutionService {
           minTraces: 1,
           maxTraces: 50,
           batchSize: 16,
-          epochs: 1, // Live mode: single epoch
+          epochs: 3, // Live mode: 3 epochs for PER curriculum learning (ADR-060)
         },
       );
 

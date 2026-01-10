@@ -270,7 +270,7 @@ export function initializeParameters(config: SHGATConfig): SHGATParams {
   //
   // scoringDim = hiddenDim = numHeads * headDim (from getAdaptiveHeadsByGraphSize)
   // W_q/W_k project embeddingDim (1024) to scoringDim for attention scoring
-  const scoringDim = hiddenDim; // Now adaptive: 4 heads→64, 8 heads→128, etc.
+  const scoringDim = hiddenDim; // Now adaptive: 4 heads→256, 8 heads→512, etc.
   const headParams: HeadParams[] = [];
   for (let h = 0; h < numHeads; h++) {
     const W_shared = initMatrixScaled(scoringDim, embeddingDim, 10);
@@ -585,47 +585,39 @@ export function getAdaptiveHeadsByGraphSize(
   numTools: number,
   numCapabilities: number,
   maxLevel: number = 0,
-  _preserveDim: boolean = false,
-  _embeddingDim: number = 1024,
+  preserveDim: boolean = false,
+  embeddingDim: number = 1024,
 ): { numHeads: number; hiddenDim: number; headDim: number } {
   const graphSize = numTools + numCapabilities;
   const complexityFactor = maxLevel + 1; // More levels = more complex
 
-  // Base heads on graph size
+  // Base heads on graph size (only 4, 16 — must divide 1024 for preserveDim)
+  // 16 heads × 64 dim = 1024 exactly matches BGE-M3 embedding dimension
   let numHeads: number;
-  if (graphSize < 50) {
-    numHeads = 4; // Small graph
-  } else if (graphSize < 200) {
-    numHeads = 6; // Medium graph
-  } else if (graphSize < 500) {
-    numHeads = 8; // Large graph
-  } else if (graphSize < 1000) {
-    numHeads = 12; // Very large graph
+  if (graphSize < 200) {
+    numHeads = 4; // Small graph — 4 heads × 256 dims
   } else {
-    numHeads = 16; // Massive graph
+    numHeads = 16; // 16 heads × 64 dims = 1024 (matches BGE-M3)
   }
 
   // Increase heads for deep hierarchies (more levels = more patterns)
-  if (complexityFactor >= 3) {
-    numHeads = Math.min(16, numHeads + 2);
-  } else if (complexityFactor >= 2) {
-    numHeads = Math.min(16, numHeads + 1);
+  // Bump small graphs (4 heads) to 16 if hierarchy is complex
+  if (complexityFactor >= 2 && numHeads < 16) {
+    numHeads = 16;
   }
 
-  // Ensure numHeads is even (for symmetric attention)
-  if (numHeads % 2 !== 0) {
-    numHeads += 1;
+  // PreserveDim mode: ensure numHeads divides embeddingDim for message passing
+  // (initializeLevelParametersPreserveDim calculates headDim = embeddingDim / numHeads)
+  // But scoring K-head still uses small hiddenDim = numHeads * 16
+  if (preserveDim && embeddingDim % numHeads !== 0) {
+    // Round to valid divisor (4 or 16 — we skip 8 for 1024 dim alignment)
+    numHeads = numHeads < 10 ? 4 : 16;
   }
 
-  // Architecture: headDim is FIXED (standard transformer), scoringDim is DERIVED
-  // - headDim = 16 (fixed, standard per-head dimension)
-  // - scoringDim = numHeads * headDim (scales with graph complexity)
-  // This ensures each head has full expressive power regardless of numHeads
-  const HEAD_DIM = 16;
+  // headDim/hiddenDim for SCORING (K-head attention)
+  // Message passing with preserveDim uses embeddingDim/numHeads separately
+  const HEAD_DIM = 64;
   const scoringDim = numHeads * HEAD_DIM;
-
-  // preserveDim mode: message passing keeps embeddingDim=1024, scoring uses scoringDim
-  // standard mode: both use scoringDim
   return { numHeads, hiddenDim: scoringDim, headDim: HEAD_DIM };
 }
 
