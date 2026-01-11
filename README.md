@@ -55,29 +55,54 @@ This library is inspired by and includes tools from the following open-source MC
 
 #### Categories
 
-| Category    | Count | Examples                                                                                                                                                                                                                                              |
-| ----------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **system**  | 71    | docker, git, curl, dig, ping, ps, tar, zip, ssh, rsync, kubectl, sqlite, psql, redis, ffmpeg, imagemagick, npm, pip, aws, gcloud, chmod, df, du, sed, awk, jq                                                                                         |
-| **agent**   | 8     | delegate, decide, analyze, extract, classify, summarize, generate, compare (LLM-powered via MCP sampling)                                                                                                                                             |
-| **python**  | 5     | exec, eval, pip, script, version (Python execution in isolated subprocess)                                                                                                                                                                            |
-| text        | 26    | split, join, regex, case, template, slugify, nato, lorem, diff, stats, crontab, markdown_toc, ascii_art, numeronym, obfuscate, emoji_search, unicode_info, homoglyph, analyze_words, list_convert                                                     |
-| format      | 25    | number, bytes, duration, truncate, yaml_to_json, json_to_yaml, toml_to_json, json_to_toml, markdown_to_html, html_to_markdown, json_to_csv, format_sql, format_phone, xml_escape, properties, format_html, format_javascript, format_xml, format_yaml |
-| crypto      | 20    | hash, uuid, ulid, base64, hex, url, html, password, jwt_decode, hmac, totp, text_to_binary, generate_token, basic_auth, bcrypt, bip39, md5                                                                                                            |
-| collections | 20    | map, filter, sort, unique, group, chunk, zip, flatten, partition, sample                                                                                                                                                                              |
-| algo        | 20    | binary_search, group_aggregate, top_n, sort variants, quickselect                                                                                                                                                                                     |
-| math        | 17    | eval, stats, round, random, mode, convert, base_convert, roman, convert_angle, convert_energy, convert_power, convert_temperature, percentage, convert_units, financial                                                                               |
-| data        | 11    | person, address, company, lorem, internet, finance, date, image, svg_placeholder, qr_code, barcode                                                                                                                                                    |
-| network     | 11    | parse_url, build_url, ip_info, ipv6_info, subnet_calc, mac_format, fang_url, decode_safelink, generate_mac, generate_ipv6_ula, random_port                                                                                                            |
-| util        | 11    | http_status, mime_type, mime_reverse, rem_px, format_css, normalize_email, port_numbers, file_signature, user_agent_parse, slugify                                                                                                                    |
-| validation  | 11    | email, url, uuid, ip, phone, date, json, schema, credit_card, iban                                                                                                                                                                                    |
-| state       | 10    | set, get, delete, has, keys, values, clear, size, entries (KV store with TTL)                                                                                                                                                                         |
-| json        | 10    | parse, stringify, query, merge, flatten, unflatten, pick, omit, keys, compare                                                                                                                                                                         |
-| vfs         | 8     | read, write, list, mkdir, rm, stat, exists, copy                                                                                                                                                                                                      |
-| transform   | 8     | csv_parse, csv_stringify, xml_parse, xml_stringify                                                                                                                                                                                                    |
-| datetime    | 7     | now, format, diff, add, parse, cron_parse, unix                                                                                                                                                                                                       |
-| color       | 7     | hex_to_rgb, rgb_to_hex, rgb_to_hsl, hsl_to_rgb, palette, blend, contrast                                                                                                                                                                              |
-| http        | 6     | build_url, parse_url, headers, query_string                                                                                                                                                                                                           |
-| compare     | 6     | diff, levenshtein, similarity, fuzzy, deep_equal, array_diff                                                                                                                                                                                          |
+| Category | Description | Examples |
+|----------|-------------|----------|
+| **System Tools** | | |
+| docker | Container management | build, run, ps, logs, compose |
+| git | Repository operations | status, diff, log, commit, branch |
+| process | Process management | exec, spawn, kill, ps |
+| archive | Compression | tar, zip, gzip, unzip |
+| ssh | Remote execution | exec, scp, tunnel |
+| kubernetes | K8s cluster management | get, apply, delete, logs |
+| database | SQL/NoSQL access | psql, sqlite, redis |
+| pglite | Embedded PostgreSQL | query, exec (in-process PG) |
+| media | Audio/video/image | ffmpeg, imagemagick |
+| cloud | Cloud providers | aws, gcloud, systemd |
+| sysinfo | System information | cpu, memory, disk, network |
+| packages | Package managers | npm, pip, apt, brew |
+| **Data Tools** | | |
+| text | Text manipulation | split, join, regex, case, template, slugify |
+| string | String utilities | trim, pad, truncate, wrap |
+| json | JSON operations | parse, query, merge, flatten, pick |
+| format | Formatting | number, bytes, yaml, toml, markdown, sql |
+| transform | Data conversion | csv_parse, xml_parse, csv_stringify |
+| crypto | Cryptography | hash, uuid, base64, jwt, hmac, totp, bcrypt |
+| math | Mathematical ops | eval, stats, round, convert, roman |
+| datetime | Date/time | now, format, diff, add, cron_parse |
+| collections | Array/set/map | map, filter, sort, unique, group, chunk |
+| algo | Algorithms | binary_search, top_n, quickselect, sort |
+| validation | Data validation | email, url, uuid, ip, phone, credit_card |
+| compare | Comparison | levenshtein, similarity, fuzzy, deep_equal |
+| diff | Text diff | unified_diff, patch, compare_lines |
+| **Utility Tools** | | |
+| network | Network utilities | parse_url, ip_info, subnet_calc, dns |
+| http | HTTP helpers | build_url, headers, query_string |
+| path | Path utilities | join, dirname, basename, resolve |
+| color | Color manipulation | hex_to_rgb, rgb_to_hsl, palette, blend |
+| vfs | Virtual filesystem | read, write, list, mkdir, rm |
+| state | KV store with TTL | set, get, delete, keys, values |
+| util | General utilities | http_status, mime_type, user_agent |
+| **Generation Tools** | | |
+| faker | Mock data | person, address, company, lorem |
+| data | Data generation | image, svg, qr_code, barcode |
+| qrcode | QR/barcode | generate, decode, svg |
+| geo | Geographic | distance, bearing, bbox, geocode |
+| schema | Schema inference | infer, validate, generate |
+| resilience | Reliability | retry, rate_limit, circuit_breaker |
+| **AI/Agent Tools** | | |
+| agent | LLM-powered | delegate, analyze, classify, summarize |
+| python | Python execution | exec, eval, pip, script |
+| pml | Capability mgmt | cap:list, cap:rename, cap:lookup |
 
 ## Usage
 
