@@ -1,0 +1,40 @@
+{
+  "name": "@casys/mcp-std",
+  "version": "0.1.0",
+  "exports": {
+    ".": "./mcp-tools.ts",
+    "./server": "./mcp-tools-server.ts",
+    "./std": "./std/mod.ts"
+  },
+  "publish": {
+    "include": [
+      "mcp-tools.ts",
+      "mcp-tools-server.ts",
+      "std/**/*.ts",
+      "README.md",
+      "LICENSE"
+    ],
+    "exclude": [
+      "**/*_test.ts",
+      "**/*.bench.ts"
+    ]
+  },
+  "imports": {
+    "@anthropic-ai/sdk": "npm:@anthropic-ai/sdk@^0.39.0",
+    "@modelcontextprotocol/sdk": "npm:@anthropic-ai/mcp-sdk@^1.11.0",
+    "change-case": "npm:change-case@^5.4.4",
+    "jmespath": "npm:jmespath@^0.16.0",
+    "mathjs": "npm:mathjs@^14.0.1",
+    "simple-statistics": "npm:simple-statistics@^7.8.8",
+    "date-fns": "npm:date-fns@^4.1.0",
+    "lodash-es": "npm:lodash-es@^4.17.21",
+    "@faker-js/faker": "npm:@faker-js/faker@^9.3.0",
+    "zod": "npm:zod@^3.24.1",
+    "validator": "npm:validator@^13.12.0",
+    "papaparse": "npm:papaparse@^5.5.2",
+    "diff": "npm:diff@^7.0.0",
+    "jsondiffpatch": "npm:jsondiffpatch@^0.6.0",
+    "mnemonist": "npm:mnemonist@^0.39.8",
+    "uuid": "npm:uuid@^11.0.5"
+  }
+}

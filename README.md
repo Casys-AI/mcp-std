@@ -8,13 +8,13 @@ MCP-compatible utility tools for [PML](https://pml.casys.ai) - Procedural Memory
 |---|---|
 | **Website** | https://pml.casys.ai |
 | **Docs** | https://docs.pml.casys.ai |
-| **GitHub** | https://github.com/Casys-AI/pml-std |
-| **Releases** | https://github.com/Casys-AI/pml-std/releases |
+| **GitHub** | https://github.com/Casys-AI/mcp-std |
+| **Releases** | https://github.com/Casys-AI/mcp-std/releases |
 
 ## Quick Install
 
 ```bash
-curl -fsSL https://github.com/Casys-AI/pml-std/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/Casys-AI/mcp-std/releases/latest/download/install.sh | sh
 ```
 
 ## Architecture
