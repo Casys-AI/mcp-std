@@ -42,16 +42,82 @@ interface JsonRpcResponse {
 // Sampling Client for Agent Tools
 // ============================================================================
 
-// Pending sampling requests (waiting for response from client)
-const pendingSamplingRequests = new Map<
-  number,
-  { resolve: (result: unknown) => void; reject: (error: Error) => void }
->();
-let samplingRequestId = 1;
+/**
+ * Call LLM directly via API (OpenAI or Anthropic)
+ */
+async function callLLMDirectly(params: {
+  messages: Array<{ role: "user" | "assistant"; content: string }>;
+  maxTokens?: number;
+}): Promise<{
+  content: Array<{ type: string; text?: string }>;
+  stopReason: "end_turn" | "tool_use" | "max_tokens";
+}> {
+  const openaiKey = Deno.env.get("OPENAI_API_KEY");
+  const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
+
+  if (anthropicKey) {
+    // Call Anthropic API
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": anthropicKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: Deno.env.get("ANTHROPIC_MODEL") || "claude-sonnet-4-20250514",
+        max_tokens: params.maxTokens || 4096,
+        messages: params.messages,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Anthropic API error: ${response.status} ${error}`);
+    }
+
+    const data = await response.json();
+    return {
+      content: data.content,
+      stopReason: data.stop_reason === "end_turn" ? "end_turn" : "max_tokens",
+    };
+  }
+
+  if (openaiKey) {
+    // Call OpenAI API
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${openaiKey}`,
+      },
+      body: JSON.stringify({
+        model: Deno.env.get("OPENAI_MODEL") || "gpt-4.1",
+        max_tokens: params.maxTokens || 4096,
+        messages: params.messages,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`OpenAI API error: ${response.status} ${error}`);
+    }
+
+    const data = await response.json();
+    const choice = data.choices[0];
+    return {
+      content: [{ type: "text", text: choice.message.content }],
+      stopReason: choice.finish_reason === "stop" ? "end_turn" : "max_tokens",
+    };
+  }
+
+  throw new Error(
+    "No LLM API key configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY environment variable."
+  );
+}
 
 /**
- * Send a sampling request to the MCP client (Claude Code)
- * Per MCP spec, the client handles the agentic loop and tool execution
+ * Send a sampling request - calls LLM directly via API
  */
 async function sendSamplingRequest(params: {
   messages: Array<{ role: "user" | "assistant"; content: string }>;
@@ -64,47 +130,7 @@ async function sendSamplingRequest(params: {
   content: Array<{ type: string; text?: string; name?: string; input?: Record<string, unknown> }>;
   stopReason: "end_turn" | "tool_use" | "max_tokens";
 }> {
-  const id = samplingRequestId++;
-
-  // Create promise that will be resolved when we get the response
-  const promise = new Promise<unknown>((resolve, reject) => {
-    pendingSamplingRequests.set(id, { resolve, reject });
-
-    // Timeout after 5 minutes
-    setTimeout(() => {
-      if (pendingSamplingRequests.has(id)) {
-        pendingSamplingRequests.delete(id);
-        reject(new Error("Sampling request timed out"));
-      }
-    }, 300000);
-  });
-
-  // Send the request to the client
-  const request: JsonRpcRequest = {
-    jsonrpc: "2.0",
-    id,
-    method: "sampling/createMessage",
-    params: {
-      messages: params.messages.map((m) => ({
-        role: m.role,
-        content: { type: "text", text: m.content },
-      })),
-      maxTokens: params.maxTokens || 4096,
-      // Pass hints for agentic loop control
-      ...(params.maxIterations && { _maxIterations: params.maxIterations }),
-      ...(params.allowedToolPatterns && { _allowedToolPatterns: params.allowedToolPatterns }),
-    },
-  };
-
-  const encoder = new TextEncoder();
-  await Deno.stdout.write(encoder.encode(JSON.stringify(request) + "\n"));
-
-  // Wait for response
-  const result = await promise;
-  return result as {
-    content: Array<{ type: string; text?: string; name?: string; input?: Record<string, unknown> }>;
-    stopReason: "end_turn" | "tool_use" | "max_tokens";
-  };
+  return await callLLMDirectly(params);
 }
 
 /**

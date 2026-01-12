@@ -1,31 +1,20 @@
 /**
- * Cap Module - Capability Management Tools
+ * Cap Module - Capability Management Tools (MCP HTTP Client)
  *
- * Story 13.5: cap:list, cap:rename, cap:lookup, cap:whois
+ * Story 13.5: cap:list, cap:rename, cap:lookup, cap:whois, cap:merge
  *
- * Provides tools for managing capabilities in the registry:
- * - cap:list: List capabilities with filtering and pagination
- * - cap:rename: Rename capability (updates display_name, creates alias)
- * - cap:lookup: Resolve name to capability details
- * - cap:whois: Get full metadata for a FQDN
+ * This file provides a lightweight HTTP client for capability management tools.
+ * The actual implementation (CapModule, PmlStdServer) has been moved to
+ * src/mcp/handlers/cap-handler.ts to support standalone package distribution.
  *
- * Architecture: Follows lib/std/ pattern (one file per module).
+ * When used as part of @casys/mcp-std, these tools call the PML server via HTTP.
+ * When used in the main application, the gateway handles calls directly.
  *
  * @module lib/std/cap
  */
 
-import {
-  type CapabilityRegistry,
-  getCapabilityDisplayName,
-  getCapabilityFqdn,
-  type Scope,
-} from "../../src/capabilities/capability-registry.ts";
-import type { DbClient } from "../../src/db/mod.ts";
-import type { EmbeddingModelInterface } from "../../src/vector/embeddings.ts";
-import { parseFQDN } from "../../src/capabilities/fqdn.ts";
-import { eventBus } from "../../src/events/mod.ts";
-import * as log from "@std/log";
 import { z } from "zod";
+import type { MiniTool } from "./types.ts";
 
 // =============================================================================
 // Validation Schemas
@@ -59,29 +48,17 @@ export const ActionSchema = z
     "Auto-generated names like 'exec_...' not allowed. Use a descriptive name."
   );
 
-// =============================================================================
-// Embedding Text Builder
-// =============================================================================
-
 /**
- * Build text for embedding generation
- *
- * Combines name and description for better semantic search.
- * Format: "name: description" or just "name" if no description.
- *
- * @param name - Capability display name
- * @param description - Optional description
- * @returns Text for embedding generation
+ * Zod schema for cap:merge validation
  */
-export function buildEmbeddingText(name: string, description?: string | null): string {
-  if (description) {
-    return `${name}: ${description}`;
-  }
-  return name;
-}
+export const CapMergeOptionsSchema = z.object({
+  source: z.string().min(1, "source is required"),
+  target: z.string().min(1, "target is required"),
+  preferSourceCode: z.boolean().optional(),
+});
 
 // =============================================================================
-// Types
+// Types (Public API for package consumers)
 // =============================================================================
 
 /**
@@ -285,15 +262,6 @@ export interface CapMergeOptions {
 }
 
 /**
- * Zod schema for cap:merge validation
- */
-export const CapMergeOptionsSchema = z.object({
-  source: z.string().min(1, "source is required"),
-  target: z.string().min(1, "target is required"),
-  preferSourceCode: z.boolean().optional(),
-});
-
-/**
  * Response from cap:merge tool
  */
 export interface CapMergeResponse {
@@ -354,899 +322,155 @@ export interface CapToolResult {
 }
 
 // =============================================================================
-// Constants
+// MCP HTTP Client
 // =============================================================================
 
 /**
- * Default scope for capability operations
- *
- * MVP LIMITATION: All cap:* tools operate on this hardcoded scope.
- * Multi-tenant support (org/project parameters) deferred to future story.
- * See: Epic 14 (JSR Package Local/Cloud MCP Routing) for multi-scope design.
+ * Configuration for the MCP HTTP client
  */
-const DEFAULT_SCOPE: Scope = { org: "local", project: "default" };
-
-/** Default pagination limit */
-const DEFAULT_LIMIT = 50;
-
-/** Maximum pagination limit */
-const MAX_LIMIT = 500;
-
-// =============================================================================
-// Helpers
-// =============================================================================
-
-/**
- * Convert glob pattern to SQL LIKE pattern
- *
- * @example
- * globToSqlLike("fs:*") // "fs:%"
- * globToSqlLike("read_?") // "read\__"
- */
-export function globToSqlLike(pattern: string): string {
-  return pattern
-    .replace(/%/g, "\\%") // Escape existing %
-    .replace(/_/g, "\\_") // Escape existing _
-    .replace(/\*/g, "%") // Glob * → SQL %
-    .replace(/\?/g, "_"); // Glob ? → SQL _
+interface McpClientConfig {
+  /** Base URL for the PML API (default: https://pml.casys.ai) */
+  baseUrl: string;
+  /** API key for authentication (required for cloud endpoints) */
+  apiKey?: string;
 }
 
-// =============================================================================
-// CapModule Class
-// =============================================================================
+/**
+ * Get MCP client configuration from environment
+ */
+function getClientConfig(): McpClientConfig {
+  const baseUrl = Deno.env.get("PML_API_URL") || "https://pml.casys.ai";
+  const apiKey = Deno.env.get("PML_API_KEY");
+  return { baseUrl, apiKey };
+}
 
 /**
- * CapModule - handles cap:* tool calls
+ * Check if URL is a cloud endpoint (requires authentication)
  *
- * Implements the management tools for capabilities:
- * - Listing with filtering and pagination
- * - Renaming with alias creation
- * - Looking up by name or alias
- * - Getting full metadata (whois)
+ * Local endpoints (no API key required):
+ * - localhost, 127.0.0.1, [::1] (IPv6 loopback)
+ * - 127.0.0.0/8 range (127.x.x.x)
+ * - 0.0.0.0 (all interfaces, local dev)
+ *
+ * All other endpoints are considered cloud and require PML_API_KEY.
  */
-export class CapModule {
-  private onMergedCallback?: OnCapabilityMerged;
+function isCloudEndpoint(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
 
-  constructor(
-    private registry: CapabilityRegistry,
-    private db: DbClient,
-    private embeddingModel?: EmbeddingModelInterface,
-  ) {}
+    // Check for common local patterns
+    if (host === "localhost") return false;
+    if (host === "0.0.0.0") return false;
+    if (host === "::1" || host === "[::1]") return false;
 
-  /**
-   * Set callback for merge events
-   * Used to emit capability.merged events for graph invalidation
-   */
-  setOnMerged(callback: OnCapabilityMerged): void {
-    this.onMergedCallback = callback;
+    // Check for IPv4 loopback range 127.x.x.x
+    if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return false;
+
+    // Everything else is cloud
+    return true;
+  } catch {
+    // Invalid URL - treat as cloud to be safe
+    return true;
+  }
+}
+
+/** Default timeout for MCP calls (30 seconds) */
+const MCP_CALL_TIMEOUT_MS = 30000;
+
+/**
+ * Make an MCP tool call via HTTP
+ *
+ * @param tool - The tool name (e.g., "cap:list")
+ * @param args - Arguments for the tool
+ * @returns The tool result
+ * @throws Error if the request fails, times out, or authentication is required
+ */
+async function mcpCall(tool: string, args: unknown): Promise<unknown> {
+  const config = getClientConfig();
+
+  // Require API key for cloud endpoints
+  if (isCloudEndpoint(config.baseUrl) && !config.apiKey) {
+    throw new Error("PML_API_KEY required for cloud access. Get your key at pml.casys.ai/settings");
   }
 
-  /**
-   * List available cap:* tools
-   */
-  listTools(): CapTool[] {
-    return [
-      {
-        name: "cap:list",
-        description:
-          "List capabilities with optional filtering by pattern, unnamed-only flag, and pagination. Returns id, name, description, namespace, action, usageCount, successRate.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            pattern: {
-              type: "string",
-              description: "Glob pattern to filter capabilities (e.g., 'fs:*', 'read_?')",
-            },
-            unnamedOnly: {
-              type: "boolean",
-              description: "Only return unnamed_* capabilities",
-            },
-            limit: {
-              type: "number",
-              description: "Maximum results (default: 50, max: 500)",
-            },
-            offset: {
-              type: "number",
-              description: "Pagination offset (default: 0)",
-            },
-          },
-        },
-      },
-      {
-        name: "cap:rename",
-        description:
-          "Update a capability's namespace, action, description, tags, or visibility. UUID stays immutable. FQDN is recomputed if namespace/action changes.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            name: {
-              type: "string",
-              description: "Current name (namespace:action) or UUID to update",
-            },
-            namespace: {
-              type: "string",
-              description: "New namespace (e.g., 'fs', 'api', 'data')",
-            },
-            action: {
-              type: "string",
-              description: "New action name (e.g., 'read_json', 'fetch_user')",
-            },
-            description: {
-              type: "string",
-              description: "New description",
-            },
-            tags: {
-              type: "array",
-              items: { type: "string" },
-              description: "New tags array",
-            },
-            visibility: {
-              type: "string",
-              enum: ["private", "project", "org", "public"],
-              description: "New visibility level",
-            },
-          },
-          required: ["name"],
-        },
-      },
-      {
-        name: "cap:lookup",
-        description:
-          "Lookup a capability by name. Returns fqdn, displayName, description, usageCount, successRate. Warns if resolved via deprecated alias.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            name: {
-              type: "string",
-              description: "Name to look up (display_name or alias)",
-            },
-          },
-          required: ["name"],
-        },
-      },
-      {
-        name: "cap:whois",
-        description:
-          "Get complete metadata for a capability by UUID or FQDN. Returns full CapabilityRecord with all fields.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            id: {
-              type: "string",
-              description: "UUID or FQDN to look up",
-            },
-          },
-          required: ["id"],
-        },
-      },
-      {
-        name: "cap:merge",
-        description:
-          "Merge duplicate capabilities into a canonical one. Combines usage stats, keeps newest code. Requires identical tools_used.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            source: {
-              type: "string",
-              description: "Source capability to merge FROM (name, UUID, or FQDN) - will be deleted",
-            },
-            target: {
-              type: "string",
-              description: "Target capability to merge INTO (name, UUID, or FQDN) - will be updated",
-            },
-            preferSourceCode: {
-              type: "boolean",
-              description: "If true, use source's code_snippet even if older. Default: use newest.",
-            },
-          },
-          required: ["source", "target"],
-        },
-      },
-    ];
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (config.apiKey) {
+    headers["x-api-key"] = config.apiKey;
   }
 
-  /**
-   * Route call to appropriate handler
-   */
-  async call(name: string, args: unknown): Promise<CapToolResult> {
-    try {
-      switch (name) {
-        case "cap:list":
-          return await this.handleList(args as CapListOptions);
-        case "cap:rename":
-          return await this.handleRename(args as CapRenameOptions);
-        case "cap:lookup":
-          return await this.handleLookup(args as CapLookupOptions);
-        case "cap:whois":
-          return await this.handleWhois(args as CapWhoisOptions);
-        case "cap:merge":
-          return await this.handleMerge(args);
-        default:
-          return this.errorResult(`Unknown cap tool: ${name}`);
-      }
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      log.error(`[CapModule] Error in ${name}: ${msg}`);
-      return this.errorResult(msg);
-    }
-  }
+  // F1: Use AbortController for timeout to prevent indefinite hanging
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), MCP_CALL_TIMEOUT_MS);
 
-  /**
-   * Handle cap:list - list capabilities with filtering and pagination
-   *
-   * AC1: Returns all with id, name, description, usageCount, namespace, action
-   * AC2: Filter by pattern (glob to SQL LIKE)
-   * AC3: Filter unnamed only
-   * AC4: Pagination with total count
-   */
-  private async handleList(options: CapListOptions): Promise<CapToolResult> {
-    const limit = Math.min(options.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
-    const offset = options.offset ?? 0;
-
-    // Build WHERE clauses
-    const conditions: string[] = [
-      "cr.org = $1",
-      "cr.project = $2",
-    ];
-    const params: (string | number | boolean)[] = [DEFAULT_SCOPE.org, DEFAULT_SCOPE.project];
-
-    // AC2: Pattern filter (now matches namespace:action)
-    if (options.pattern) {
-      const sqlPattern = globToSqlLike(options.pattern);
-      params.push(sqlPattern);
-      conditions.push(`(cr.namespace || ':' || cr.action) LIKE $${params.length} ESCAPE '\\'`);
-    }
-
-    // AC3: Unnamed only filter (now matches action starting with unnamed_)
-    if (options.unnamedOnly) {
-      conditions.push(`cr.action LIKE 'unnamed\\_%' ESCAPE '\\'`);
-    }
-
-    const whereClause = conditions.join(" AND ");
-
-    // Query with total count using window function
-    // NOTE: Read usage/success from workflow_pattern (where updateUsage writes)
-    // not from capability_records (which was never updated - bug fixed Dec 2024)
-    const query = `
-      SELECT
-        cr.id,
-        cr.org,
-        cr.project,
-        cr.namespace,
-        cr.action,
-        cr.hash,
-        COALESCE(wp.usage_count, 0) as usage_count,
-        COALESCE(wp.success_count, 0) as success_count,
-        wp.description,
-        COUNT(*) OVER() as total
-      FROM capability_records cr
-      LEFT JOIN workflow_pattern wp ON cr.workflow_pattern_id = wp.pattern_id
-      WHERE ${whereClause}
-      ORDER BY COALESCE(wp.usage_count, 0) DESC, cr.namespace ASC, cr.action ASC
-      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
-    `;
-
-    params.push(limit, offset);
-
-    interface ListRow {
-      id: string;
-      org: string;
-      project: string;
-      namespace: string;
-      action: string;
-      hash: string;
-      usage_count: number;
-      success_count: number;
-      description: string | null;
-      total: string; // PostgreSQL returns bigint as string
-    }
-
-    const rows = (await this.db.query(query, params)) as unknown as ListRow[];
-
-    // Extract total from first row (or 0 if empty)
-    const total = rows.length > 0 ? parseInt(rows[0].total, 10) : 0;
-
-    // Map to response format
-    const items: CapListItem[] = rows.map((row) => ({
-      id: row.id,
-      fqdn: `${row.org}.${row.project}.${row.namespace}.${row.action}.${row.hash}`,
-      name: `${row.namespace}:${row.action}`,
-      description: row.description,
-      namespace: row.namespace,
-      action: row.action,
-      usageCount: row.usage_count,
-      successRate: row.usage_count > 0 ? row.success_count / row.usage_count : 0,
-    }));
-
-    const response: CapListResponse = {
-      items,
-      total,
-      limit,
-      offset,
-    };
-
-    log.info(`[CapModule] cap:list returned ${items.length} items (total: ${total})`);
-    return this.successResult(response);
-  }
-
-  /**
-   * Handle cap:rename - Update capability namespace, action, description, tags, visibility
-   *
-   * AC5: cap:rename({ name, namespace?, action?, description?, tags?, visibility? })
-   * - UUID (id) stays immutable
-   * - If namespace/action changes, FQDN is recomputed
-   * - Note: capability_aliases table was removed in migration 028
-   */
-  private async handleRename(options: CapRenameOptions): Promise<CapToolResult> {
-    const { name, namespace, action, description, tags, visibility } = options;
-
-    // Validate namespace with Zod
-    if (namespace !== undefined) {
-      const nsResult = NamespaceSchema.safeParse(namespace);
-      if (!nsResult.success) {
-        return this.errorResult(`Invalid namespace: ${nsResult.error.errors[0].message}`);
-      }
-    }
-
-    // Validate action with Zod
-    if (action !== undefined) {
-      const actionResult = ActionSchema.safeParse(action);
-      if (!actionResult.success) {
-        return this.errorResult(`Invalid action: ${actionResult.error.errors[0].message}`);
-      }
-    }
-
-    // Resolve the capability by name (namespace:action) or UUID
-    let record = await this.registry.resolveByName(name, DEFAULT_SCOPE);
-    if (!record) {
-      // Try by UUID
-      record = await this.registry.getById(name);
-    }
-    if (!record) {
-      return this.errorResult(`Capability not found: ${name}`);
-    }
-
-    const oldDisplayName = getCapabilityDisplayName(record);
-
-    // Build dynamic UPDATE for capability_records
-    const updates: string[] = [];
-    const params: (string | string[] | number)[] = [];
-    let paramIndex = 1;
-
-    if (namespace !== undefined) {
-      updates.push(`namespace = $${paramIndex++}`);
-      params.push(namespace);
-    }
-    if (action !== undefined) {
-      updates.push(`action = $${paramIndex++}`);
-      params.push(action);
-    }
-    if (tags !== undefined) {
-      updates.push(`tags = $${paramIndex++}`);
-      params.push(tags);
-    }
-    if (visibility !== undefined) {
-      updates.push(`visibility = $${paramIndex++}`);
-      params.push(visibility);
-    }
-
-    // Always update updated_at
-    updates.push(`updated_at = NOW()`);
-    updates.push(`updated_by = $${paramIndex++}`);
-    params.push("system"); // TODO: get actual user from context
-
-    // Execute capability_records update if we have fields to update
-    if (updates.length > 2) {
-      // More than just updated_at and updated_by
-      params.push(record.id);
-      await this.db.query(
-        `UPDATE capability_records
-         SET ${updates.join(", ")}
-         WHERE id = $${paramIndex}`,
-        params,
-      );
-      log.info(`[CapModule] Updated capability_records for ${record.id}`);
-    }
-
-    // Check if name or description changed - need to update embedding
-    const nameChanged = namespace !== undefined || action !== undefined;
-    const descriptionChanged = description !== undefined;
-
-    if ((nameChanged || descriptionChanged) && record.workflowPatternId) {
-      // Update description in workflow_pattern if provided
-      if (descriptionChanged) {
-        await this.db.query(
-          `UPDATE workflow_pattern
-           SET description = $2
-           WHERE pattern_id = $1`,
-          [record.workflowPatternId, description],
-        );
-      }
-
-      // Recalculate embedding with new name and/or description
-      const newNamespace = namespace ?? record.namespace;
-      const newAction = action ?? record.action;
-      const newDisplayName = `${newNamespace}:${newAction}`;
-
-      // Get current description if not changing it
-      let finalDescription = description;
-      if (!descriptionChanged) {
-        const wpRows = (await this.db.query(
-          `SELECT description FROM workflow_pattern WHERE pattern_id = $1`,
-          [record.workflowPatternId],
-        )) as unknown as { description: string | null }[];
-        finalDescription = wpRows[0]?.description ?? undefined;
-      }
-
-      if (this.embeddingModel) {
-        try {
-          const embeddingText = buildEmbeddingText(newDisplayName, finalDescription);
-          const newEmbedding = await this.embeddingModel.encode(embeddingText);
-          const embeddingStr = `[${newEmbedding.join(",")}]`;
-
-          await this.db.query(
-            `UPDATE workflow_pattern
-             SET intent_embedding = $1::vector
-             WHERE pattern_id = $2`,
-            [embeddingStr, record.workflowPatternId],
-          );
-          log.info(`[CapModule] Embedding updated for ${newDisplayName}`);
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error);
-          log.warn(`[CapModule] Failed to update embedding: ${msg}`);
-        }
-      }
-    }
-
-    // Compute final values
-    const finalNamespace = namespace ?? record.namespace;
-    const finalAction = action ?? record.action;
-    const newFqdn =
-      `${record.org}.${record.project}.${finalNamespace}.${finalAction}.${record.hash}`;
-    const newDisplayName = `${finalNamespace}:${finalAction}`;
-
-    const response: CapRenameResponse = {
-      success: true,
-      id: record.id,
-      fqdn: newFqdn,
-      displayName: newDisplayName,
-    };
-
-    // Emit SSE event for dashboard refresh
-    eventBus.emit({
-      type: "capability.zone.updated",
-      source: "cap-module",
-      payload: {
-        capabilityId: record.id,
-        label: newDisplayName,
-        toolIds: [], // Dashboard will refetch full data
-        successRate: record.successCount / Math.max(record.usageCount, 1),
-        usageCount: record.usageCount,
-      },
+  let response: Response;
+  try {
+    response = await fetch(`${config.baseUrl}/mcp`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: Date.now(),
+        method: "tools/call",
+        params: { name: tool, arguments: args },
+      }),
+      signal: controller.signal,
     });
-
-    log.info(`[CapModule] cap:rename ${oldDisplayName} -> ${newDisplayName}`);
-    return this.successResult(response);
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`MCP call timed out after ${MCP_CALL_TIMEOUT_MS}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
 
-  /**
-   * Handle cap:lookup - resolve name to capability details
-   *
-   * Resolves namespace:action to capability record with metadata.
-   */
-  private async handleLookup(options: CapLookupOptions): Promise<CapToolResult> {
-    const { name } = options;
-
-    // Resolve by name (namespace:action format)
-    const record = await this.registry.resolveByName(name, DEFAULT_SCOPE);
-
-    if (!record) {
-      return this.errorResult(`Capability not found: ${name}`);
-    }
-
-    // Get description and tools_used from workflow_pattern
-    interface PatternRow {
-      description: string | null;
-      tools_used: string[] | null;
-    }
-    let description: string | null = null;
-    let toolsUsed: string[] | null = null;
-    if (record.workflowPatternId) {
-      const patternRows = (await this.db.query(
-        `SELECT description, dag_structure->'tools_used' as tools_used
-         FROM workflow_pattern WHERE pattern_id = $1`,
-        [record.workflowPatternId],
-      )) as unknown as PatternRow[];
-      if (patternRows.length > 0) {
-        description = patternRows[0].description;
-        toolsUsed = patternRows[0].tools_used;
-      }
-    }
-
-    const response: CapLookupResponse = {
-      id: record.id,
-      fqdn: getCapabilityFqdn(record),
-      displayName: getCapabilityDisplayName(record),
-      namespace: record.namespace,
-      action: record.action,
-      description,
-      toolsUsed,
-      usageCount: record.usageCount,
-      successRate: record.usageCount > 0 ? record.successCount / record.usageCount : 0,
-    };
-
-    log.info(`[CapModule] cap:lookup '${name}' -> ${record.id}`);
-    return this.successResult(response);
+  if (response.status === 401) {
+    throw new Error("Invalid API key. Check PML_API_KEY or get a new key at pml.casys.ai/settings");
   }
 
-  /**
-   * Handle cap:whois - get full metadata for a capability
-   *
-   * Accepts UUID or FQDN and returns complete metadata.
-   */
-  private async handleWhois(options: CapWhoisOptions): Promise<CapToolResult> {
-    const { id } = options;
-
-    // Validate id is provided
-    if (!id) {
-      return this.errorResult("id parameter is required");
-    }
-
-    // Try to find by UUID first, then parse as FQDN
-    let record = await this.registry.getById(id);
-
-    if (!record) {
-      // Try to parse as FQDN and look up by components
-      try {
-        const components = parseFQDN(id);
-        record = await this.registry.getByFqdnComponents(
-          components.org,
-          components.project,
-          components.namespace,
-          components.action,
-          components.hash,
-        );
-      } catch {
-        // Not a valid FQDN, that's OK - record stays null
-      }
-    }
-
-    if (!record) {
-      return this.errorResult(`Capability not found: ${id}`);
-    }
-
-    // Get description, parameters_schema, and tools_used from workflow_pattern
-    interface PatternRow {
-      description: string | null;
-      parameters_schema: Record<string, unknown> | null;
-      tools_used: string[] | null;
-    }
-    let description: string | null = null;
-    let parametersSchema: Record<string, unknown> | null = null;
-    let toolsUsed: string[] | null = null;
-    if (record.workflowPatternId) {
-      const patternRows = (await this.db.query(
-        `SELECT description, parameters_schema, dag_structure->'tools_used' as tools_used
-         FROM workflow_pattern WHERE pattern_id = $1`,
-        [record.workflowPatternId],
-      )) as unknown as PatternRow[];
-      if (patternRows.length > 0) {
-        description = patternRows[0].description;
-        parametersSchema = patternRows[0].parameters_schema;
-        toolsUsed = patternRows[0].tools_used;
-      }
-    }
-
-    const response: CapWhoisResponse = {
-      id: record.id,
-      fqdn: getCapabilityFqdn(record),
-      displayName: getCapabilityDisplayName(record),
-      org: record.org,
-      project: record.project,
-      namespace: record.namespace,
-      action: record.action,
-      hash: record.hash,
-      workflowPatternId: record.workflowPatternId ?? null,
-      createdBy: record.createdBy,
-      createdAt: record.createdAt.toISOString(),
-      updatedBy: record.updatedBy ?? null,
-      updatedAt: record.updatedAt?.toISOString() ?? null,
-      version: record.version,
-      versionTag: record.versionTag ?? null,
-      verified: record.verified,
-      signature: record.signature ?? null,
-      usageCount: record.usageCount,
-      successCount: record.successCount,
-      totalLatencyMs: record.totalLatencyMs,
-      tags: record.tags,
-      visibility: record.visibility,
-      routing: record.routing,
-      description,
-      parametersSchema,
-      toolsUsed,
-    };
-
-    log.info(`[CapModule] cap:whois ${id} -> ${record.id}`);
-    return this.successResult(response);
+  if (!response.ok) {
+    throw new Error(`MCP call failed: ${response.status} ${response.statusText}`);
   }
 
-  /**
-   * Handle cap:merge - merge duplicate capabilities
-   *
-   * AC1: usage_count = source + target
-   * AC2: created_at = MIN(source, target)
-   * AC3: Reject if tools_used differ
-   * AC4: Use newest code_snippet by default
-   * AC5: preferSourceCode overrides code selection
-   * AC6: Delete source after merge
-   */
-  private async handleMerge(args: unknown): Promise<CapToolResult> {
-    // Validate with Zod
-    const parsed = CapMergeOptionsSchema.safeParse(args);
-    if (!parsed.success) {
-      return this.errorResult(`Invalid arguments: ${parsed.error.message}`);
-    }
-    const { source, target, preferSourceCode } = parsed.data;
-
-    // Prevent self-merge
-    if (source === target) {
-      return this.errorResult("Cannot merge capability into itself");
-    }
-
-    // Resolve source capability
-    let sourceRecord = await this.registry.resolveByName(source, DEFAULT_SCOPE);
-    if (!sourceRecord) {
-      sourceRecord = await this.registry.getById(source);
-    }
-    if (!sourceRecord) {
-      return this.errorResult(`Source capability not found: ${source}`);
-    }
-
-    // Resolve target capability
-    let targetRecord = await this.registry.resolveByName(target, DEFAULT_SCOPE);
-    if (!targetRecord) {
-      targetRecord = await this.registry.getById(target);
-    }
-    if (!targetRecord) {
-      return this.errorResult(`Target capability not found: ${target}`);
-    }
-
-    // Get tools_used from workflow_pattern.dag_structure and code_snippet
-    // Migration 023 moved these columns from capability_records to workflow_pattern
-    interface CapRow {
-      tools_used: string[] | null;
-      code_snippet: string | null;
-      updated_at: Date | null;
-    }
-    const sourceRows = (await this.db.query(
-      `SELECT
-         wp.dag_structure->'tools_used' as tools_used,
-         wp.code_snippet,
-         cr.updated_at
-       FROM capability_records cr
-       LEFT JOIN workflow_pattern wp ON cr.workflow_pattern_id = wp.pattern_id
-       WHERE cr.id = $1`,
-      [sourceRecord.id],
-    )) as unknown as CapRow[];
-    const targetRows = (await this.db.query(
-      `SELECT
-         wp.dag_structure->'tools_used' as tools_used,
-         wp.code_snippet,
-         cr.updated_at
-       FROM capability_records cr
-       LEFT JOIN workflow_pattern wp ON cr.workflow_pattern_id = wp.pattern_id
-       WHERE cr.id = $1`,
-      [targetRecord.id],
-    )) as unknown as CapRow[];
-
-    if (sourceRows.length === 0 || targetRows.length === 0) {
-      return this.errorResult("Failed to fetch capability details");
-    }
-
-    const sourceData = sourceRows[0];
-    const targetData = targetRows[0];
-
-    // AC3: Validate tools_used match (set comparison)
-    const sourceTools = new Set(sourceData.tools_used || []);
-    const targetTools = new Set(targetData.tools_used || []);
-    const toolsMatch =
-      sourceTools.size === targetTools.size &&
-      [...sourceTools].every((t) => targetTools.has(t));
-
-    if (!toolsMatch) {
-      return this.errorResult(
-        `Cannot merge: tools_used mismatch. Source: [${[...sourceTools].join(", ")}], Target: [${[...targetTools].join(", ")}]`,
-      );
-    }
-
-    // Calculate merged stats
-    const mergedUsageCount = sourceRecord.usageCount + targetRecord.usageCount;
-    const mergedSuccessCount = sourceRecord.successCount + targetRecord.successCount;
-    // totalLatencyMs deprecated (migration 034), use 0 as fallback
-    const mergedLatencyMs = (sourceRecord.totalLatencyMs ?? 0) + (targetRecord.totalLatencyMs ?? 0);
-    const mergedCreatedAt =
-      sourceRecord.createdAt < targetRecord.createdAt
-        ? sourceRecord.createdAt
-        : targetRecord.createdAt;
-
-    // AC4/AC5: Determine code_snippet winner
-    let useSourceCode = preferSourceCode ?? false;
-    if (preferSourceCode === undefined) {
-      // Default: use newest (by updated_at, fallback to created_at)
-      const sourceTime = sourceData.updated_at ?? sourceRecord.createdAt;
-      const targetTime = targetData.updated_at ?? targetRecord.createdAt;
-      useSourceCode = sourceTime > targetTime;
-    }
-    const finalCodeSnippet = useSourceCode
-      ? sourceData.code_snippet
-      : targetData.code_snippet;
-
-    // Execute merge in a real transaction for atomicity
-    // If DELETE fails, UPDATE is rolled back
-    await this.db.transaction(async (tx) => {
-      // Update target workflow_pattern with merged stats (migration 034: stats live in workflow_pattern)
-      if (targetRecord.workflowPatternId) {
-        await tx.exec(
-          `UPDATE workflow_pattern SET
-            usage_count = $1,
-            success_count = $2,
-            success_rate = CASE WHEN $1 > 0 THEN $2::real / $1::real ELSE 0 END,
-            created_at = LEAST(created_at, $3),
-            code_snippet = COALESCE($4, code_snippet)
-          WHERE pattern_id = $5`,
-          [
-            mergedUsageCount,
-            mergedSuccessCount,
-            mergedCreatedAt,
-            finalCodeSnippet,
-            targetRecord.workflowPatternId,
-          ],
-        );
-      }
-
-      // Update capability_records metadata only
-      await tx.exec(
-        `UPDATE capability_records SET
-          updated_at = NOW(),
-          updated_by = 'cap:merge'
-        WHERE id = $1`,
-        [targetRecord.id],
-      );
-
-      // Redirect capability_dependency edges from source to target workflow_pattern
-      // This preserves graph relationships after merge
-      if (sourceRecord.workflowPatternId && targetRecord.workflowPatternId) {
-        // Redirect outgoing edges (source → X becomes target → X)
-        await tx.exec(
-          `UPDATE capability_dependency SET from_capability_id = $1
-           WHERE from_capability_id = $2
-           AND NOT EXISTS (
-             SELECT 1 FROM capability_dependency cd2
-             WHERE cd2.from_capability_id = $1 AND cd2.to_capability_id = capability_dependency.to_capability_id
-           )`,
-          [targetRecord.workflowPatternId, sourceRecord.workflowPatternId],
-        );
-
-        // Redirect incoming edges (X → source becomes X → target)
-        await tx.exec(
-          `UPDATE capability_dependency SET to_capability_id = $1
-           WHERE to_capability_id = $2
-           AND NOT EXISTS (
-             SELECT 1 FROM capability_dependency cd2
-             WHERE cd2.from_capability_id = capability_dependency.from_capability_id AND cd2.to_capability_id = $1
-           )`,
-          [targetRecord.workflowPatternId, sourceRecord.workflowPatternId],
-        );
-
-        // Delete any remaining edges to/from source (duplicates after redirect)
-        await tx.exec(
-          `DELETE FROM capability_dependency
-           WHERE from_capability_id = $1 OR to_capability_id = $1`,
-          [sourceRecord.workflowPatternId],
-        );
-
-        // Delete source workflow_pattern (orphaned after merge)
-        // This also cascades to delete any remaining capability_dependency edges
-        await tx.exec(
-          `DELETE FROM workflow_pattern WHERE pattern_id = $1`,
-          [sourceRecord.workflowPatternId],
-        );
-      }
-
-      // AC6: Delete source capability_records
-      await tx.exec(`DELETE FROM capability_records WHERE id = $1`, [
-        sourceRecord.id,
-      ]);
-    });
-
-    const response: CapMergeResponse = {
-      success: true,
-      targetId: targetRecord.id,
-      targetFqdn: getCapabilityFqdn(targetRecord),
-      targetDisplayName: getCapabilityDisplayName(targetRecord),
-      deletedSourceId: sourceRecord.id,
-      deletedSourceName: getCapabilityDisplayName(sourceRecord),
-      deletedSourcePatternId: sourceRecord.workflowPatternId ?? null,
-      targetPatternId: targetRecord.workflowPatternId ?? null,
-      mergedStats: {
-        usageCount: mergedUsageCount,
-        successCount: mergedSuccessCount,
-        totalLatencyMs: mergedLatencyMs,
-      },
-      codeSource: useSourceCode ? "source" : "target",
-    };
-
-    log.info(
-      `[CapModule] cap:merge ${getCapabilityDisplayName(sourceRecord)} -> ${getCapabilityDisplayName(targetRecord)} (usage: ${mergedUsageCount})`,
-    );
-
-    // Emit merge event for graph cache invalidation
-    if (this.onMergedCallback) {
-      try {
-        await this.onMergedCallback(response);
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        log.warn(`[CapModule] onMerged callback failed: ${msg}`);
-      }
-    }
-
-    return this.successResult(response);
+  // F2: Wrap JSON parsing in try-catch for better error messages
+  let result: Record<string, unknown>;
+  try {
+    result = await response.json();
+  } catch {
+    throw new Error("Invalid MCP response: failed to parse JSON response body");
   }
 
-  // ===========================================================================
-  // Helper Methods
-  // ===========================================================================
-
-  private successResult(data: unknown): CapToolResult {
-    return {
-      content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-    };
+  if (result.error) {
+    const errorObj = result.error as { message?: string };
+    throw new Error(errorObj.message || "MCP call failed");
   }
 
-  private errorResult(message: string): CapToolResult {
-    return {
-      content: [{ type: "text", text: JSON.stringify({ error: message }) }],
-      isError: true,
-    };
+  // Parse the response content
+  const resultContent = result.result as { content?: Array<{ text?: string }> } | undefined;
+  const content = resultContent?.content?.[0]?.text;
+  if (!content) {
+    throw new Error("Invalid MCP response: missing content");
   }
-}
 
-// =============================================================================
-// Global CapModule for MiniTools integration (same pattern as agent.ts)
-// =============================================================================
-
-let _capModule: CapModule | null = null;
-
-/**
- * Set the CapModule instance for pmlTools handlers
- * Called by mcp-tools-server.ts or gateway at init
- */
-export function setCapModule(module: CapModule): void {
-  _capModule = module;
-  log.info("[cap.ts] CapModule set for pmlTools");
-}
-
-/**
- * Get the CapModule, throw if not initialized
- */
-export function getCapModule(): CapModule {
-  if (!_capModule) {
-    throw new Error(
-      "CapModule not initialized. Call setCapModule() first or use PmlStdServer.",
-    );
+  // F2: Wrap content JSON parsing in try-catch
+  try {
+    return JSON.parse(content);
+  } catch {
+    throw new Error(`Invalid MCP response: failed to parse content as JSON: ${content.substring(0, 100)}...`);
   }
-  return _capModule;
 }
 
 // =============================================================================
 // pmlTools - MiniTool array for discovery
 // =============================================================================
 
-import type { MiniTool } from "./types.ts";
-
 /**
  * PML capability management tools as MiniTool array
- * These tools require CapModule to be set via setCapModule()
+ *
+ * These tools call the PML server via HTTP when used in the standalone package.
+ * When used in the main application, the gateway handles calls directly.
  */
 export const pmlTools: MiniTool[] = [
   {
@@ -1275,8 +499,7 @@ export const pmlTools: MiniTool[] = [
       },
     },
     handler: async (args) => {
-      const result = await getCapModule().call("cap:list", args);
-      return JSON.parse(result.content[0].text);
+      return await mcpCall("cap:list", args);
     },
   },
   {
@@ -1317,8 +540,7 @@ export const pmlTools: MiniTool[] = [
       required: ["name"],
     },
     handler: async (args) => {
-      const result = await getCapModule().call("cap:rename", args);
-      return JSON.parse(result.content[0].text);
+      return await mcpCall("cap:rename", args);
     },
   },
   {
@@ -1336,8 +558,7 @@ export const pmlTools: MiniTool[] = [
       required: ["name"],
     },
     handler: async (args) => {
-      const result = await getCapModule().call("cap:lookup", args);
-      return JSON.parse(result.content[0].text);
+      return await mcpCall("cap:lookup", args);
     },
   },
   {
@@ -1357,17 +578,25 @@ export const pmlTools: MiniTool[] = [
     handler: async (args) => {
       // Support name (namespace:action), UUID, or FQDN
       const { name } = args as { name: string };
+
       // Try lookup by name first (namespace:action), fall back to whois (UUID/FQDN)
-      const lookupResult = await getCapModule().call("cap:lookup", { name });
-      const lookupData = JSON.parse(lookupResult.content[0].text);
-      if (!lookupData.error) {
-        // Found by name, now get full whois by UUID
-        const whoisResult = await getCapModule().call("cap:whois", { id: lookupData.id });
-        return JSON.parse(whoisResult.content[0].text);
+      try {
+        const lookupResult = (await mcpCall("cap:lookup", { name })) as Record<string, unknown>;
+        if (lookupResult && typeof lookupResult.id === "string" && !("error" in lookupResult)) {
+          // Found by name, now get full whois by UUID
+          return await mcpCall("cap:whois", { id: lookupResult.id });
+        }
+      } catch (lookupError) {
+        // F7: Log lookup error before falling back to whois
+        // Only expected error is "not found", other errors (network, auth) are logged
+        const errorMsg = lookupError instanceof Error ? lookupError.message : String(lookupError);
+        if (!errorMsg.includes("not found")) {
+          console.warn(`[cap_whois] cap:lookup failed for "${name}": ${errorMsg}, trying whois directly`);
+        }
       }
+
       // Fall back to whois directly (UUID or FQDN)
-      const result = await getCapModule().call("cap:whois", { id: name });
-      return JSON.parse(result.content[0].text);
+      return await mcpCall("cap:whois", { id: name });
     },
   },
   {
@@ -1394,61 +623,7 @@ export const pmlTools: MiniTool[] = [
       required: ["source", "target"],
     },
     handler: async (args) => {
-      const result = await getCapModule().call("cap:merge", args);
-      return JSON.parse(result.content[0].text);
+      return await mcpCall("cap:merge", args);
     },
   },
 ];
-
-// =============================================================================
-// PmlStdServer Class (for Gateway integration)
-// =============================================================================
-
-/**
- * PML Standard Library Server
- *
- * Virtual MCP server that exposes capability management tools.
- * Routes cap:* calls to the CapModule.
- */
-export class PmlStdServer {
-  readonly serverId = "pml-std";
-  private cap: CapModule;
-
-  constructor(
-    registry: CapabilityRegistry,
-    db: DbClient,
-    embeddingModel?: EmbeddingModelInterface,
-  ) {
-    this.cap = new CapModule(registry, db, embeddingModel);
-    // Set global CapModule for pmlTools discovery
-    setCapModule(this.cap);
-    log.info(
-      `[PmlStdServer] Initialized with cap:* tools${
-        embeddingModel ? " (embedding support enabled)" : ""
-      }`,
-    );
-  }
-
-  /** Get the underlying CapModule */
-  getCapModule(): CapModule {
-    return this.cap;
-  }
-
-  handleListTools(): CapTool[] {
-    return this.cap.listTools();
-  }
-
-  async handleCallTool(name: string, args: unknown): Promise<CapToolResult> {
-    if (!name.startsWith("cap:")) {
-      return {
-        content: [{ type: "text", text: JSON.stringify({ error: `Unknown tool: ${name}` }) }],
-        isError: true,
-      };
-    }
-    return await this.cap.call(name, args);
-  }
-
-  isCapManagementTool(toolName: string): boolean {
-    return toolName.startsWith("cap:");
-  }
-}

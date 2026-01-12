@@ -10,17 +10,23 @@
 import type { MiniTool } from "./common.ts";
 import { PGlite } from "@electric-sql/pglite";
 import { vector } from "@electric-sql/pglite/vector";
-import { getAgentCardsDatabasePath } from "../../src/cli/utils.ts";
 
 // Singleton database connection
 let db: PGlite | null = null;
 let dbPath: string | null = null;
 
 /**
+ * Get default PGlite database path
+ */
+function getDefaultDbPath(): string {
+  return Deno.env.get("PGLITE_PATH") || "./data/pglite";
+}
+
+/**
  * Get or create database connection
  */
 async function getDb(path?: string): Promise<PGlite> {
-  const targetPath = path || getAgentCardsDatabasePath();
+  const targetPath = path || getDefaultDbPath();
 
   // Return existing connection if path matches
   if (db && dbPath === targetPath) {
@@ -70,7 +76,7 @@ export const pgliteTools: MiniTool[] = [
         },
         dbPath: {
           type: "string",
-          description: "Database path (optional, defaults to AGENTCARDS_DB_PATH)",
+          description: "Database path (optional, defaults to PGLITE_PATH env or ./data/pglite)",
         },
       },
       required: ["query"],
@@ -114,7 +120,7 @@ export const pgliteTools: MiniTool[] = [
       properties: {
         dbPath: {
           type: "string",
-          description: "Database path (optional, defaults to AGENTCARDS_DB_PATH)",
+          description: "Database path (optional, defaults to PGLITE_PATH env or ./data/pglite)",
         },
         includeRowCounts: {
           type: "boolean",
@@ -274,7 +280,7 @@ export const pgliteTools: MiniTool[] = [
         totalRows,
         topTables,
         extensions: extensionsResult.rows,
-        dbPath: dbPath || getAgentCardsDatabasePath(),
+        dbPath: dbPath || "./data/pglite",
       };
     },
   },

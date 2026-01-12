@@ -1,12 +1,12 @@
 # MCP Standard Library
 
-A collection of **318+ MCP tools** for text processing, data transformation, cryptography, and more.
+A comprehensive collection of **424 MCP tools** for AI agents — text processing, data transformation, system operations, and **agentic capabilities via sampling**.
 
-Works with any MCP client: Claude Code, Claude Desktop, Cursor, etc.
+Works with any MCP client: Claude Code, Claude Desktop, Cursor, VS Code Copilot, and more.
 
-## Installation
+## Quick Start
 
-### With Claude Code
+### Claude Code / Claude Desktop
 
 Add to your `.mcp.json`:
 
@@ -21,7 +21,7 @@ Add to your `.mcp.json`:
 }
 ```
 
-### With specific categories only
+### Load specific categories only
 
 ```json
 {
@@ -34,76 +34,140 @@ Add to your `.mcp.json`:
 }
 ```
 
-## Categories
+---
 
-### System Tools
+## Agent Tools (Sampling)
 
-| Category | Description | Examples |
-|----------|-------------|----------|
-| docker | Container management | build, run, ps, logs, compose |
-| git | Repository operations | status, diff, log, commit, branch |
-| process | Process management | exec, spawn, kill, ps |
-| archive | Compression | tar, zip, gzip, unzip |
-| ssh | Remote execution | exec, scp, tunnel |
-| kubernetes | K8s cluster management | get, apply, delete, logs |
-| database | SQL/NoSQL access | psql, sqlite, redis |
-| pglite | Embedded PostgreSQL | query, exec (in-process PG) |
-| media | Audio/video/image | ffmpeg, imagemagick |
-| cloud | Cloud providers | aws, gcloud, systemd |
-| sysinfo | System information | cpu, memory, disk, network |
-| packages | Package managers | npm, pip, apt, brew |
+> **Agentic MCP tools that delegate work to LLMs via the sampling protocol.**
 
-### Data Tools
+The `agent` category provides 8 powerful tools that leverage [MCP Sampling](https://modelcontextprotocol.io/specification/2025-11-25/client/sampling) to call LLMs from within tool execution:
 
-| Category | Description | Examples |
-|----------|-------------|----------|
-| text | Text manipulation | split, join, regex, case, template, slugify |
-| string | String utilities | trim, pad, truncate, wrap |
-| json | JSON operations | parse, query, merge, flatten, pick |
-| format | Formatting | number, bytes, yaml, toml, markdown, sql |
-| transform | Data conversion | csv_parse, xml_parse, csv_stringify |
-| crypto | Cryptography | hash, uuid, base64, jwt, hmac, totp, bcrypt |
-| math | Mathematical ops | eval, stats, round, convert, roman |
-| datetime | Date/time | now, format, diff, add, cron_parse |
-| collections | Array/set/map | map, filter, sort, unique, group, chunk |
-| algo | Algorithms | binary_search, top_n, quickselect, sort |
-| validation | Data validation | email, url, uuid, ip, phone, credit_card |
-| compare | Comparison | levenshtein, similarity, fuzzy, deep_equal |
-| diff | Text diff | unified_diff, patch, compare_lines |
+| Tool | Description |
+|------|-------------|
+| `agent_delegate` | Delegate a subtask to another agent with context |
+| `agent_analyze` | Deep analysis of code, data, or documents |
+| `agent_classify` | Classify input into categories |
+| `agent_summarize` | Generate summaries at various detail levels |
+| `agent_extract` | Extract structured data from unstructured text |
+| `agent_validate` | Validate content against rules/schemas |
+| `agent_transform` | Transform data with natural language instructions |
+| `agent_generate` | Generate content from specifications |
 
-### Utility Tools
+### Sampling Compatibility
 
-| Category | Description | Examples |
-|----------|-------------|----------|
-| network | Network utilities | parse_url, ip_info, subnet_calc, dns |
-| http | HTTP helpers | build_url, headers, query_string |
-| path | Path utilities | join, dirname, basename, resolve |
-| color | Color manipulation | hex_to_rgb, rgb_to_hsl, palette, blend |
-| vfs | Virtual filesystem | read, write, list, mkdir, rm |
-| state | KV store with TTL | set, get, delete, keys, values |
-| util | General utilities | http_status, mime_type, user_agent |
+| Client | Sampling Support | Notes |
+|--------|-----------------|-------|
+| [PML](https://pml.casys.ai) | **Server-side** | Handles sampling automatically — works everywhere |
+| VS Code Copilot | Native | Full sampling support |
+| Claude Code | Not yet | [Tracking issue #1785](https://github.com/anthropics/claude-code/issues/1785) |
+| Claude Desktop | Not yet | Coming soon |
 
-### Generation Tools
+**Tip:** Use with [PML](https://pml.casys.ai) for sampling support in any MCP client.
 
-| Category | Description | Examples |
-|----------|-------------|----------|
-| faker | Mock data | person, address, company, lorem |
-| data | Data generation | image, svg, qr_code, barcode |
-| qrcode | QR/barcode | generate, decode, svg |
-| geo | Geographic | distance, bearing, bbox, geocode |
-| schema | Schema inference | infer, validate, generate |
-| resilience | Reliability | retry, rate_limit, circuit_breaker |
+---
 
-### Scripting Tools
+## Capabilities (Tool Composition)
 
-| Category | Description | Examples |
-|----------|-------------|----------|
-| python | Python execution | exec, eval, pip, script |
-| agent | LLM-powered | delegate, analyze, classify, summarize |
+> **Combine multiple MCP tools into reusable, named capabilities.**
 
-> **Note:** The `agent` category requires [MCP Sampling](https://modelcontextprotocol.io/specification/2025-11-25/client/sampling). Use with [PML](https://pml.casys.ai) which handles sampling server-side, or a client that supports sampling (VS Code Copilot). Claude Code doesn't support sampling yet ([tracking issue](https://github.com/anthropics/claude-code/issues/1785)).
+[PML (Procedural Memory Layer)](https://github.com/Casys-AI/casys-pml) extends mcp-std with **capabilities** — compound tools that chain multiple operations:
 
-## TypeScript Usage
+```typescript
+// Example: A capability that fetches, transforms, and validates data
+const result = await mcp.pml.pml_execute({
+  intent: "Fetch user data and validate schema",
+  code: `
+    const data = await mcp.std.http_fetch({ url: "https://api.example.com/users" });
+    const parsed = await mcp.std.json_parse({ text: data });
+    const valid = await mcp.std.schema_validate({ data: parsed, schema: userSchema });
+    return valid;
+  `
+});
+```
+
+**Key features:**
+- **Learn from execution** — Successful tool chains become reusable capabilities
+- **Semantic search** — Find capabilities by intent, not just name
+- **Version control** — Track capability evolution over time
+- **Multi-tenant** — Isolated capabilities per user/org
+
+Learn more: [github.com/Casys-AI/casys-pml](https://github.com/Casys-AI/casys-pml)
+
+---
+
+## Tool Categories
+
+### System (85 tools)
+
+| Category | Count | Description |
+|----------|-------|-------------|
+| `docker` | 19 | Container lifecycle, images, compose, logs |
+| `database` | 16 | PostgreSQL, SQLite, MySQL, Redis CLI access |
+| `sysinfo` | 12 | CPU, memory, disk, network, processes |
+| `pglite` | 7 | Embedded PostgreSQL (in-process, no server) |
+| `process` | 5 | Exec, spawn, kill, signal handling |
+| `packages` | 5 | npm, pip, apt, brew, cargo |
+| `git` | 4 | Status, diff, log, commit, branch |
+| `archive` | 4 | tar, zip, gzip, compression |
+| `kubernetes` | 4 | kubectl get/apply/delete/logs |
+| `ssh` | 3 | Remote exec, scp, tunnels |
+| `media` | 3 | ffmpeg, imagemagick wrappers |
+| `cloud` | 3 | AWS, GCloud, systemd |
+
+### Data Processing (182 tools)
+
+| Category | Count | Description |
+|----------|-------|-------------|
+| `format` | 25 | Number, bytes, yaml, toml, markdown, SQL formatting |
+| `string` | 21 | Trim, pad, truncate, wrap, case conversion |
+| `crypto` | 20 | Hash, UUID, base64, JWT, HMAC, TOTP, bcrypt |
+| `collections` | 20 | Map, filter, sort, unique, group, chunk, flatten |
+| `algo` | 20 | Binary search, quickselect, top-n, sorts |
+| `math` | 17 | Eval, stats, round, unit conversion, roman numerals |
+| `validation` | 11 | Email, URL, UUID, IP, phone, credit card |
+| `text` | 10 | Split, join, regex, template, slugify |
+| `json` | 10 | Parse, query, merge, flatten, pick, diff |
+| `transform` | 8 | CSV, XML, YAML parsing and stringification |
+| `datetime` | 7 | Now, format, diff, add, cron parsing |
+| `diff` | 7 | Unified diff, patch, compare lines |
+| `compare` | 6 | Levenshtein, similarity, fuzzy match, deep equal |
+
+### Utilities (112 tools)
+
+| Category | Count | Description |
+|----------|-------|-------------|
+| `color` | 19 | Hex/RGB/HSL conversion, palettes, blend, contrast |
+| `path` | 13 | Join, dirname, basename, resolve, relative |
+| `geo` | 13 | Distance, bearing, bbox, geocode, timezone |
+| `util` | 11 | HTTP status codes, MIME types, user agents |
+| `qrcode` | 10 | Generate/decode QR codes, barcodes, SVG output |
+| `state` | 10 | In-memory KV store with TTL, persistence |
+| `vfs` | 8 | Virtual filesystem for sandboxed operations |
+| `resilience` | 8 | Retry, rate limit, circuit breaker, timeout |
+| `network` | 8 | URL parsing, IP info, subnet calc, DNS |
+| `http` | 6 | Build URLs, parse headers, query strings |
+| `schema` | 6 | Infer JSON schema, validate, generate samples |
+
+### Generation (32 tools)
+
+| Category | Count | Description |
+|----------|-------|-------------|
+| `faker` | 16 | Mock data: names, addresses, companies, lorem |
+| `data` | 11 | Generate images, SVG, placeholder data |
+| `python` | 5 | Execute Python code, manage pip packages |
+
+### Agentic (13 tools)
+
+| Category | Count | Description |
+|----------|-------|-------------|
+| `agent` | 8 | LLM delegation via sampling (see above) |
+| `pml` | 5 | Capability management: list, lookup, rename, merge, whois |
+
+> **Note:** The `pml` tools require a [PML](https://pml.casys.ai) account. Set `PML_API_KEY` to authenticate.
+
+---
+
+## TypeScript API
 
 ```typescript
 import { MiniToolsClient } from "jsr:@casys/mcp-std";
@@ -112,24 +176,40 @@ const client = new MiniToolsClient();
 
 // List all tools
 const tools = await client.listTools();
+console.log(`${tools.length} tools available`);
 
 // Call a tool
 const result = await client.callTool("text_split", {
   text: "hello,world",
   separator: ","
 });
+// => ["hello", "world"]
+
+// Get tools by category
+const cryptoTools = client.getToolsByCategory("crypto");
 ```
+
+---
+
+## Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PGLITE_PATH` | Path for embedded PGlite database | `./data/pglite` |
+| `MCP_STD_CATEGORIES` | Comma-separated list of categories to load | all |
+
+---
 
 ## Credits
 
 This library includes tools inspired by:
 
-| Source | URL |
-|--------|-----|
-| IT-Tools MCP | https://github.com/wrenchpilot/it-tools-mcp |
-| TextToolkit MCP | https://github.com/Cicatriiz/text-toolkit |
-| Math MCP | https://github.com/EthanHenrickson/math-mcp |
-| JSON MCP | https://github.com/VadimNastoyashchy/json-mcp |
+- [IT-Tools MCP](https://github.com/wrenchpilot/it-tools-mcp)
+- [TextToolkit MCP](https://github.com/Cicatriiz/text-toolkit)
+- [Math MCP](https://github.com/EthanHenrickson/math-mcp)
+- [JSON MCP](https://github.com/VadimNastoyashchy/json-mcp)
+
+---
 
 ## License
 

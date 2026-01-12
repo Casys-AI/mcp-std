@@ -95,27 +95,25 @@ export { diffTools } from "./diff.ts";
 // Agent tools (MCP Sampling)
 export { agentTools, setSamplingClient } from "./agent.ts";
 
-// Capability management (MCP Server + MiniTools)
-export {
-  CapModule,
-  getCapModule,
-  globToSqlLike,
-  PmlStdServer,
-  pmlTools,
-  setCapModule,
-} from "./cap.ts";
+// Capability management (MCP HTTP Client + types)
+// Note: CapModule and PmlStdServer have been moved to src/mcp/handlers/cap-handler.ts
+// This module now exports only the HTTP client and types for standalone package use
+export { pmlTools } from "./cap.ts";
 export type {
   CapListItem,
   CapListOptions,
   CapListResponse,
   CapLookupOptions,
   CapLookupResponse,
+  CapMergeOptions,
+  CapMergeResponse,
   CapRenameOptions,
   CapRenameResponse,
   CapTool,
   CapToolResult,
   CapWhoisOptions,
   CapWhoisResponse,
+  OnCapabilityMerged,
 } from "./cap.ts";
 
 // Python execution tools

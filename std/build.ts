@@ -12,18 +12,17 @@
 
 import * as esbuild from "npm:esbuild@0.24.0";
 import { denoPlugins } from "jsr:@luca/esbuild-deno-loader@0.11.0";
-import * as log from "@std/log";
 
 const entryPoint = new URL("./mod.ts", import.meta.url).pathname;
 const outFile = new URL("./bundle.js", import.meta.url).pathname;
 
-log.info("📦 Building std bundle...");
-log.info(`   Entry: ${entryPoint}`);
-log.info(`   Output: ${outFile}`);
+console.log("📦 Building std bundle...");
+console.log(`   Entry: ${entryPoint}`);
+console.log(`   Output: ${outFile}`);
 
 const result = await esbuild.build({
   plugins: [...denoPlugins({
-    nodeModulesDir: true,
+    nodeModulesDir: "auto",
   })],
   entryPoints: [entryPoint],
   outfile: outFile,
@@ -48,17 +47,17 @@ const result = await esbuild.build({
 });
 
 if (result.errors.length > 0) {
-  log.error("❌ Build failed:");
+  console.error("❌ Build failed:");
   for (const error of result.errors) {
-    log.error(`   ${error.text}`);
+    console.error(`   ${error.text}`);
   }
   Deno.exit(1);
 }
 
 if (result.warnings.length > 0) {
-  log.warn("⚠️  Warnings:");
+  console.warn("⚠️  Warnings:");
   for (const warning of result.warnings) {
-    log.warn(`   ${warning.text}`);
+    console.warn(`   ${warning.text}`);
   }
 }
 
@@ -66,7 +65,7 @@ if (result.warnings.length > 0) {
 const stat = await Deno.stat(outFile);
 const sizeKB = (stat.size / 1024).toFixed(1);
 
-log.info(`✅ Bundle created: ${outFile}`);
-log.info(`   Size: ${sizeKB} KB`);
+console.log(`✅ Bundle created: ${outFile}`);
+console.log(`   Size: ${sizeKB} KB`);
 
 await esbuild.stop();

@@ -16,10 +16,13 @@
     ],
     "exclude": [
       "**/*_test.ts",
-      "**/*.bench.ts"
+      "**/*.bench.ts",
+      "std/cap.ts"
     ]
   },
   "imports": {
+    "@electric-sql/pglite": "npm:@electric-sql/pglite@^0.2.17",
+    "@electric-sql/pglite/vector": "npm:@electric-sql/pglite@^0.2.17/vector",
     "@anthropic-ai/sdk": "npm:@anthropic-ai/sdk@^0.39.0",
     "@modelcontextprotocol/sdk": "npm:@anthropic-ai/mcp-sdk@^1.11.0",
     "change-case": "npm:change-case@^5.4.4",
@@ -35,6 +38,7 @@
     "diff": "npm:diff@^7.0.0",
     "jsondiffpatch": "npm:jsondiffpatch@^0.6.0",
     "mnemonist": "npm:mnemonist@^0.39.8",
-    "uuid": "npm:uuid@^11.0.5"
+    "uuid": "npm:uuid@^11.0.5",
+    "postgres": "npm:postgres@^3.4.5"
   }
 }
