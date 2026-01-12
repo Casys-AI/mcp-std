@@ -42,6 +42,12 @@ interface JsonRpcResponse {
 // Sampling Client for Agent Tools
 // ============================================================================
 
+/** Pending sampling requests waiting for response */
+const pendingSamplingRequests = new Map<
+  number,
+  { resolve: (value: unknown) => void; reject: (error: Error) => void }
+>();
+
 /**
  * Call LLM directly via API (OpenAI or Anthropic)
  */
