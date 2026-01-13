@@ -210,12 +210,10 @@ export interface CapWhoisResponse {
   hash: string;
   /** FK to workflow_pattern */
   workflowPatternId: string | null;
-  /** Creator */
-  createdBy: string;
+  /** Owner user ID (UUID FK to users, null for legacy/system records) - Migration 039 */
+  userId: string | null;
   /** Creation date (ISO string) */
   createdAt: string;
-  /** Last updater */
-  updatedBy: string | null;
   /** Last update date (ISO string) */
   updatedAt: string | null;
   /** Version number */

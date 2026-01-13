@@ -56,14 +56,14 @@ export {
   transformTools,
   validationTools,
   vfsTools,
-} from "./std/mod.ts";
+} from "../mod.ts";
 
 // Re-export types
-export type { MiniTool, MiniToolHandler, MiniToolResult } from "./std/types.ts";
+export type { MiniTool, MiniToolHandler, MiniToolResult } from "./types.ts";
 
 // Import for local use
-import { allTools, MiniToolsClient } from "./std/mod.ts";
-import type { MiniTool } from "./std/types.ts";
+import { allTools, MiniToolsClient } from "../mod.ts";
+import type { MiniTool } from "./types.ts";
 
 // ============================================================================
 // Legacy Types (for backward compatibility)

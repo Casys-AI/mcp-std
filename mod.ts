@@ -49,56 +49,56 @@
  * @module lib/std/mod
  */
 
-export { type MiniTool, runCommand } from "./common.ts";
-export type { MiniToolHandler, MiniToolResult, ToolCategory } from "./types.ts";
+export { type MiniTool, runCommand } from "./src/common.ts";
+export type { MiniToolHandler, MiniToolResult, ToolCategory } from "./src/types.ts";
 
 // System tools
-export { dockerTools } from "./docker.ts";
-export { gitTools } from "./git.ts";
-export { networkTools } from "./network.ts";
-export { processTools } from "./process.ts";
-export { archiveTools } from "./archive.ts";
-export { sshTools } from "./ssh.ts";
-export { kubernetesTools } from "./kubernetes.ts";
-export { databaseTools } from "./database.ts";
-export { closePgliteConnection, pgliteTools } from "./pglite.ts";
-export { mediaTools } from "./media.ts";
-export { cloudTools } from "./cloud.ts";
-export { sysinfoTools } from "./sysinfo.ts";
-export { packagesTools } from "./packages.ts";
-export { textTools } from "./text.ts";
+export { dockerTools } from "./src/docker.ts";
+export { gitTools } from "./src/git.ts";
+export { networkTools } from "./src/network.ts";
+export { processTools } from "./src/process.ts";
+export { archiveTools } from "./src/archive.ts";
+export { sshTools } from "./src/ssh.ts";
+export { kubernetesTools } from "./src/kubernetes.ts";
+export { databaseTools } from "./src/database.ts";
+export { closePgliteConnection, pgliteTools } from "./src/pglite.ts";
+export { mediaTools } from "./src/media.ts";
+export { cloudTools } from "./src/cloud.ts";
+export { sysinfoTools } from "./src/sysinfo.ts";
+export { packagesTools } from "./src/packages.ts";
+export { textTools } from "./src/text.ts";
 
 // Data tools
-export { algoTools } from "./algo.ts";
-export { collectionsTools } from "./collections.ts";
-export { cryptoTools } from "./crypto.ts";
-export { datetimeTools } from "./datetime.ts";
-export { formatTools } from "./format.ts";
-export { httpTools } from "./http.ts";
-export { jsonTools } from "./json.ts";
-export { mathTools } from "./math.ts";
-export { transformTools } from "./transform.ts";
-export { validationTools } from "./validation.ts";
-export { vfsTools } from "./vfs.ts";
+export { algoTools } from "./src/algo.ts";
+export { collectionsTools } from "./src/collections.ts";
+export { cryptoTools } from "./src/crypto.ts";
+export { datetimeTools } from "./src/datetime.ts";
+export { formatTools } from "./src/format.ts";
+export { httpTools } from "./src/http.ts";
+export { jsonTools } from "./src/json.ts";
+export { mathTools } from "./src/math.ts";
+export { transformTools } from "./src/transform.ts";
+export { validationTools } from "./src/validation.ts";
+export { vfsTools } from "./src/vfs.ts";
 
 // New tools
-export { stringTools } from "./string.ts";
-export { pathTools } from "./path.ts";
-export { fakerTools } from "./faker.ts";
-export { colorTools } from "./color.ts";
-export { geoTools } from "./geo.ts";
-export { qrcodeTools } from "./qrcode.ts";
-export { resilienceTools } from "./resilience.ts";
-export { schemaTools } from "./schema.ts";
-export { diffTools } from "./diff.ts";
+export { stringTools } from "./src/string.ts";
+export { pathTools } from "./src/path.ts";
+export { fakerTools } from "./src/faker.ts";
+export { colorTools } from "./src/color.ts";
+export { geoTools } from "./src/geo.ts";
+export { qrcodeTools } from "./src/qrcode.ts";
+export { resilienceTools } from "./src/resilience.ts";
+export { schemaTools } from "./src/schema.ts";
+export { diffTools } from "./src/diff.ts";
 
 // Agent tools (MCP Sampling)
-export { agentTools, createAgenticSamplingClient, setSamplingClient } from "./agent.ts";
+export { agentTools, createAgenticSamplingClient, setSamplingClient } from "./src/agent.ts";
 
 // Capability management (MCP HTTP Client + types)
 // Note: CapModule and PmlStdServer have been moved to src/mcp/handlers/cap-handler.ts
 // This module now exports only the HTTP client and types for standalone package use
-export { pmlTools } from "./cap.ts";
+export { pmlTools } from "./src/cap.ts";
 export type {
   CapListItem,
   CapListOptions,
@@ -114,67 +114,67 @@ export type {
   CapWhoisOptions,
   CapWhoisResponse,
   OnCapabilityMerged,
-} from "./cap.ts";
+} from "./src/cap.ts";
 
 // Python execution tools
-export { pythonTools } from "./python.ts";
+export { pythonTools } from "./src/python.ts";
 
 // Legacy tools (backward compat)
-export { dataTools } from "./data.ts";
-export { stateTools } from "./state.ts";
-export { compareTools } from "./compare.ts";
+export { dataTools } from "./src/data.ts";
+export { stateTools } from "./src/state.ts";
+export { compareTools } from "./src/compare.ts";
 
 // Utility tools
-export { utilTools } from "./util.ts";
+export { utilTools } from "./src/util.ts";
 
 // Imports for combined export
-import { dockerTools } from "./docker.ts";
-import { gitTools } from "./git.ts";
-import { networkTools } from "./network.ts";
-import { processTools } from "./process.ts";
-import { archiveTools } from "./archive.ts";
-import { sshTools } from "./ssh.ts";
-import { kubernetesTools } from "./kubernetes.ts";
-import { databaseTools } from "./database.ts";
-import { pgliteTools } from "./pglite.ts";
-import { mediaTools } from "./media.ts";
-import { cloudTools } from "./cloud.ts";
-import { sysinfoTools } from "./sysinfo.ts";
-import { packagesTools } from "./packages.ts";
-import { textTools } from "./text.ts";
-import { algoTools } from "./algo.ts";
-import { collectionsTools } from "./collections.ts";
-import { cryptoTools } from "./crypto.ts";
-import { datetimeTools } from "./datetime.ts";
-import { formatTools } from "./format.ts";
-import { httpTools } from "./http.ts";
-import { jsonTools } from "./json.ts";
-import { mathTools } from "./math.ts";
-import { transformTools } from "./transform.ts";
-import { validationTools } from "./validation.ts";
-import { vfsTools } from "./vfs.ts";
-import { stringTools } from "./string.ts";
-import { pathTools } from "./path.ts";
-import { fakerTools } from "./faker.ts";
-import { colorTools } from "./color.ts";
-import { geoTools } from "./geo.ts";
-import { qrcodeTools } from "./qrcode.ts";
-import { resilienceTools } from "./resilience.ts";
-import { schemaTools } from "./schema.ts";
-import { diffTools } from "./diff.ts";
+import { dockerTools } from "./src/docker.ts";
+import { gitTools } from "./src/git.ts";
+import { networkTools } from "./src/network.ts";
+import { processTools } from "./src/process.ts";
+import { archiveTools } from "./src/archive.ts";
+import { sshTools } from "./src/ssh.ts";
+import { kubernetesTools } from "./src/kubernetes.ts";
+import { databaseTools } from "./src/database.ts";
+import { pgliteTools } from "./src/pglite.ts";
+import { mediaTools } from "./src/media.ts";
+import { cloudTools } from "./src/cloud.ts";
+import { sysinfoTools } from "./src/sysinfo.ts";
+import { packagesTools } from "./src/packages.ts";
+import { textTools } from "./src/text.ts";
+import { algoTools } from "./src/algo.ts";
+import { collectionsTools } from "./src/collections.ts";
+import { cryptoTools } from "./src/crypto.ts";
+import { datetimeTools } from "./src/datetime.ts";
+import { formatTools } from "./src/format.ts";
+import { httpTools } from "./src/http.ts";
+import { jsonTools } from "./src/json.ts";
+import { mathTools } from "./src/math.ts";
+import { transformTools } from "./src/transform.ts";
+import { validationTools } from "./src/validation.ts";
+import { vfsTools } from "./src/vfs.ts";
+import { stringTools } from "./src/string.ts";
+import { pathTools } from "./src/path.ts";
+import { fakerTools } from "./src/faker.ts";
+import { colorTools } from "./src/color.ts";
+import { geoTools } from "./src/geo.ts";
+import { qrcodeTools } from "./src/qrcode.ts";
+import { resilienceTools } from "./src/resilience.ts";
+import { schemaTools } from "./src/schema.ts";
+import { diffTools } from "./src/diff.ts";
 // Agent imports
-import { agentTools } from "./agent.ts";
+import { agentTools } from "./src/agent.ts";
 // PML imports (capability management)
-import { pmlTools } from "./cap.ts";
+import { pmlTools } from "./src/cap.ts";
 // Python imports
-import { pythonTools } from "./python.ts";
+import { pythonTools } from "./src/python.ts";
 // Legacy imports
-import { dataTools } from "./data.ts";
-import { stateTools } from "./state.ts";
-import { compareTools } from "./compare.ts";
+import { dataTools } from "./src/data.ts";
+import { stateTools } from "./src/state.ts";
+import { compareTools } from "./src/compare.ts";
 // Utility imports
-import { utilTools } from "./util.ts";
-import type { MiniTool as MiniToolType } from "./types.ts";
+import { utilTools } from "./src/util.ts";
+import type { MiniTool as MiniToolType } from "./src/types.ts";
 
 /** All system tools combined */
 export const systemTools = [
