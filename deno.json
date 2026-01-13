@@ -26,7 +26,7 @@
     ]
   },
   "imports": {
-    "@casys/mcp-server": "jsr:@casys/mcp-server@^0.1.0",
+    "@casys/mcp-server": "jsr:@casys/mcp-server@^0.2.0",
     "@electric-sql/pglite": "npm:@electric-sql/pglite@^0.2.17",
     "@electric-sql/pglite/vector": "npm:@electric-sql/pglite@^0.2.17/vector",
     "@anthropic-ai/sdk": "npm:@anthropic-ai/sdk@^0.39.0",
