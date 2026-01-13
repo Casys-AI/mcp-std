@@ -4,7 +4,7 @@
  * This file bootstraps the std tools as a proper MCP server
  * that can be loaded via mcp-servers.json.
  *
- * Now uses the ConcurrentMCPServer framework for production-ready
+ * Uses the ConcurrentMCPServer framework for production-ready
  * concurrency control and backpressure.
  *
  * Usage in mcp-servers.json:
@@ -12,17 +12,17 @@
  *   "mcpServers": {
  *     "std": {
  *       "command": "deno",
- *       "args": ["run", "--allow-all", "lib/mcp-tools-server.ts"]
+ *       "args": ["run", "--allow-all", "jsr:@casys/mcp-std/server"]
  *     }
  *   }
  * }
  *
- * @module lib/mcp-tools-server
+ * @module lib/std/server
  */
 
 import { ConcurrentMCPServer, SamplingBridge } from "@casys/mcp-server";
-import { MiniToolsClient } from "./mcp-tools.ts";
-import { createAgenticSamplingClient, setSamplingClient } from "./agent.ts";
+import { MiniToolsClient } from "./src/client.ts";
+import { createAgenticSamplingClient, setSamplingClient } from "./src/tools/agent.ts";
 
 async function main() {
   // Parse command line arguments for category filtering
