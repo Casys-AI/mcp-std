@@ -55,7 +55,7 @@ async function main() {
   // Create concurrent MCP server with framework
   const server = new ConcurrentMCPServer({
     name: "mcp-std",
-    version: "0.2.0",
+    version: "0.2.1",
     maxConcurrent: 10,
     backpressureStrategy: "sleep",
     enableSampling: true,
