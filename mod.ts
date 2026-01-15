@@ -84,8 +84,6 @@ export {
   agentTools,
   createAgenticSamplingClient,
   setSamplingClient,
-  // Capability management
-  pmlTools,
   // Python tools
   pythonTools,
   // Common utilities

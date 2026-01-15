@@ -50,8 +50,8 @@ export { diffTools } from "./diff.ts";
 // Agent tools (MCP Sampling)
 export { agentTools, createAgenticSamplingClient, setSamplingClient } from "./agent.ts";
 
-// Capability management
-export { pmlTools } from "./cap.ts";
+// Capability management - moved to src/mcp/handlers/cap-handler.ts
+// Types re-exported from gateway for backward compat
 export type {
   CapListItem,
   CapListOptions,
@@ -67,7 +67,7 @@ export type {
   CapWhoisOptions,
   CapWhoisResponse,
   OnCapabilityMerged,
-} from "./cap.ts";
+} from "../../../../src/mcp/handlers/cap-handler.ts";
 
 // Python execution tools
 export { pythonTools } from "./python.ts";
@@ -116,7 +116,7 @@ import { resilienceTools } from "./resilience.ts";
 import { schemaTools } from "./schema.ts";
 import { diffTools } from "./diff.ts";
 import { agentTools } from "./agent.ts";
-import { pmlTools } from "./cap.ts";
+// pmlTools removed - capability management via pml:admin/pml:discover
 import { pythonTools } from "./python.ts";
 import { dataTools } from "./data.ts";
 import { stateTools } from "./state.ts";
@@ -161,7 +161,6 @@ export const allTools: MiniTool[] = [
   ...schemaTools,
   ...diffTools,
   ...agentTools,
-  ...pmlTools,
   ...pythonTools,
   ...dataTools,
   ...stateTools,
@@ -210,7 +209,6 @@ export const toolsByCategory: Record<string, MiniTool[]> = {
   packages: packagesTools,
   util: utilTools,
   agent: agentTools,
-  pml: pmlTools,
   python: pythonTools,
 };
 
