@@ -1,6 +1,6 @@
 # MCP Standard Library
 
-A comprehensive collection of **424 MCP tools** for AI agents — text processing, data transformation, system operations, and **agentic capabilities via sampling**.
+A comprehensive collection of **461 MCP tools** for AI agents — text processing, data transformation, system operations, and **agentic capabilities via sampling**.
 
 Works with any MCP client: Claude Code, Claude Desktop, Cursor, VS Code Copilot, and more.
 
@@ -91,7 +91,7 @@ await server.start();
   - `'reject'` - Fail fast when at capacity
 - **Sampling Support**: Optional bidirectional LLM delegation
 - **Metrics**: Monitor in-flight and queued requests
-- **Production-Ready**: Used by mcp-std (428 tools)
+- **Production-Ready**: Used by mcp-std (461 tools)
 
 ### Configuration Options
 
@@ -222,7 +222,7 @@ Learn more: [github.com/Casys-AI/casys-pml](https://github.com/Casys-AI/casys-pm
 | `media` | 3 | ffmpeg, imagemagick wrappers |
 | `cloud` | 3 | AWS, GCloud, systemd |
 
-### Data Processing (182 tools)
+### Data Processing (212 tools)
 
 | Category | Count | Description |
 |----------|-------|-------------|
@@ -235,12 +235,15 @@ Learn more: [github.com/Casys-AI/casys-pml](https://github.com/Casys-AI/casys-pm
 | `validation` | 11 | Email, URL, UUID, IP, phone, credit card |
 | `text` | 10 | Split, join, regex, template, slugify |
 | `json` | 10 | Parse, query, merge, flatten, pick, diff |
+| `encoding` | 10 | **NEW** ROT13, Caesar, Morse, NATO, binary, hex, base32, punycode |
 | `transform` | 8 | CSV, XML, YAML parsing and stringification |
 | `datetime` | 7 | Now, format, diff, add, cron parsing |
 | `diff` | 7 | Unified diff, patch, compare lines |
 | `compare` | 6 | Levenshtein, similarity, fuzzy match, deep equal |
+| `security` | 6 | **NEW** JWT generate/verify, password strength, checksums, CRC32 |
+| `textanalysis` | 4 | **NEW** Readability scores, sentiment analysis, word frequency |
 
-### Utilities (112 tools)
+### Utilities (134 tools)
 
 | Category | Count | Description |
 |----------|-------|-------------|
@@ -250,11 +253,14 @@ Learn more: [github.com/Casys-AI/casys-pml](https://github.com/Casys-AI/casys-pm
 | `util` | 11 | HTTP status codes, MIME types, user agents |
 | `qrcode` | 10 | Generate/decode QR codes, barcodes, SVG output |
 | `state` | 10 | In-memory KV store with TTL, persistence |
+| `devtools` | 10 | **NEW** Semver parse/compare/bump, roman numerals, env parser, cron, regex |
 | `vfs` | 8 | Virtual filesystem for sandboxed operations |
 | `resilience` | 8 | Retry, rate limit, circuit breaker, timeout |
 | `network` | 8 | URL parsing, IP info, subnet calc, DNS |
+| `iptools` | 7 | **NEW** CIDR calculator, subnet divide, IPv6, MAC format |
 | `http` | 6 | Build URLs, parse headers, query strings |
 | `schema` | 6 | Infer JSON schema, validate, generate samples |
+| `timezone` | 5 | **NEW** Timezone convert, world clock, meeting planner, DST |
 
 ### Generation (32 tools)
 

@@ -64,6 +64,14 @@ export { compareTools } from "./compare.ts";
 // Utility tools
 export { utilTools } from "./util.ts";
 
+// New Deno native tools (no external dependencies)
+export { encodingTools } from "./encoding.ts";
+export { securityTools } from "./security.ts";
+export { iptoolsTools } from "./iptools.ts";
+export { devtoolsTools } from "./devtools.ts";
+export { textanalysisTools } from "./textanalysis.ts";
+export { timezoneTools } from "./timezone.ts";
+
 // Imports for combined arrays
 import { dockerTools } from "./docker.ts";
 import { gitTools } from "./git.ts";
@@ -106,6 +114,12 @@ import { dataTools } from "./data.ts";
 import { stateTools } from "./state.ts";
 import { compareTools } from "./compare.ts";
 import { utilTools } from "./util.ts";
+import { encodingTools } from "./encoding.ts";
+import { securityTools } from "./security.ts";
+import { iptoolsTools } from "./iptools.ts";
+import { devtoolsTools } from "./devtools.ts";
+import { textanalysisTools } from "./textanalysis.ts";
+import { timezoneTools } from "./timezone.ts";
 import type { MiniTool } from "./types.ts";
 
 /** All tools combined */
@@ -150,6 +164,12 @@ export const allTools: MiniTool[] = [
   ...stateTools,
   ...compareTools,
   ...utilTools,
+  ...encodingTools,
+  ...securityTools,
+  ...iptoolsTools,
+  ...devtoolsTools,
+  ...textanalysisTools,
+  ...timezoneTools,
 ];
 
 /** Tools organized by category */
@@ -194,6 +214,12 @@ export const toolsByCategory: Record<string, MiniTool[]> = {
   util: utilTools,
   agent: agentTools,
   python: pythonTools,
+  encoding: encodingTools,
+  security: securityTools,
+  iptools: iptoolsTools,
+  devtools: devtoolsTools,
+  textanalysis: textanalysisTools,
+  timezone: timezoneTools,
 };
 
 /** Get tools by category */

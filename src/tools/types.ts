@@ -68,7 +68,14 @@ export type ToolCategory =
   // Python execution
   | "python"
   // PML tools (capability management)
-  | "pml";
+  | "pml"
+  // New Deno native tools
+  | "encoding"
+  | "security"
+  | "iptools"
+  | "devtools"
+  | "textanalysis"
+  | "timezone";
 
 /** Mini tool handler function type */
 export type MiniToolHandler = (args: Record<string, unknown>) => Promise<unknown> | unknown;
