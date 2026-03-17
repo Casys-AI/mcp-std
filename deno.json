@@ -1,0 +1,67 @@
+{
+  "name": "@casys/mcp-std",
+  "version": "0.4.0",
+  "nodeModulesDir": "auto",
+  "tasks": {
+    "serve": "deno run --allow-all server.ts --http --port=3008",
+    "build:ui": "cd src/ui && npm run build",
+    "build": "deno task build:ui && deno task compile",
+    "compile": "deno compile -A --output mcp-std server.ts",
+    "compile:linux": "deno compile -A --target x86_64-unknown-linux-gnu --output mcp-std-linux server.ts",
+    "compile:mac": "deno compile -A --target aarch64-apple-darwin --output mcp-std-mac server.ts",
+    "compile:windows": "deno compile -A --target x86_64-pc-windows-msvc --output mcp-std.exe server.ts"
+  },
+  "exports": {
+    ".": "./mod.ts",
+    "./server": "./server.ts"
+  },
+  "publish": {
+    "include": [
+      "mod.ts",
+      "server.ts",
+      "src/**/*.ts",
+      "src/ui/dist/*.html",
+      "README.md",
+      "LICENSE"
+    ],
+    "exclude": [
+      "**/*_test.ts",
+      "**/*.test.ts",
+      "**/*.bench.ts",
+      "src/ui/**/node_modules/**",
+      "vite.config.ts"
+    ]
+  },
+  "imports": {
+    "@casys/mcp-server": "../server/mod.ts",
+    "hono": "jsr:@hono/hono@^4",
+    "ajv": "npm:ajv@^8.17.1",
+    "@std/assert": "jsr:@std/assert@^1",
+    "@modelcontextprotocol/ext-apps": "npm:@modelcontextprotocol/ext-apps@^1.0.1",
+    "vite": "npm:vite@^7.1.3",
+    "vite-plugin-singlefile": "npm:vite-plugin-singlefile@^2.0.3",
+    "@electric-sql/pglite": "npm:@electric-sql/pglite@^0.2.17",
+    "@electric-sql/pglite/vector": "npm:@electric-sql/pglite@^0.2.17/vector",
+    "@anthropic-ai/sdk": "npm:@anthropic-ai/sdk@^0.39.0",
+    "@modelcontextprotocol/sdk": "npm:@modelcontextprotocol/sdk@^1.15.1",
+    "change-case": "npm:change-case@^5.4.4",
+    "jmespath": "npm:jmespath@^0.16.0",
+    "mathjs": "npm:mathjs@^14.0.1",
+    "simple-statistics": "npm:simple-statistics@^7.8.8",
+    "date-fns": "npm:date-fns@^4.1.0",
+    "lodash-es": "npm:lodash-es@^4.17.21",
+    "@faker-js/faker": "npm:@faker-js/faker@^9.3.0",
+    "zod": "npm:zod@^3.24.1",
+    "validator": "npm:validator@^13.12.0",
+    "papaparse": "npm:papaparse@^5.5.2",
+    "diff": "npm:diff@^7.0.0",
+    "jsondiffpatch": "npm:jsondiffpatch@^0.6.0",
+    "mnemonist": "npm:mnemonist@^0.39.8",
+    "uuid": "npm:uuid@^11.0.5",
+    "postgres": "npm:postgres@^3.4.5",
+    "jose": "npm:jose@^6.0.0",
+    "@std/yaml": "jsr:@std/yaml@^1",
+    "@opentelemetry/api": "npm:@opentelemetry/api@^1.9.0",
+    "hono/cors": "npm:hono@^4/cors"
+  }
+}

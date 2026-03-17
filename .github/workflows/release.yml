@@ -1,0 +1,148 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: mcp-std-linux-x64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: mcp-std-linux-arm64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            artifact: mcp-std-darwin-x64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact: mcp-std-darwin-arm64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            artifact: mcp-std-windows-x64.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Compile
+        shell: bash
+        run: |
+          deno compile -A \
+            --target ${{ matrix.target }} \
+            --output ${{ matrix.artifact }} \
+            server.ts
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          for dir in dist/*/; do
+            for file in "$dir"*; do
+              if [ -f "$file" ]; then
+                mv "$file" release/
+              fi
+            done
+          done
+          ls -la release/
+
+      - name: Create checksums
+        working-directory: release
+        run: |
+          sha256sum mcp-std-* > checksums.sha256
+          cat checksums.sha256
+
+      - name: Get version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: MCP Std ${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+          files: |
+            release/mcp-std-linux-x64
+            release/mcp-std-linux-arm64
+            release/mcp-std-darwin-x64
+            release/mcp-std-darwin-arm64
+            release/mcp-std-windows-x64.exe
+            release/checksums.sha256
+          body: |
+            ## MCP Std Server ${{ steps.version.outputs.version }}
+
+            Pre-compiled MCP server with 120+ standard tools.
+
+            ### Download
+
+            | Platform | Binary |
+            |----------|--------|
+            | Linux x64 | `mcp-std-linux-x64` |
+            | Linux ARM64 | `mcp-std-linux-arm64` |
+            | macOS Intel | `mcp-std-darwin-x64` |
+            | macOS Apple Silicon | `mcp-std-darwin-arm64` |
+            | Windows | `mcp-std-windows-x64.exe` |
+
+            ### Usage
+
+            Add to your `mcp-servers.json`:
+            ```json
+            {
+              "mcpServers": {
+                "std": {
+                  "command": "/path/to/mcp-std-linux-x64"
+                }
+              }
+            }
+            ```
+
+            Or with Deno:
+            ```json
+            {
+              "mcpServers": {
+                "std": {
+                  "command": "deno",
+                  "args": ["run", "-A", "jsr:@casys/mcp-std/server"]
+                }
+              }
+            }
+            ```
+
+            ### Verify Checksums
+            ```bash
+            sha256sum -c checksums.sha256
+            ```
