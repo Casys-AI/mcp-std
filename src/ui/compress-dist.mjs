@@ -9,6 +9,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync, gzipSync } from "node:zlib";
@@ -88,11 +89,28 @@ export function verifyUiDist(
   return actual;
 }
 
+export function uiDistContentManifest(
+  distDirectory = resolve(moduleDirectory, "dist"),
+) {
+  return sourceViewerNames().map((viewer) => {
+    const gzipPath = resolve(distDirectory, viewer, "index.html.gz");
+    if (!existsSync(gzipPath)) {
+      throw new Error(`Missing compressed UI bundle: ${gzipPath}`);
+    }
+
+    const html = gunzipSync(readFileSync(gzipPath));
+    const digest = createHash("sha256").update(html).digest("hex");
+    return `${digest}  ${viewer}/index.html`;
+  }).join("\n");
+}
+
 if (
   process.argv[1] &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
-  if (process.argv.includes("--verify")) {
+  if (process.argv.includes("--manifest")) {
+    console.log(uiDistContentManifest());
+  } else if (process.argv.includes("--verify")) {
     verifyUiDist();
   } else {
     compressUiDist();
