@@ -2,8 +2,10 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
-      - 'v*'
+      - "v*"
 
 permissions:
   contents: read
@@ -14,16 +16,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 26.5.0
+          cache: npm
+          cache-dependency-path: src/ui/package-lock.json
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+      - name: Rebuild UI assets
+        working-directory: src/ui
+        run: |
+          npm ci
+          npm run build
       - name: Verify packaged UI assets
         shell: bash
         run: |
           test -d src/ui/dist
-          find src/ui/dist -mindepth 2 -maxdepth 2 -name index.html -print -quit | grep -q .
+          deno task verify:ui
+          test -z "$(find src/ui/dist -mindepth 2 -maxdepth 2 -name index.html -print -quit)"
+          test -z "$(git status --porcelain -- src/ui/dist)"
       - name: Verify tag matches package version
+        if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         run: test "${GITHUB_REF_NAME#v}" = "$(jq -r '.version' deno.json)"
       - name: Quality gates
@@ -33,9 +49,26 @@ jobs:
           deno task lint
           deno task test
 
+  publish:
+    name: Publish JSR package
+    needs: verify
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Publish package
+        run: deno publish
+
   build:
     name: Build ${{ matrix.target }}
-    needs: verify
+    needs: publish
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:

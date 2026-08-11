@@ -1,16 +1,18 @@
 {
   "name": "@casys/mcp-std",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "license": "MIT",
   "nodeModulesDir": "none",
   "tasks": {
     "serve": "deno run --allow-all server.ts --http --port=3008",
     "build:ui": "cd src/ui && npm run build",
+    "compress:ui": "cd src/ui && npm run compress",
+    "verify:ui": "cd src/ui && npm run verify:dist",
     "build": "deno task build:ui && deno task compile",
-    "fmt:check": "deno fmt --check mod.ts server.ts src/client.ts src/tools/mod.ts src/tools/text.ts src/ui/mod.ts src/ui/shared/mcp-view.ts src/ui/metrics-panel/src/main.tsx src/ui/status-badge/src/main.tsx tests/client_test.ts tests/devtools_test.ts src/tools/types_test.ts src/ui/mod_test.ts",
+    "fmt:check": "deno fmt --check mod.ts server.ts src/client.ts src/tools/mod.ts src/tools/text.ts src/ui/mod.ts src/ui/gzip.ts src/ui/gzip_test.ts src/ui/build-all.mjs src/ui/compress-dist.mjs src/ui/shared/mcp-view.ts src/ui/metrics-panel/src/main.tsx src/ui/status-badge/src/main.tsx tests/client_test.ts tests/devtools_test.ts src/tools/types_test.ts src/ui/mod_test.ts",
     "check": "deno check mod.ts server.ts src/client.ts src/tools/mod.ts src/ui/mod.ts",
-    "lint": "deno lint mod.ts server.ts src/client.ts src/tools/mod.ts src/tools/text.ts src/ui/mod.ts src/ui/shared/mcp-view.ts src/ui/metrics-panel/src/main.tsx src/ui/status-badge/src/main.tsx tests/client_test.ts tests/devtools_test.ts src/tools/types_test.ts src/ui/mod_test.ts",
-    "test": "deno test -A tests src/tools/types_test.ts src/ui/mod_test.ts",
+    "lint": "deno lint mod.ts server.ts src/client.ts src/tools/mod.ts src/tools/text.ts src/ui/mod.ts src/ui/gzip.ts src/ui/gzip_test.ts src/ui/shared/mcp-view.ts src/ui/metrics-panel/src/main.tsx src/ui/status-badge/src/main.tsx tests/client_test.ts tests/devtools_test.ts src/tools/types_test.ts src/ui/mod_test.ts",
+    "test": "deno test -A tests src/tools/types_test.ts src/ui/gzip_test.ts src/ui/mod_test.ts",
     "compile": "deno compile -A --include src/ui/dist --output mcp-std server.ts",
     "compile:linux": "deno compile -A --include src/ui/dist --target x86_64-unknown-linux-gnu --output mcp-std-linux server.ts",
     "compile:mac": "deno compile -A --include src/ui/dist --target aarch64-apple-darwin --output mcp-std-mac server.ts",
@@ -25,7 +27,7 @@
       "mod.ts",
       "server.ts",
       "src/**/*.ts",
-      "src/ui/dist/**/*.html",
+      "src/ui/dist/**/*.html.gz",
       "README.md",
       "LICENSE"
     ],
@@ -33,7 +35,9 @@
       "**/*_test.ts",
       "**/*.test.ts",
       "**/*.bench.ts",
-      "src/ui/**/node_modules/**"
+      "src/ui/**/node_modules/**",
+      "src/ui/components/**",
+      "src/ui/shared/**"
     ]
   },
   "imports": {

@@ -6,6 +6,8 @@
   "scripts": {
     "build": "node build-all.mjs",
     "build:ui": "vite build",
+    "compress": "node compress-dist.mjs",
+    "verify:dist": "node compress-dist.mjs --verify",
     "dev": "vite"
   },
   "dependencies": {

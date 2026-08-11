@@ -1,6 +1,6 @@
- MCP Apps UI Components
+MCP Apps UI Components
 
-This directory contains 40+ interactive UI components for MiniTools, built with **Preact** and **Tailwind CSS v4**. Each component is compiled into a single self-contained HTML file for use with the MCP Apps extension (SEP-1865).
+This directory contains the interactive viewers for MiniTools, built with **Preact** and **Tailwind CSS v4**. Each viewer is compiled as a standalone MCP App HTML document, then stored as a deterministic gzip asset for distribution. The server always decompresses it before returning the MCP resource, so clients still receive normal HTML with the MCP Apps MIME type.
 
 ## Architecture
 
@@ -11,7 +11,7 @@ src/ui/
 ├── vite.single.config.mjs  # Vite config for single-file builds
 ├── global.css              # Tailwind CSS v4 configuration with @theme
 ├── tailwind.config.js      # (removed - config now in global.css)
-├── dist/                   # Built single-file HTML bundles (gitignored)
+├── dist/                   # Built standalone bundles (`index.html.gz`)
 ├── components/
 │   ├── ui/                 # Reusable UI components (Button, Alert, etc.)
 │   └── utils.ts            # Utility functions (cx, formatValue, etc.)
@@ -24,8 +24,8 @@ src/ui/
 
 ## Stack
 
-- **Preact 10.28.2** - Fast 3kB React alternative
-- **Tailwind CSS 4.1.18** - Utility-first CSS framework
+- **Preact 10.28.3** - Fast 3kB React alternative
+- **Tailwind CSS 4.3.3** - Utility-first CSS framework
 - **@tailwindcss/vite** - Vite plugin for Tailwind v4
 - **vite-plugin-singlefile** - Bundles everything into a single HTML file
 
@@ -217,7 +217,7 @@ node build-all.mjs
 
 ### Build output
 
-Each component is compiled into a single self-contained HTML file in `dist/<component>/index.html`. The build uses:
+Each component is compiled into standalone HTML, then stored as `dist/<component>/index.html.gz`. The build uses:
 
 - **Vite** with `vite-plugin-singlefile` for bundling
 - **Preact** for reactive UI (~4kB gzip)

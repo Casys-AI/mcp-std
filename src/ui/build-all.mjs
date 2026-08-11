@@ -6,9 +6,10 @@
  */
 
 import { execSync } from "node:child_process";
-import { readdirSync, statSync, mkdirSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { mkdirSync, readdirSync, statSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { compressUiDist, verifyUiDist } from "./compress-dist.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -48,5 +49,8 @@ for (const ui of uis) {
     process.exit(1);
   }
 }
+
+compressUiDist(resolve(__dirname, "dist"));
+verifyUiDist(resolve(__dirname, "dist"));
 
 console.log(`\n🎉 All UIs built successfully!`);

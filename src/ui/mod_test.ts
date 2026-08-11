@@ -4,7 +4,7 @@
  * @module lib/std/src/ui/mod_test
  */
 
-import { assertEquals, assertRejects } from "@std/assert";
+import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import {
   listUiResources,
   loadUiHtml,
@@ -26,6 +26,12 @@ Deno.test("listUiResources - returns all registered UIs", () => {
       ?.meta.name,
     "Table Viewer",
   );
+});
+
+Deno.test("loadUiHtml - decompresses a packaged MCP App viewer", async () => {
+  const html = await loadUiHtml("ui://mcp-std/status-badge");
+  assertStringIncludes(html.toLowerCase(), "<!doctype html>");
+  assertStringIncludes(html, '<div id="app"></div>');
 });
 
 Deno.test("loadUiHtml - throws for unknown resource", async () => {

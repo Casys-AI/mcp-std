@@ -133,16 +133,17 @@ availability, and rate-limit behaviour.
 ## MCP Apps viewers
 
 Tools can declare a `ui://mcp-std/<viewer>` resource URI in their metadata.
-The corresponding self-contained HTML is stored at:
+The corresponding standalone bundle is distributed at:
 
 ```
-src/ui/dist/<viewer>/index.html
+src/ui/dist/<viewer>/index.html.gz
 ```
 
-Those generated bundles are versioned as package assets and are included both
-when publishing to JSR and when compiling a standalone executable. The viewer
-source and its independent Node/Vite build live in `src/ui`; build it only when
-you intentionally update the UI assets:
+The server transparently decompresses each asset and returns ordinary HTML with
+the MCP Apps MIME type; MCP clients never receive gzip data. These generated
+bundles are versioned as package assets and included both on JSR and in the
+standalone executables. Viewer sources and their independent Node/Vite build
+live in `src/ui`; build them only when intentionally updating the UI assets:
 
 ```sh
 deno task build:ui
@@ -160,7 +161,7 @@ deno task lint
 deno task test
 ```
 
-CI runs the four tasks above and verifies that packaged viewer assets exist
+CI runs the four tasks above and verifies the complete compressed viewer set
 before publishing or building release binaries. `deno.json` uses
 `nodeModulesDir: "none"`, so Deno resolution does not create a root
 `node_modules` directory; the separate UI build remains responsible for its own

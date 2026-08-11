@@ -8,6 +8,7 @@
  */
 
 import { MCP_APP_MIME_TYPE } from "@casys/mcp-server";
+import { gunzipText } from "./gzip.ts";
 
 // Re-export for convenience
 export { MCP_APP_MIME_TYPE };
@@ -24,6 +25,18 @@ export interface UIResourceMeta {
   tools: string[];
 }
 
+function uiBundlePath(baseUrl: URL, uiName: string): URL | null {
+  for (const fileName of ["index.html", "index.html.gz"]) {
+    const candidate = new URL(`${uiName}/${fileName}`, baseUrl);
+    try {
+      if (Deno.statSync(candidate).isFile) return candidate;
+    } catch {
+      // Try the next supported representation.
+    }
+  }
+  return null;
+}
+
 /**
  * Auto-discover UI resources from dist/ folder
  */
@@ -37,9 +50,8 @@ function discoverUiResources(): Record<string, UIResourceMeta> {
         const uiName = entry.name;
         const uri = `ui://mcp-std/${uiName}`;
 
-        // Check if index.html exists
-        try {
-          Deno.statSync(new URL(`${uiName}/index.html`, distUrl));
+        // Bundles are plain HTML during development and gzip in releases.
+        if (uiBundlePath(distUrl, uiName)) {
           resources[uri] = {
             name: uiName.split("-").map((w) =>
               w.charAt(0).toUpperCase() + w.slice(1)
@@ -47,8 +59,6 @@ function discoverUiResources(): Record<string, UIResourceMeta> {
             description: `MCP Apps UI: ${uiName}`,
             tools: [],
           };
-        } catch {
-          // No index.html, skip
         }
       }
     }
@@ -92,8 +102,10 @@ export async function loadUiHtml(uri: string): Promise<string> {
   const uiPath = uriToPath(uri);
   if (uiPath) {
     try {
-      const content = await Deno.readTextFile(uiPath);
-      return content;
+      if (uiPath.pathname.endsWith(".gz")) {
+        return await gunzipText(await Deno.readFile(uiPath));
+      }
+      return await Deno.readTextFile(uiPath);
     } catch (e) {
       // Fall through to error
       console.error(`[mcp-std/ui] Failed to load UI from ${uiPath}:`, e);
@@ -125,14 +137,9 @@ function uriToPath(uri: string): URL | null {
   if (match) {
     const uiName = match[1];
     // Try dist first (built), then src (development)
-    const distUrl = new URL(`./dist/${uiName}/index.html`, import.meta.url);
+    const distUrl = new URL("./dist/", import.meta.url);
     const srcUrl = new URL(`./${uiName}/index.html`, import.meta.url);
-    try {
-      Deno.statSync(distUrl);
-      return distUrl;
-    } catch {
-      return srcUrl;
-    }
+    return uiBundlePath(distUrl, uiName) ?? srcUrl;
   }
   return null;
 }

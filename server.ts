@@ -32,8 +32,41 @@ import {
   createAgenticSamplingClient,
   setSamplingClient,
 } from "./src/tools/agent.ts";
+import { decodeViewerText, gunzipText } from "./src/ui/gzip.ts";
 
 const DEFAULT_HTTP_PORT = 3008;
+
+async function readViewer(path: string): Promise<string> {
+  if (path.startsWith("https://") || path.startsWith("http://")) {
+    const response = await fetch(path);
+    if (response.ok) return response.text();
+
+    const gzipPath = `${path}.gz`;
+    const gzipResponse = await fetch(gzipPath);
+    if (!gzipResponse.ok) {
+      throw new Error(
+        `[mcp-std] Failed to fetch viewer ${path}: ${response.status}; ` +
+          `gzip fallback: ${gzipResponse.status}`,
+      );
+    }
+    return decodeViewerText(
+      new Uint8Array(await gzipResponse.arrayBuffer()),
+    );
+  }
+
+  try {
+    return await Deno.readTextFile(path);
+  } catch (htmlError) {
+    try {
+      return await gunzipText(await Deno.readFile(`${path}.gz`));
+    } catch (gzipError) {
+      throw new AggregateError(
+        [htmlError, gzipError],
+        `[mcp-std] Failed to read viewer ${path}`,
+      );
+    }
+  }
+}
 
 async function main() {
   // Parse command line arguments
@@ -81,7 +114,7 @@ async function main() {
   // Create MCP application with framework
   const server = new McpApp({
     name: "mcp-std",
-    version: "0.4.0",
+    version: "0.4.1",
     maxConcurrent: 10,
     backpressureStrategy: "sleep",
     logger: (msg) => console.error(`[mcp-std] ${msg}`),
@@ -121,21 +154,14 @@ async function main() {
       try {
         return Deno.statSync(path).isFile;
       } catch {
-        return false;
-      }
-    },
-    readFile: async (path) => {
-      if (path.startsWith("https://") || path.startsWith("http://")) {
-        const response = await fetch(path);
-        if (!response.ok) {
-          throw new Error(
-            `[mcp-std] Failed to fetch viewer ${path}: ${response.status}`,
-          );
+        try {
+          return Deno.statSync(`${path}.gz`).isFile;
+        } catch {
+          return false;
         }
-        return response.text();
       }
-      return Deno.readTextFile(path);
     },
+    readFile: readViewer,
   });
   console.error(
     `[mcp-std] Registered ${viewerRegistration.registered.length} MCP App viewer(s) (${MCP_APP_MIME_TYPE})`,
