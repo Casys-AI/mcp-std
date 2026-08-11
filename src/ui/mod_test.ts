@@ -5,25 +5,34 @@
  */
 
 import { assertEquals, assertRejects } from "@std/assert";
-import { loadUiHtml, listUiResources, registerUiBundle, UI_RESOURCES } from "./mod.ts";
+import {
+  listUiResources,
+  loadUiHtml,
+  registerUiBundle,
+  UI_RESOURCES,
+} from "./mod.ts";
 
 Deno.test("UI_RESOURCES - contains table-viewer", () => {
   const resource = UI_RESOURCES["ui://mcp-std/table-viewer"];
-  assertEquals(resource?.name, "Interactive Table Viewer");
-  assertEquals(resource?.tools.includes("psql_query"), true);
+  assertEquals(resource?.name, "Table Viewer");
+  assertEquals(resource?.tools, []);
 });
 
 Deno.test("listUiResources - returns all registered UIs", () => {
   const resources = listUiResources();
   assertEquals(resources.length >= 1, true);
-  assertEquals(resources[0].uri, "ui://mcp-std/table-viewer");
+  assertEquals(
+    resources.find((resource) => resource.uri === "ui://mcp-std/table-viewer")
+      ?.meta.name,
+    "Table Viewer",
+  );
 });
 
 Deno.test("loadUiHtml - throws for unknown resource", async () => {
   await assertRejects(
     async () => await loadUiHtml("ui://mcp-std/unknown"),
     Error,
-    "UI resource not found"
+    "UI resource not found",
   );
 });
 

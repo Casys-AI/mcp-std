@@ -4,8 +4,9 @@
  * @module lib/std/src/client_test
  */
 
-import { assertEquals } from "@std/assert";
-import { MiniToolsClient } from "./client.ts";
+import { assertEquals, assertThrows } from "@std/assert";
+import { MiniToolsClient } from "../src/client.ts";
+import { getCategories, getToolsByCategory } from "../src/tools/mod.ts";
 
 Deno.test("toMCPFormat - includes _meta for tools with UI", () => {
   const client = new MiniToolsClient({ categories: ["database"] });
@@ -42,4 +43,37 @@ Deno.test("toMCPFormat - backward compatible structure", () => {
     assertEquals(typeof tool.description, "string");
     assertEquals(typeof tool.inputSchema, "object");
   }
+});
+
+Deno.test("categories - trims and deduplicates requested names", () => {
+  const normalized = new MiniToolsClient({ categories: [" text ", "text"] });
+  const expected = new MiniToolsClient({ categories: ["text"] });
+
+  assertEquals(
+    normalized.listTools().map((tool) => tool.name),
+    expected.listTools().map((tool) => tool.name),
+  );
+});
+
+Deno.test("categories - rejects unknown names", () => {
+  assertThrows(
+    () => new MiniToolsClient({ categories: ["not-a-category"] }),
+    RangeError,
+    "Unknown categories: not-a-category",
+  );
+});
+
+Deno.test("categories - exposes the legacy system aggregate", () => {
+  const systemTools = getToolsByCategory("system");
+
+  assertEquals(getCategories().includes("system"), true);
+  assertEquals(systemTools.length > 0, true);
+  assertEquals(systemTools.every((tool) => tool.category === "system"), true);
+});
+
+Deno.test("categories - overlapping selections expose each tool once", () => {
+  const tools = new MiniToolsClient({ categories: ["system", "docker"] })
+    .listTools();
+
+  assertEquals(tools.length, new Set(tools.map((tool) => tool.name)).size);
 });

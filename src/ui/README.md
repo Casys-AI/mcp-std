@@ -195,6 +195,15 @@ node build-all.mjs
 
 ## Build System
 
+## MCP View architecture
+
+`@casys/mcp-view` owns the MCP App lifecycle (including teardown) and its shared
+presentation primitives. `mcp-std` keeps ownership of each viewer's domain data,
+specialized visualizations, and actions. Migration is incremental: `metrics-panel`
+and `status-badge` now use the MCP View theme/primitives and read
+`structuredContent` before their legacy JSON-text fallback. Do not copy the MCP
+View design-system CSS into individual viewers.
+
 ### Build all components
 
 ```bash

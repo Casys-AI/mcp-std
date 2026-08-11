@@ -13,10 +13,10 @@
  */
 
 import { render } from "preact";
-import { useState, useEffect } from "preact/hooks";
-import { App } from "@modelcontextprotocol/ext-apps";
-import { Badge } from "../../components/ui/badge";
+import { useEffect, useRef, useState } from "preact/hooks";
+import { Badge, Card, StateMessage } from "@casys/mcp-view/preact/components";
 import { cx } from "../../components/utils";
+import { type McpViewViewer, startMcpViewViewer } from "../../shared/mcp-view";
 import "../../global.css";
 
 // ============================================================================
@@ -48,37 +48,35 @@ interface StatusData {
 }
 
 // ============================================================================
-// MCP App Connection
-// ============================================================================
-
-const app = new App({ name: "Status Badge", version: "1.0.0" });
-let appConnected = false;
-
-function notifyModel(event: string, data: Record<string, unknown>) {
-  if (!appConnected) return;
-  app.updateModelContext({
-    content: [{ type: "text", text: `User ${event}: ${JSON.stringify(data)}` }],
-    structuredContent: { event, ...data },
-  });
-}
-
-// ============================================================================
 // Helpers
 // ============================================================================
 
-function normalizeStatus(status: StatusType | boolean | undefined, valid?: boolean): StatusType {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeStatusData(value: unknown): StatusData | null {
+  if (Array.isArray(value)) return { items: value as StatusItem[] };
+  if (typeof value === "boolean") return { valid: value };
+  return isRecord(value) ? value as StatusData : null;
+}
+
+function normalizeStatus(
+  status: StatusType | boolean | undefined,
+  valid?: boolean,
+): StatusType {
   if (typeof status === "boolean") return status ? "valid" : "invalid";
   if (status) return status;
   if (typeof valid === "boolean") return valid ? "valid" : "invalid";
   return "info";
 }
 
-const statusConfig: Record<StatusType, { icon: string; colorPalette: string }> = {
-  valid: { icon: "\u2713", colorPalette: "green" },
-  invalid: { icon: "\u2717", colorPalette: "red" },
-  warning: { icon: "!", colorPalette: "orange" },
-  info: { icon: "i", colorPalette: "blue" },
-  pending: { icon: "\u25CB", colorPalette: "gray" },
+const statusConfig: Record<StatusType, { icon: string }> = {
+  valid: { icon: "\u2713" },
+  invalid: { icon: "\u2717" },
+  warning: { icon: "!" },
+  info: { icon: "i" },
+  pending: { icon: "\u25CB" },
 };
 
 const statusBgColors: Record<StatusType, string> = {
@@ -101,27 +99,32 @@ const statusTextColors: Record<StatusType, string> = {
 // Components
 // ============================================================================
 
-function StatusItemCard({ item }: { item: StatusItem }) {
+function StatusItemCard(
+  { item, onSelect }: {
+    item: StatusItem;
+    onSelect: (item: StatusItem, status: StatusType) => void;
+  },
+) {
   const status = normalizeStatus(item.status);
   const config = statusConfig[status];
-
-  const colorMap: Record<StatusType, "green" | "red" | "orange" | "blue" | "gray"> = {
-    valid: "green",
-    invalid: "red",
-    warning: "orange",
-    info: "blue",
-    pending: "gray",
-  };
 
   return (
     <div
       className="flex items-start gap-2 p-2 bg-bg-subtle rounded-md cursor-pointer transition-colors duration-150 hover:bg-bg-muted"
-      onClick={() => notifyModel("click", { status, label: item.label, value: item.value })}
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelect(item, status)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect(item, status);
+        }
+      }}
     >
       <div
         className={cx(
           "w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0",
-          statusBgColors[status]
+          statusBgColors[status],
         )}
       >
         <div className={cx("text-xs font-bold", statusTextColors[status])}>
@@ -131,7 +134,17 @@ function StatusItemCard({ item }: { item: StatusItem }) {
       <div className="flex-1 min-w-0">
         <div className="flex gap-2 items-center">
           {item.label && <div className="font-medium">{item.label}</div>}
-          <Badge size="sm" variant="subtle" colorScheme={colorMap[status]}>
+          <Badge
+            tone={status === "valid"
+              ? "success"
+              : status === "invalid"
+              ? "danger"
+              : status === "warning"
+              ? "warning"
+              : status === "info"
+              ? "info"
+              : "neutral"}
+          >
             {status.charAt(0).toUpperCase() + status.slice(1)}
           </Badge>
         </div>
@@ -157,53 +170,37 @@ function StatusItemCard({ item }: { item: StatusItem }) {
 function StatusBadge() {
   const [data, setData] = useState<StatusData | null>(null);
   const [loading, setLoading] = useState(true);
+  const viewer = useRef<McpViewViewer | null>(null);
 
   useEffect(() => {
-    app.connect().then(() => {
-      appConnected = true;
-    }).catch(() => {});
+    viewer.current = startMcpViewViewer({
+      name: "Status Badge",
+      version: "1.0.0",
+      onToolResult(result) {
+        setLoading(false);
+        setData(normalizeStatusData(result));
+      },
+      onTeardown() {
+        render(null, appRoot);
+      },
+    });
 
-    app.ontoolresult = (result: { content?: Array<{ type: string; text?: string }> }) => {
-      setLoading(false);
-      try {
-        const textContent = result.content?.find((c) => c.type === "text");
-        if (textContent?.text) {
-          const parsed = JSON.parse(textContent.text);
-
-          // Normalize various input formats
-          if (Array.isArray(parsed)) {
-            // Array of statuses
-            setData({ items: parsed });
-          } else if (typeof parsed === "boolean") {
-            // Just a boolean
-            setData({ valid: parsed });
-          } else if (parsed.items) {
-            // Already has items array
-            setData(parsed);
-          } else {
-            // Single status object
-            setData(parsed);
-          }
-        }
-      } catch (e) {
-        console.error("Failed to parse status data", e);
-      }
+    return () => {
+      const activeViewer = viewer.current;
+      viewer.current = null;
+      void activeViewer?.dispose();
     };
   }, []);
 
   if (loading) {
-    return (
-      <div className="p-3 font-sans text-sm text-fg-default bg-bg-canvas">
-        <div className="text-fg-muted">...</div>
-      </div>
-    );
+    return <StateMessage title="Waiting for status">…</StateMessage>;
   }
 
   if (!data) {
     return (
-      <div className="p-3 font-sans text-sm text-fg-default bg-bg-canvas">
-        <div className="text-fg-muted">No status</div>
-      </div>
+      <StateMessage title="No status">
+        The tool returned no status data.
+      </StateMessage>
     );
   }
 
@@ -216,35 +213,47 @@ function StatusBadge() {
   }];
 
   // Calculate summary if multiple items
-  const validCount = items.filter(i => normalizeStatus(i.status) === "valid").length;
-  const invalidCount = items.filter(i => normalizeStatus(i.status) === "invalid").length;
-  const warningCount = items.filter(i => normalizeStatus(i.status) === "warning").length;
+  const validCount =
+    items.filter((i) => normalizeStatus(i.status) === "valid").length;
+  const invalidCount =
+    items.filter((i) => normalizeStatus(i.status) === "invalid").length;
+  const warningCount =
+    items.filter((i) => normalizeStatus(i.status) === "warning").length;
 
   return (
-    <div className="p-3 font-sans text-sm text-fg-default bg-bg-canvas">
-      {/* Title */}
-      {data.title && (
-        <div className="text-sm font-semibold mb-2">
-          {data.title}
-        </div>
-      )}
-
+    <Card title={data.title ?? "Status"}>
       {/* Summary for multiple items */}
       {items.length > 1 && (
         <div className="flex gap-3 mb-2 text-xs font-medium">
-          {validCount > 0 && <div className="text-green-600">{"\u2713"} {validCount}</div>}
-          {invalidCount > 0 && <div className="text-red-600">{"\u2717"} {invalidCount}</div>}
-          {warningCount > 0 && <div className="text-yellow-600">! {warningCount}</div>}
+          {validCount > 0 && (
+            <div className="text-green-600">✓ {validCount}</div>
+          )}
+          {invalidCount > 0 && (
+            <div className="text-red-600">✗ {invalidCount}</div>
+          )}
+          {warningCount > 0 && (
+            <div className="text-yellow-600">! {warningCount}</div>
+          )}
         </div>
       )}
 
       {/* Badges */}
       <div className="flex flex-col gap-2">
         {items.map((item, i) => (
-          <StatusItemCard key={i} item={item} />
+          <StatusItemCard
+            key={i}
+            item={item}
+            onSelect={(selectedItem, status) => {
+              viewer.current?.updateModelContext("click", {
+                status,
+                label: selectedItem.label,
+                value: selectedItem.value,
+              });
+            }}
+          />
         ))}
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -252,4 +261,5 @@ function StatusBadge() {
 // Mount
 // ============================================================================
 
-render(<StatusBadge />, document.getElementById("app")!);
+const appRoot = document.getElementById("app")!;
+render(<StatusBadge />, appRoot);

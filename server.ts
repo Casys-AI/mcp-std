@@ -4,7 +4,7 @@
  * This file bootstraps the std tools as a proper MCP server
  * that can be loaded via mcp-servers.json or run as HTTP server.
  *
- * Uses the ConcurrentMCPServer framework for production-ready
+ * Uses the McpApp framework for production-ready
  * concurrency control and backpressure.
  *
  * Usage in mcp-servers.json (stdio mode):
@@ -21,14 +21,17 @@
  *   deno run --allow-all jsr:@casys/mcp-std/server --http
  *   deno run --allow-all jsr:@casys/mcp-std/server --http --port=3008
  *   deno run --allow-all jsr:@casys/mcp-std/server --http --port=4000 --hostname=127.0.0.1
+ *   deno run --allow-all jsr:@casys/mcp-std/server --http --cors
  *
  * @module lib/std/server
  */
 
-import { ConcurrentMCPServer, MCP_APP_MIME_TYPE, SamplingBridge } from "@casys/mcp-server";
-import { MiniToolsClient } from "./src/client.ts";
-import { createAgenticSamplingClient, setSamplingClient } from "./src/tools/agent.ts";
-import { loadUiHtml, UI_RESOURCES } from "./src/ui/mod.ts";
+import { MCP_APP_MIME_TYPE, McpApp } from "@casys/mcp-server";
+import { getCategories, MiniToolsClient } from "./src/client.ts";
+import {
+  createAgenticSamplingClient,
+  setSamplingClient,
+} from "./src/tools/agent.ts";
 
 const DEFAULT_HTTP_PORT = 3008;
 
@@ -36,47 +39,51 @@ async function main() {
   // Parse command line arguments
   const args = Deno.args;
 
+  if (args.includes("--list-categories")) {
+    console.log(getCategories().join("\n"));
+    return;
+  }
+
   // Category filtering
   const categoriesArg = args.find((arg) => arg.startsWith("--categories="));
   const categories = categoriesArg
-    ? categoriesArg.split("=")[1].split(",")
+    ? categoriesArg.slice("--categories=".length).split(",").map((category) =>
+      category.trim()
+    ).filter(Boolean)
     : undefined;
+  if (categoriesArg && categories?.length === 0) {
+    throw new Error("--categories requires at least one category name");
+  }
 
-  // HTTP mode: --http [--port=XXXX] [--hostname=X.X.X.X]
+  // HTTP mode: --http [--port=XXXX] [--hostname=127.0.0.1] [--cors]
   const httpFlag = args.includes("--http");
   const portArg = args.find((arg) => arg.startsWith("--port="));
-  const httpPort = portArg ? parseInt(portArg.split("=")[1], 10) : DEFAULT_HTTP_PORT;
+  const httpPort = portArg
+    ? parseInt(portArg.split("=")[1], 10)
+    : DEFAULT_HTTP_PORT;
   const hostnameArg = args.find((arg) => arg.startsWith("--hostname="));
-  const hostname = hostnameArg ? hostnameArg.split("=")[1] : "0.0.0.0";
+  const hostname = hostnameArg ? hostnameArg.split("=")[1] : "127.0.0.1";
+  const cors = args.includes("--cors");
 
   // Initialize tools client
   const toolsClient = new MiniToolsClient(
     categories ? { categories } : undefined,
   );
 
-  // Create agentic sampling client and wrap with SamplingBridge
-  // The bridge adds timeout handling, request tracking, and cancellation support
-  const underlyingSamplingClient = createAgenticSamplingClient();
-  const samplingBridge = new SamplingBridge(underlyingSamplingClient, {
-    timeout: 120000, // 2 minute timeout for agentic loops
-  });
-
-  // Use the bridge as the sampling client - it implements createMessage()
-  // This routes all sampling through the bridge for better lifecycle management
-  setSamplingClient(samplingBridge);
+  // Agentic tools use their own sampling client. McpApp no longer owns a
+  // SamplingBridge, so register the client directly with the tools module.
+  setSamplingClient(createAgenticSamplingClient());
 
   console.error(
-    "[mcp-std] Sampling bridge initialized (timeout: 120s, tracking enabled)",
+    "[mcp-std] Agentic sampling client initialized",
   );
 
-  // Create concurrent MCP server with framework
-  const server = new ConcurrentMCPServer({
+  // Create MCP application with framework
+  const server = new McpApp({
     name: "mcp-std",
-    version: "0.2.1",
+    version: "0.4.0",
     maxConcurrent: 10,
     backpressureStrategy: "sleep",
-    enableSampling: true,
-    samplingClient: samplingBridge,
     logger: (msg) => console.error(`[mcp-std] ${msg}`),
   });
 
@@ -90,39 +97,56 @@ async function main() {
 
   server.registerTools(mcpTools, handlers);
 
-  // Collect and register UI resources from tools with _meta.ui
-  const registeredUris = new Set<string>();
+  // Register the viewers referenced by tool metadata. The callbacks support
+  // local/compiled modules and remote JSR modules without a separate registry.
+  const viewerNames = new Set<string>();
   for (const tool of toolsClient.listTools()) {
-    const ui = tool._meta?.ui;
-    if (ui?.resourceUri && !registeredUris.has(ui.resourceUri)) {
-      registeredUris.add(ui.resourceUri);
-      const resourceMeta = UI_RESOURCES[ui.resourceUri];
-      if (resourceMeta) {
-        server.registerResource(
-          {
-            uri: ui.resourceUri,
-            name: resourceMeta.name,
-            description: resourceMeta.description,
-            mimeType: MCP_APP_MIME_TYPE,
-          },
-          async () => {
-            const html = await loadUiHtml(ui.resourceUri);
-            return { uri: ui.resourceUri, mimeType: MCP_APP_MIME_TYPE, text: html };
-          },
-        );
-        console.error(`[mcp-std] Registered UI resource: ${ui.resourceUri}`);
-      } else {
-        console.error(`[mcp-std] Warning: UI resource metadata not found for ${ui.resourceUri}`);
-      }
+    const resourceUri = tool._meta?.ui?.resourceUri;
+    const viewerName = resourceUri?.match(/^ui:\/\/mcp-std\/([^/]+)$/)?.[1];
+    if (viewerName) {
+      viewerNames.add(viewerName);
     }
   }
+
+  const viewerRegistration = server.registerViewers({
+    prefix: "mcp-std",
+    moduleUrl: import.meta.url,
+    viewers: [...viewerNames].sort(),
+    exists: (path) => {
+      if (path.startsWith("https://") || path.startsWith("http://")) {
+        // Explicit viewer metadata is the package contract; fetch errors are
+        // reported when the client reads the matching resource.
+        return true;
+      }
+      try {
+        return Deno.statSync(path).isFile;
+      } catch {
+        return false;
+      }
+    },
+    readFile: async (path) => {
+      if (path.startsWith("https://") || path.startsWith("http://")) {
+        const response = await fetch(path);
+        if (!response.ok) {
+          throw new Error(
+            `[mcp-std] Failed to fetch viewer ${path}: ${response.status}`,
+          );
+        }
+        return response.text();
+      }
+      return Deno.readTextFile(path);
+    },
+  });
+  console.error(
+    `[mcp-std] Registered ${viewerRegistration.registered.length} MCP App viewer(s) (${MCP_APP_MIME_TYPE})`,
+  );
 
   // Start server (HTTP or stdio mode)
   if (httpFlag) {
     const httpServer = await server.startHttp({
       port: httpPort,
       hostname,
-      cors: true,
+      cors,
       onListen: (info) => {
         console.error(
           `[mcp-std] HTTP server listening on http://${info.hostname}:${info.port}`,

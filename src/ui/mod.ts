@@ -29,19 +29,21 @@ export interface UIResourceMeta {
  */
 function discoverUiResources(): Record<string, UIResourceMeta> {
   const resources: Record<string, UIResourceMeta> = {};
-  const distPath = new URL("./dist", import.meta.url).pathname;
+  const distUrl = new URL("./dist/", import.meta.url);
 
   try {
-    for (const entry of Deno.readDirSync(distPath)) {
+    for (const entry of Deno.readDirSync(distUrl)) {
       if (entry.isDirectory) {
         const uiName = entry.name;
         const uri = `ui://mcp-std/${uiName}`;
 
         // Check if index.html exists
         try {
-          Deno.statSync(`${distPath}/${uiName}/index.html`);
+          Deno.statSync(new URL(`${uiName}/index.html`, distUrl));
           resources[uri] = {
-            name: uiName.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" "),
+            name: uiName.split("-").map((w) =>
+              w.charAt(0).toUpperCase() + w.slice(1)
+            ).join(" "),
             description: `MCP Apps UI: ${uiName}`,
             tools: [],
           };
@@ -51,7 +53,7 @@ function discoverUiResources(): Record<string, UIResourceMeta> {
       }
     }
   } catch (e) {
-    console.error(`[mcp-std/ui] Failed to discover UIs from ${distPath}:`, e);
+    console.error(`[mcp-std/ui] Failed to discover UIs from ${distUrl}:`, e);
   }
 
   return resources;
@@ -61,7 +63,8 @@ function discoverUiResources(): Record<string, UIResourceMeta> {
  * Registry of available UI resources
  * Auto-discovered from dist/ folder
  */
-export const UI_RESOURCES: Record<string, UIResourceMeta> = discoverUiResources();
+export const UI_RESOURCES: Record<string, UIResourceMeta> =
+  discoverUiResources();
 
 /**
  * Embedded UI HTML bundles
@@ -97,8 +100,10 @@ export async function loadUiHtml(uri: string): Promise<string> {
     }
   }
 
-  throw new Error(`[mcp-std/ui] UI resource not found: ${uri}. ` +
-    `Run 'deno task build:ui' to generate bundled UIs.`);
+  throw new Error(
+    `[mcp-std/ui] UI resource not found: ${uri}. ` +
+      `Run 'deno task build:ui' to generate bundled UIs.`,
+  );
 }
 
 /**
@@ -114,19 +119,19 @@ export function registerUiBundle(uri: string, html: string): void {
 /**
  * Convert ui:// URI to file path for development loading
  */
-function uriToPath(uri: string): string | null {
+function uriToPath(uri: string): URL | null {
   // ui://mcp-std/table-viewer -> src/ui/dist/table-viewer/index.html
   const match = uri.match(/^ui:\/\/mcp-std\/(.+)$/);
   if (match) {
     const uiName = match[1];
     // Try dist first (built), then src (development)
-    const distPath = new URL(`./dist/${uiName}/index.html`, import.meta.url).pathname;
-    const srcPath = new URL(`./${uiName}/index.html`, import.meta.url).pathname;
+    const distUrl = new URL(`./dist/${uiName}/index.html`, import.meta.url);
+    const srcUrl = new URL(`./${uiName}/index.html`, import.meta.url);
     try {
-      Deno.statSync(distPath);
-      return distPath;
+      Deno.statSync(distUrl);
+      return distUrl;
     } catch {
-      return srcPath;
+      return srcUrl;
     }
   }
   return null;
@@ -135,6 +140,8 @@ function uriToPath(uri: string): string | null {
 /**
  * List all available UI resources
  */
-export function listUiResources(): Array<{ uri: string; meta: UIResourceMeta }> {
+export function listUiResources(): Array<
+  { uri: string; meta: UIResourceMeta }
+> {
   return Object.entries(UI_RESOURCES).map(([uri, meta]) => ({ uri, meta }));
 }

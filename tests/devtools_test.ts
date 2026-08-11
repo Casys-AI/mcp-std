@@ -6,10 +6,11 @@
 
 import { assertEquals } from "@std/assert";
 import { devtoolsTools } from "../src/tools/devtools.ts";
+import { textTools } from "../src/tools/text.ts";
 
 // Helper to get tool handler
 const getHandler = (name: string) => {
-  const tool = devtoolsTools.find((t) => t.name === name);
+  const tool = [...devtoolsTools, ...textTools].find((t) => t.name === name);
   if (!tool) throw new Error(`Tool ${name} not found`);
   return tool.handler;
 };
@@ -50,7 +51,10 @@ Deno.test("semver_parse - parses with build metadata", () => {
 
 Deno.test("semver_parse - handles v prefix", () => {
   const handler = getHandler("semver_parse");
-  const result = handler({ version: "v2.0.0" }) as { valid: boolean; major: number };
+  const result = handler({ version: "v2.0.0" }) as {
+    valid: boolean;
+    major: number;
+  };
 
   assertEquals(result.valid, true);
   assertEquals(result.major, 2);
@@ -98,28 +102,36 @@ Deno.test("semver_compare - prerelease is less than release", () => {
 // Semver satisfies tests
 Deno.test("semver_satisfies - caret range", () => {
   const handler = getHandler("semver_satisfies");
-  const result = handler({ version: "1.2.5", range: "^1.2.0" }) as { satisfies: boolean };
+  const result = handler({ version: "1.2.5", range: "^1.2.0" }) as {
+    satisfies: boolean;
+  };
 
   assertEquals(result.satisfies, true);
 });
 
 Deno.test("semver_satisfies - caret range out of range", () => {
   const handler = getHandler("semver_satisfies");
-  const result = handler({ version: "2.0.0", range: "^1.0.0" }) as { satisfies: boolean };
+  const result = handler({ version: "2.0.0", range: "^1.0.0" }) as {
+    satisfies: boolean;
+  };
 
   assertEquals(result.satisfies, false);
 });
 
 Deno.test("semver_satisfies - tilde range", () => {
   const handler = getHandler("semver_satisfies");
-  const result = handler({ version: "1.2.9", range: "~1.2.0" }) as { satisfies: boolean };
+  const result = handler({ version: "1.2.9", range: "~1.2.0" }) as {
+    satisfies: boolean;
+  };
 
   assertEquals(result.satisfies, true);
 });
 
 Deno.test("semver_satisfies - comparison operators", () => {
   const handler = getHandler("semver_satisfies");
-  const result = handler({ version: "1.5.0", range: ">=1.0.0 <2.0.0" }) as { satisfies: boolean };
+  const result = handler({ version: "1.5.0", range: ">=1.0.0 <2.0.0" }) as {
+    satisfies: boolean;
+  };
 
   assertEquals(result.satisfies, true);
 });
@@ -263,21 +275,27 @@ Deno.test("cron_generate - custom fields", () => {
 // Base convert tests
 Deno.test("base_convert - decimal to hex", () => {
   const handler = getHandler("base_convert");
-  const result = handler({ value: "255", fromBase: 10, toBase: 16 }) as { converted: string };
+  const result = handler({ value: "255", fromBase: 10, toBase: 16 }) as {
+    converted: string;
+  };
 
   assertEquals(result.converted, "FF");
 });
 
 Deno.test("base_convert - binary to decimal", () => {
   const handler = getHandler("base_convert");
-  const result = handler({ value: "1010", fromBase: 2, toBase: 10 }) as { decimal: number };
+  const result = handler({ value: "1010", fromBase: 2, toBase: 10 }) as {
+    decimal: number;
+  };
 
   assertEquals(result.decimal, 10);
 });
 
 Deno.test("base_convert - hex to binary", () => {
   const handler = getHandler("base_convert");
-  const result = handler({ value: "FF", fromBase: 16, toBase: 2 }) as { converted: string };
+  const result = handler({ value: "FF", fromBase: 16, toBase: 2 }) as {
+    converted: string;
+  };
 
   assertEquals(result.converted, "11111111");
 });
@@ -311,7 +329,7 @@ Deno.test("regex_test - invalid pattern", () => {
   const result = handler({
     pattern: "[invalid",
     text: "test",
-  }) as { valid: boolean; error: string };
+  }) as { isValid: boolean; explanation: string };
 
-  assertEquals(result.valid, false);
+  assertEquals(result.isValid, false);
 });

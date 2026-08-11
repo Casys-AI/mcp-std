@@ -18,7 +18,10 @@ export const textTools: MiniTool[] = [
       properties: {
         input: { type: "string", description: "Input text" },
         file: { type: "string", description: "Or input file path" },
-        expression: { type: "string", description: "sed expression (e.g., 's/old/new/g')" },
+        expression: {
+          type: "string",
+          description: "sed expression (e.g., 's/old/new/g')",
+        },
         inPlace: { type: "boolean", description: "Modify file in place" },
       },
       required: ["expression"],
@@ -61,8 +64,14 @@ export const textTools: MiniTool[] = [
       properties: {
         input: { type: "string", description: "Input text" },
         file: { type: "string", description: "Or input file path" },
-        program: { type: "string", description: "awk program (e.g., '{print $1}')" },
-        fieldSeparator: { type: "string", description: "Field separator (default: whitespace)" },
+        program: {
+          type: "string",
+          description: "awk program (e.g., '{print $1}')",
+        },
+        fieldSeparator: {
+          type: "string",
+          description: "Field separator (default: whitespace)",
+        },
       },
       required: ["program"],
     },
@@ -106,8 +115,14 @@ export const textTools: MiniTool[] = [
       properties: {
         input: { type: "string", description: "JSON input" },
         file: { type: "string", description: "Or JSON file path" },
-        filter: { type: "string", description: "jq filter (e.g., '.name', '.[0]')" },
-        raw: { type: "boolean", description: "Raw output (no quotes on strings)" },
+        filter: {
+          type: "string",
+          description: "jq filter (e.g., '.name', '.[0]')",
+        },
+        raw: {
+          type: "boolean",
+          description: "Raw output (no quotes on strings)",
+        },
       },
       required: ["filter"],
     },
@@ -194,7 +209,9 @@ export const textTools: MiniTool[] = [
         await writer.close();
         const { stdout } = await process.output();
         const output = new TextDecoder().decode(stdout).trim();
-        const parts = output.split(/\s+/).map((n) => parseInt(n)).filter((n) => !isNaN(n));
+        const parts = output.split(/\s+/).map((n) => parseInt(n)).filter((n) =>
+          !isNaN(n)
+        );
 
         if (mode === "all") {
           return { lines: parts[0], words: parts[1], bytes: parts[2] };
@@ -203,9 +220,8 @@ export const textTools: MiniTool[] = [
       } else if (file) {
         args.push(file as string);
         const result = await runCommand("wc", args);
-        const parts = result.stdout.trim().split(/\s+/).map((n) => parseInt(n)).filter((n) =>
-          !isNaN(n)
-        );
+        const parts = result.stdout.trim().split(/\s+/).map((n) => parseInt(n))
+          .filter((n) => !isNaN(n));
 
         if (mode === "all") {
           return { lines: parts[0], words: parts[1], bytes: parts[2], file };
@@ -234,7 +250,11 @@ export const textTools: MiniTool[] = [
         const allLines = (input as string).split("\n");
         return { output: allLines.slice(0, lines as number).join("\n") };
       } else if (file) {
-        const result = await runCommand("head", ["-n", String(lines), file as string]);
+        const result = await runCommand("head", [
+          "-n",
+          String(lines),
+          file as string,
+        ]);
         return { output: result.stdout };
       } else {
         throw new Error("Either file or input required");
@@ -259,7 +279,11 @@ export const textTools: MiniTool[] = [
         const allLines = (input as string).split("\n");
         return { output: allLines.slice(-(lines as number)).join("\n") };
       } else if (file) {
-        const result = await runCommand("tail", ["-n", String(lines), file as string]);
+        const result = await runCommand("tail", [
+          "-n",
+          String(lines),
+          file as string,
+        ]);
         return { output: result.stdout };
       } else {
         throw new Error("Either file or input required");
@@ -319,7 +343,10 @@ export const textTools: MiniTool[] = [
         input: { type: "string", description: "Input text (should be sorted)" },
         file: { type: "string", description: "Or file path" },
         count: { type: "boolean", description: "Prefix lines with count" },
-        duplicatesOnly: { type: "boolean", description: "Only show duplicates" },
+        duplicatesOnly: {
+          type: "boolean",
+          description: "Only show duplicates",
+        },
       },
     },
     handler: async ({ input, file, count, duplicatesOnly }) => {
@@ -358,9 +385,18 @@ export const textTools: MiniTool[] = [
       properties: {
         input: { type: "string", description: "Input text" },
         file: { type: "string", description: "Or file path" },
-        delimiter: { type: "string", description: "Field delimiter (default: tab)" },
-        fields: { type: "string", description: "Fields to extract (e.g., '1,3' or '2-4')" },
-        characters: { type: "string", description: "Character positions (e.g., '1-10')" },
+        delimiter: {
+          type: "string",
+          description: "Field delimiter (default: tab)",
+        },
+        fields: {
+          type: "string",
+          description: "Fields to extract (e.g., '1,3' or '2-4')",
+        },
+        characters: {
+          type: "string",
+          description: "Character positions (e.g., '1-10')",
+        },
       },
     },
     handler: async ({ input, file, delimiter, fields, characters }) => {
@@ -400,8 +436,14 @@ export const textTools: MiniTool[] = [
       properties: {
         file1: { type: "string", description: "First file" },
         file2: { type: "string", description: "Second file" },
-        unified: { type: "boolean", description: "Unified format (default: true)" },
-        context: { type: "number", description: "Lines of context (default: 3)" },
+        unified: {
+          type: "boolean",
+          description: "Unified format (default: true)",
+        },
+        context: {
+          type: "number",
+          description: "Lines of context (default: 3)",
+        },
       },
       required: ["file1", "file2"],
     },
@@ -456,7 +498,8 @@ export const textTools: MiniTool[] = [
             isValid: false,
             matches: [],
             matchCount: 0,
-            explanation: `Invalid flag '${flag}'. Valid flags are: g (global), i (case-insensitive), m (multiline), s (dotAll), u (unicode).`,
+            explanation:
+              `Invalid flag '${flag}'. Valid flags are: g (global), i (case-insensitive), m (multiline), s (dotAll), u (unicode).`,
           };
         }
       }
@@ -480,7 +523,8 @@ export const textTools: MiniTool[] = [
       const matches: Array<{
         match: string;
         index: number;
-        groups: Record<string, string> | null;
+        groups: string[];
+        namedGroups: Record<string, string> | null;
       }> = [];
 
       if (flagsStr.includes("g")) {
@@ -489,7 +533,8 @@ export const textTools: MiniTool[] = [
           matches.push({
             match: match[0],
             index: match.index,
-            groups: match.groups ? { ...match.groups } : null,
+            groups: match.slice(1).map((group) => group ?? ""),
+            namedGroups: match.groups ? { ...match.groups } : null,
           });
           // Prevent infinite loop for zero-length matches
           if (match[0].length === 0) {
@@ -502,7 +547,8 @@ export const textTools: MiniTool[] = [
           matches.push({
             match: match[0],
             index: match.index,
-            groups: match.groups ? { ...match.groups } : null,
+            groups: match.slice(1).map((group) => group ?? ""),
+            namedGroups: match.groups ? { ...match.groups } : null,
           });
         }
       }
@@ -630,7 +676,8 @@ export const textTools: MiniTool[] = [
       properties: {
         version: {
           type: "string",
-          description: "Semantic version string (e.g., '1.2.3-beta.1+build.456')",
+          description:
+            "Semantic version string (e.g., '1.2.3-beta.1+build.456')",
         },
       },
       required: ["version"],
@@ -707,7 +754,11 @@ export const textTools: MiniTool[] = [
       },
     },
     handler: ({ text1, text2, context = 3 }) => {
-      return computeTextDiff(text1 as string, text2 as string, context as number);
+      return computeTextDiff(
+        text1 as string,
+        text2 as string,
+        context as number,
+      );
     },
   },
   {
@@ -722,7 +773,8 @@ export const textTools: MiniTool[] = [
         flavor: {
           type: "string",
           enum: ["gfm", "commonmark"],
-          description: "Markdown flavor: 'gfm' (GitHub Flavored) or 'commonmark' (default: 'gfm')",
+          description:
+            "Markdown flavor: 'gfm' (GitHub Flavored) or 'commonmark' (default: 'gfm')",
         },
       },
       required: ["content"],
@@ -741,7 +793,8 @@ export const textTools: MiniTool[] = [
       const codeBlocks = (md.match(/```[\s\S]*?```/g) || []).length;
       const links = (md.match(/\[([^\]]+)\]\([^)]+\)/g) || []).length;
       const images = (md.match(/!\[([^\]]*)\]\([^)]+\)/g) || []).length;
-      const lists = lines.filter((l) => /^(\s*[-*+]|\s*\d+\.)\s/.test(l)).length;
+      const lists =
+        lines.filter((l) => /^(\s*[-*+]|\s*\d+\.)\s/.test(l)).length;
 
       return {
         content: md,
@@ -832,7 +885,9 @@ function parseSemver(version: string): SemverParsed {
   // Parse core version (MAJOR.MINOR.PATCH)
   const coreParts = v.split(".");
   if (coreParts.length !== 3) {
-    return invalid(`Invalid version format: expected MAJOR.MINOR.PATCH, got '${v}'`);
+    return invalid(
+      `Invalid version format: expected MAJOR.MINOR.PATCH, got '${v}'`,
+    );
   }
 
   const [majorStr, minorStr, patchStr] = coreParts;
@@ -882,10 +937,14 @@ function parseSemver(version: string): SemverParsed {
       // Numeric identifiers must not have leading zeros
       if (/^\d+$/.test(part)) {
         if (part.length > 1 && part.startsWith("0")) {
-          return invalid(`Numeric prerelease identifier must not have leading zeros: '${part}'`);
+          return invalid(
+            `Numeric prerelease identifier must not have leading zeros: '${part}'`,
+          );
         }
       } else if (!/^[0-9A-Za-z-]+$/.test(part)) {
-        return invalid(`Invalid prerelease identifier: '${part}' (must be alphanumeric or hyphens)`);
+        return invalid(
+          `Invalid prerelease identifier: '${part}' (must be alphanumeric or hyphens)`,
+        );
       }
       prerelease.push(part);
     }
@@ -900,7 +959,9 @@ function parseSemver(version: string): SemverParsed {
         return invalid("Build metadata identifier cannot be empty");
       }
       if (!/^[0-9A-Za-z-]+$/.test(part)) {
-        return invalid(`Invalid build metadata identifier: '${part}' (must be alphanumeric or hyphens)`);
+        return invalid(
+          `Invalid build metadata identifier: '${part}' (must be alphanumeric or hyphens)`,
+        );
       }
       build.push(part);
     }
@@ -1144,8 +1205,9 @@ function computeLCSTable(lines1: string[], lines2: string[]): number[][] {
   const n = lines2.length;
 
   // Create a 2D table for LCS lengths
-  const table: number[][] = Array.from({ length: m + 1 }, () =>
-    Array(n + 1).fill(0)
+  const table: number[][] = Array.from(
+    { length: m + 1 },
+    () => Array(n + 1).fill(0),
   );
 
   // Fill the table using dynamic programming
@@ -1168,9 +1230,13 @@ function computeLCSTable(lines1: string[], lines2: string[]): number[][] {
 function backtrackDiff(
   lines1: string[],
   lines2: string[],
-  table: number[][]
-): Array<{ type: "equal" | "delete" | "insert"; line1?: number; line2?: number }>  {
-  const diff: Array<{ type: "equal" | "delete" | "insert"; line1?: number; line2?: number }> = [];
+  table: number[][],
+): Array<
+  { type: "equal" | "delete" | "insert"; line1?: number; line2?: number }
+> {
+  const diff: Array<
+    { type: "equal" | "delete" | "insert"; line1?: number; line2?: number }
+  > = [];
   let i = lines1.length;
   let j = lines2.length;
 
@@ -1198,7 +1264,11 @@ function backtrackDiff(
 /**
  * Compute text diff using LCS algorithm
  */
-function computeTextDiff(text1: string, text2: string, contextLines: number): TextDiffResult {
+function computeTextDiff(
+  text1: string,
+  text2: string,
+  contextLines: number,
+): TextDiffResult {
   // Split texts into lines
   const lines1 = text1.split("\n");
   const lines2 = text2.split("\n");
@@ -1360,13 +1430,14 @@ function computeTextDiff(text1: string, text2: string, contextLines: number): Te
 
     // Recalculate counts
     hunkCount1 = hunkLines.filter(
-      (l) => l.type === "context" || l.type === "deletion"
+      (l) => l.type === "context" || l.type === "deletion",
     ).length;
     hunkCount2 = hunkLines.filter(
-      (l) => l.type === "context" || l.type === "addition"
+      (l) => l.type === "context" || l.type === "addition",
     ).length;
 
-    const header = `@@ -${hunkStart1},${hunkCount1} +${hunkStart2},${hunkCount2} @@`;
+    const header =
+      `@@ -${hunkStart1},${hunkCount1} +${hunkStart2},${hunkCount2} @@`;
     hunks.push({ header, lines: hunkLines });
   }
 
@@ -1376,8 +1447,11 @@ function computeTextDiff(text1: string, text2: string, contextLines: number): Te
   for (const hunk of hunks) {
     unifiedParts.push(hunk.header);
     for (const line of hunk.lines) {
-      const prefix =
-        line.type === "context" ? " " : line.type === "addition" ? "+" : "-";
+      const prefix = line.type === "context"
+        ? " "
+        : line.type === "addition"
+        ? "+"
+        : "-";
       unifiedParts.push(prefix + line.content);
     }
   }
@@ -1921,7 +1995,9 @@ function codePointToUtf8Hex(codePoint: number): string {
     bytes.push(0x80 | ((codePoint >> 6) & 0x3F));
     bytes.push(0x80 | (codePoint & 0x3F));
   }
-  return bytes.map((b) => b.toString(16).toUpperCase().padStart(2, "0")).join(" ");
+  return bytes.map((b) => b.toString(16).toUpperCase().padStart(2, "0")).join(
+    " ",
+  );
 }
 
 /**
@@ -1958,26 +2034,52 @@ function generateRegexExplanation(pattern: string, flags: string): string {
   // Explain common pattern elements
   const patternParts: string[] = [];
 
-  if (pattern.startsWith("^")) patternParts.push("Starts at beginning of string/line");
+  if (pattern.startsWith("^")) {
+    patternParts.push("Starts at beginning of string/line");
+  }
   if (pattern.endsWith("$")) patternParts.push("Ends at end of string/line");
   if (pattern.includes("\\d")) patternParts.push("\\d matches any digit (0-9)");
-  if (pattern.includes("\\w")) patternParts.push("\\w matches word characters (a-z, A-Z, 0-9, _)");
+  if (pattern.includes("\\w")) {
+    patternParts.push("\\w matches word characters (a-z, A-Z, 0-9, _)");
+  }
   if (pattern.includes("\\s")) patternParts.push("\\s matches whitespace");
   if (pattern.includes("\\b")) patternParts.push("\\b matches word boundary");
-  if (pattern.includes(".")) patternParts.push(". matches any character (except newline)");
-  if (pattern.includes("*")) patternParts.push("* matches 0 or more of previous");
-  if (pattern.includes("+")) patternParts.push("+ matches 1 or more of previous");
-  if (pattern.includes("?")) patternParts.push("? matches 0 or 1 of previous (optional)");
+  if (pattern.includes(".")) {
+    patternParts.push(". matches any character (except newline)");
+  }
+  if (pattern.includes("*")) {
+    patternParts.push("* matches 0 or more of previous");
+  }
+  if (pattern.includes("+")) {
+    patternParts.push("+ matches 1 or more of previous");
+  }
+  if (pattern.includes("?")) {
+    patternParts.push("? matches 0 or 1 of previous (optional)");
+  }
   if (pattern.includes("|")) patternParts.push("| means OR (alternative)");
-  if (/\[.*\]/.test(pattern)) patternParts.push("[...] matches any character in set");
-  if (/\{[\d,]+\}/.test(pattern)) patternParts.push("{n,m} matches between n and m times");
-  if (/\(\?<\w+>/.test(pattern)) patternParts.push("(?<name>...) creates named capture group");
-  if (/\((?!\?)/.test(pattern)) patternParts.push("(...) creates capture group");
-  if (/\(\?:/.test(pattern)) patternParts.push("(?:...) creates non-capturing group");
+  if (/\[.*\]/.test(pattern)) {
+    patternParts.push("[...] matches any character in set");
+  }
+  if (/\{[\d,]+\}/.test(pattern)) {
+    patternParts.push("{n,m} matches between n and m times");
+  }
+  if (/\(\?<\w+>/.test(pattern)) {
+    patternParts.push("(?<name>...) creates named capture group");
+  }
+  if (/\((?!\?)/.test(pattern)) {
+    patternParts.push("(...) creates capture group");
+  }
+  if (/\(\?:/.test(pattern)) {
+    patternParts.push("(?:...) creates non-capturing group");
+  }
   if (/\(\?=/.test(pattern)) patternParts.push("(?=...) is positive lookahead");
   if (/\(\?!/.test(pattern)) patternParts.push("(?!...) is negative lookahead");
-  if (/\(\?<=/.test(pattern)) patternParts.push("(?<=...) is positive lookbehind");
-  if (/\(\?<!/.test(pattern)) patternParts.push("(?<!...) is negative lookbehind");
+  if (/\(\?<=/.test(pattern)) {
+    patternParts.push("(?<=...) is positive lookbehind");
+  }
+  if (/\(\?<!/.test(pattern)) {
+    patternParts.push("(?<!...) is negative lookbehind");
+  }
 
   if (patternParts.length > 0) {
     parts.push("Pattern elements: " + patternParts.join("; "));

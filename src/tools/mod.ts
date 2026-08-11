@@ -48,7 +48,11 @@ export { schemaTools } from "./schema.ts";
 export { diffTools } from "./diff.ts";
 
 // Agent tools (MCP Sampling)
-export { agentTools, createAgenticSamplingClient, setSamplingClient } from "./agent.ts";
+export {
+  agentTools,
+  createAgenticSamplingClient,
+  setSamplingClient,
+} from "./agent.ts";
 
 // Capability management moved to pml:discover and pml:admin
 // Types no longer exported - use pml gateway directly
@@ -222,9 +226,13 @@ export const toolsByCategory: Record<string, MiniTool[]> = {
   timezone: timezoneTools,
 };
 
-/** Get tools by category */
+/**
+ * Get tools by selectable pack name, falling back to the broader category
+ * carried by legacy tool descriptors (for example `system`).
+ */
 export function getToolsByCategory(category: string): MiniTool[] {
-  return toolsByCategory[category] || [];
+  return toolsByCategory[category] ||
+    allTools.filter((tool) => tool.category === category);
 }
 
 /** Get a specific tool by name */
@@ -234,5 +242,10 @@ export function getToolByName(name: string): MiniTool | undefined {
 
 /** Get all available categories */
 export function getCategories(): string[] {
-  return Object.keys(toolsByCategory);
+  return [
+    ...new Set([
+      ...Object.keys(toolsByCategory),
+      ...allTools.map((tool) => tool.category),
+    ]),
+  ];
 }

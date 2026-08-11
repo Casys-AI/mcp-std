@@ -14,18 +14,21 @@
  */
 
 import { render } from "preact";
-import { useState, useEffect } from "preact/hooks";
-import { App } from "@modelcontextprotocol/ext-apps";
+import { useEffect, useRef, useState } from "preact/hooks";
+import {
+  Badge as McpViewBadge,
+  Card,
+  StateMessage,
+} from "@casys/mcp-view/preact/components";
 import { Tooltip } from "../../components/ui/tooltip";
 import { cx, formatNumber } from "../../components/utils";
 import {
-  MetricsSkeleton,
-  StatusBadge,
-  typography,
-  containers,
   interactive,
+  MetricsSkeleton,
+  typography,
   valueTransition,
 } from "../../shared";
+import { type McpViewViewer, startMcpViewViewer } from "../../shared/mcp-view";
 import "../../global.css";
 
 // ============================================================================
@@ -57,28 +60,43 @@ interface PanelData {
 }
 
 // ============================================================================
-// MCP App Connection
-// ============================================================================
-
-const app = new App({ name: "Metrics Panel", version: "1.0.0" });
-let appConnected = false;
-
-function notifyModel(event: string, data: Record<string, unknown>) {
-  if (!appConnected) return;
-  app.updateModelContext({
-    content: [{ type: "text", text: `User ${event}: ${JSON.stringify(data)}` }],
-    structuredContent: { event, ...data },
-  });
-}
-
-// ============================================================================
 // Helpers
 // ============================================================================
 
-function getColor(value: number, thresholds?: { warning?: number; critical?: number }): string {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizePanelData(value: unknown): PanelData | null {
+  if (Array.isArray(value)) return { metrics: value as MetricData[] };
+  if (!isRecord(value)) return null;
+  if (Array.isArray(value.metrics)) return value as unknown as PanelData;
+
+  const entries = Object.entries(value).filter(
+    ([, item]) => typeof item === "number" || typeof item === "string",
+  );
+  if (entries.length === 0) return null;
+  return {
+    metrics: entries.map(([key, item]) => ({
+      id: key,
+      label: key.replace(/([A-Z])/g, " $1").replace(/[_-]/g, " ").trim(),
+      value: typeof item === "number" ? item : 0,
+      type: "stat",
+    })),
+  };
+}
+
+function getColor(
+  value: number,
+  thresholds?: { warning?: number; critical?: number },
+): string {
   if (!thresholds) return "#3b82f6";
-  if (thresholds.critical !== undefined && value >= thresholds.critical) return "#ef4444";
-  if (thresholds.warning !== undefined && value >= thresholds.warning) return "#eab308";
+  if (thresholds.critical !== undefined && value >= thresholds.critical) {
+    return "#ef4444";
+  }
+  if (thresholds.warning !== undefined && value >= thresholds.warning) {
+    return "#eab308";
+  }
   return "#22c55e";
 }
 
@@ -87,8 +105,12 @@ function getColor(value: number, thresholds?: { warning?: number; critical?: num
 // ============================================================================
 
 function GaugeMetric({ metric }: { metric: MetricData }) {
-  const { value, min = 0, max = 100, thresholds, label, unit, description } = metric;
-  const percentage = Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100));
+  const { value, min = 0, max = 100, thresholds, label, unit, description } =
+    metric;
+  const percentage = Math.min(
+    100,
+    Math.max(0, ((value - min) / (max - min)) * 100),
+  );
   const color = getColor(value, thresholds);
 
   const radius = 40;
@@ -99,7 +121,9 @@ function GaugeMetric({ metric }: { metric: MetricData }) {
     <div className="flex flex-col gap-0 items-center relative">
       <svg viewBox="0 0 100 100" className="w-20 h-20">
         <circle
-          cx="50" cy="50" r={radius}
+          cx="50"
+          cy="50"
+          r={radius}
           fill="none"
           stroke="var(--border-default, #e5e7eb)"
           strokeWidth="8"
@@ -108,7 +132,9 @@ function GaugeMetric({ metric }: { metric: MetricData }) {
           transform="rotate(135 50 50)"
         />
         <circle
-          cx="50" cy="50" r={radius}
+          cx="50"
+          cy="50"
+          r={radius}
           fill="none"
           stroke={color}
           strokeWidth="8"
@@ -128,13 +154,20 @@ function GaugeMetric({ metric }: { metric: MetricData }) {
     </div>
   );
 
-  return description ? (
-    <Tooltip content={description}>{gauge}</Tooltip>
-  ) : gauge;
+  return description ? <Tooltip content={description}>{gauge}</Tooltip> : gauge;
 }
 
 function SparklineMetric({ metric }: { metric: MetricData }) {
-  const { value, history = [], thresholds, label, unit, min, max, description } = metric;
+  const {
+    value,
+    history = [],
+    thresholds,
+    label,
+    unit,
+    min,
+    max,
+    description,
+  } = metric;
   const color = getColor(value, thresholds);
 
   const values = history.length ? history : [value];
@@ -148,31 +181,56 @@ function SparklineMetric({ metric }: { metric: MetricData }) {
 
   const points = values.map((v, i) => ({
     x: padding + (i / (values.length - 1 || 1)) * (width - padding * 2),
-    y: padding + (height - padding * 2) - ((v - dataMin) / range) * (height - padding * 2),
+    y: padding + (height - padding * 2) -
+      ((v - dataMin) / range) * (height - padding * 2),
   }));
 
-  const linePath = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
-  const areaPath = `${linePath} L ${points[points.length - 1].x} ${height - padding} L ${padding} ${height - padding} Z`;
+  const linePath = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`)
+    .join(" ");
+  const areaPath = `${linePath} L ${points[points.length - 1].x} ${
+    height - padding
+  } L ${padding} ${height - padding} Z`;
 
   const sparkline = (
     <div className="flex flex-col gap-1">
       <div className="flex justify-between items-baseline">
         <div className={typography.label}>{label}</div>
-        <div className={cx(typography.value, valueTransition)} style={{ color }}>
+        <div
+          className={cx(typography.value, valueTransition)}
+          style={{ color }}
+        >
           {formatNumber(value, unit)}
         </div>
       </div>
       <svg width={width} height={height} className="block w-full">
-        <path d={areaPath} fill={color} opacity={0.15} className={valueTransition} />
-        <path d={linePath} fill="none" stroke={color} strokeWidth={1.5} strokeLinecap="round" className={valueTransition} />
-        <circle cx={points[points.length - 1].x} cy={points[points.length - 1].y} r={3} fill={color} className={valueTransition} />
+        <path
+          d={areaPath}
+          fill={color}
+          opacity={0.15}
+          className={valueTransition}
+        />
+        <path
+          d={linePath}
+          fill="none"
+          stroke={color}
+          strokeWidth={1.5}
+          strokeLinecap="round"
+          className={valueTransition}
+        />
+        <circle
+          cx={points[points.length - 1].x}
+          cy={points[points.length - 1].y}
+          r={3}
+          fill={color}
+          className={valueTransition}
+        />
       </svg>
     </div>
   );
 
-  return description ? (
-    <Tooltip content={description}>{sparkline}</Tooltip>
-  ) : sparkline;
+  return description
+    ? <Tooltip content={description}>{sparkline}</Tooltip>
+    : sparkline;
 }
 
 function StatMetric({ metric }: { metric: MetricData }) {
@@ -182,20 +240,25 @@ function StatMetric({ metric }: { metric: MetricData }) {
   const stat = (
     <div className="flex flex-col gap-0 text-center">
       <div className={typography.label}>{label}</div>
-      <div className={cx(typography.value, valueTransition, "text-2xl my-1")} style={{ color }}>
+      <div
+        className={cx(typography.value, valueTransition, "text-2xl my-1")}
+        style={{ color }}
+      >
         {formatNumber(value, unit)}
       </div>
     </div>
   );
 
-  return description ? (
-    <Tooltip content={description}>{stat}</Tooltip>
-  ) : stat;
+  return description ? <Tooltip content={description}>{stat}</Tooltip> : stat;
 }
 
 function BarMetric({ metric }: { metric: MetricData }) {
-  const { value, min = 0, max = 100, thresholds, label, unit, description } = metric;
-  const percentage = Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100));
+  const { value, min = 0, max = 100, thresholds, label, unit, description } =
+    metric;
+  const percentage = Math.min(
+    100,
+    Math.max(0, ((value - min) / (max - min)) * 100),
+  );
   const color = getColor(value, thresholds);
 
   const bar = (
@@ -214,25 +277,32 @@ function BarMetric({ metric }: { metric: MetricData }) {
         {thresholds?.warning && (
           <div
             className="absolute top-0 bottom-0 w-0.5 bg-yellow-500"
-            style={{ left: `${((thresholds.warning - min) / (max - min)) * 100}%` }}
+            style={{
+              left: `${((thresholds.warning - min) / (max - min)) * 100}%`,
+            }}
           />
         )}
         {thresholds?.critical && (
           <div
             className="absolute top-0 bottom-0 w-0.5 bg-red-500"
-            style={{ left: `${((thresholds.critical - min) / (max - min)) * 100}%` }}
+            style={{
+              left: `${((thresholds.critical - min) / (max - min)) * 100}%`,
+            }}
           />
         )}
       </div>
     </div>
   );
 
-  return description ? (
-    <Tooltip content={description}>{bar}</Tooltip>
-  ) : bar;
+  return description ? <Tooltip content={description}>{bar}</Tooltip> : bar;
 }
 
-function MetricCard({ metric }: { metric: MetricData }) {
+function MetricCard(
+  { metric, onSelect }: {
+    metric: MetricData;
+    onSelect: (metric: MetricData) => void;
+  },
+) {
   const type = metric.type || (metric.history?.length ? "sparkline" : "stat");
 
   return (
@@ -240,13 +310,15 @@ function MetricCard({ metric }: { metric: MetricData }) {
       className={cx(
         "p-3 bg-bg-subtle rounded-lg border border-border-default cursor-pointer",
         interactive.cardHover,
-        interactive.focusRing
+        interactive.focusRing,
       )}
+      role="button"
       tabIndex={0}
-      onClick={() => notifyModel("selectMetric", { id: metric.id, metric })}
+      onClick={() => onSelect(metric)}
       onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          notifyModel("selectMetric", { id: metric.id, metric });
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(metric);
         }
       }}
     >
@@ -265,44 +337,25 @@ function MetricCard({ metric }: { metric: MetricData }) {
 function MetricsPanel() {
   const [data, setData] = useState<PanelData | null>(null);
   const [loading, setLoading] = useState(true);
+  const viewer = useRef<McpViewViewer | null>(null);
 
   useEffect(() => {
-    app.connect().then(() => {
-      appConnected = true;
-    }).catch(() => {});
+    viewer.current = startMcpViewViewer({
+      name: "Metrics Panel",
+      version: "1.0.0",
+      onToolResult(result) {
+        setLoading(false);
+        setData(normalizePanelData(result));
+      },
+      onTeardown() {
+        render(null, appRoot);
+      },
+    });
 
-    app.ontoolresult = (result: { content?: Array<{ type: string; text?: string }> }) => {
-      setLoading(false);
-      try {
-        const textContent = result.content?.find((c) => c.type === "text");
-        if (textContent?.text) {
-          const parsed = JSON.parse(textContent.text);
-          if (Array.isArray(parsed)) {
-            setData({ metrics: parsed });
-          } else if (parsed.metrics) {
-            setData(parsed);
-          } else {
-            // Flat object → convert each key/value into a metric
-            const entries = Object.entries(parsed).filter(
-              ([, v]) => typeof v === "number" || typeof v === "string"
-            );
-            if (entries.length > 0) {
-              setData({
-                metrics: entries.map(([key, val]) => ({
-                  id: key,
-                  label: key.replace(/([A-Z])/g, " $1").replace(/[_-]/g, " ").trim(),
-                  value: typeof val === "number" ? val : 0,
-                  type: "stat" as const,
-                })),
-              });
-            } else {
-              setData({ metrics: [{ id: "result", label: "Result", value: 0, type: "stat" }] });
-            }
-          }
-        }
-      } catch (e) {
-        console.error("Failed to parse metrics data", e);
-      }
+    return () => {
+      const activeViewer = viewer.current;
+      viewer.current = null;
+      void activeViewer?.dispose();
     };
   }, []);
 
@@ -312,43 +365,51 @@ function MetricsPanel() {
 
   if (!data?.metrics?.length) {
     return (
-      <div className={containers.root}>
-        <div className={containers.centered}>No metrics</div>
-      </div>
+      <StateMessage title="No metrics">
+        The tool returned no displayable metrics.
+      </StateMessage>
     );
   }
 
   const columns = data.columns || Math.min(4, Math.max(2, data.metrics.length));
 
   return (
-    <div className={containers.root}>
-      {/* Header */}
-      {(data.title || data.timestamp) && (
-        <div className="flex justify-between items-center mb-3 pb-2 border-b border-border-subtle">
-          {data.title && (
-            <div className={typography.sectionTitle}>{data.title}</div>
-          )}
-          <div className="flex gap-3 items-center">
+    <Card
+      title={data.title}
+      actions={data.refreshInterval || data.timestamp
+        ? (
+          <>
             {data.refreshInterval && (
-              <StatusBadge status="neutral">\u21BB {data.refreshInterval}s</StatusBadge>
+              <McpViewBadge tone="neutral">
+                ↻ {data.refreshInterval}s
+              </McpViewBadge>
             )}
             {data.timestamp && (
-              <div className={typography.muted}>{data.timestamp}</div>
+              <McpViewBadge tone="neutral">{data.timestamp}</McpViewBadge>
             )}
-          </div>
-        </div>
-      )}
-
+          </>
+        )
+        : undefined}
+    >
       {/* Metrics Grid */}
       <div
         className="grid gap-3"
         style={{ gridTemplateColumns: `repeat(${columns}, 1fr)` }}
       >
         {data.metrics.map((metric) => (
-          <MetricCard key={metric.id} metric={metric} />
+          <MetricCard
+            key={metric.id}
+            metric={metric}
+            onSelect={(selectedMetric) => {
+              viewer.current?.updateModelContext("selectMetric", {
+                id: selectedMetric.id,
+                metric: selectedMetric,
+              });
+            }}
+          />
         ))}
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -356,4 +417,5 @@ function MetricsPanel() {
 // Mount
 // ============================================================================
 
-render(<MetricsPanel />, document.getElementById("app")!);
+const appRoot = document.getElementById("app")!;
+render(<MetricsPanel />, appRoot);

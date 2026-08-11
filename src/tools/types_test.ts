@@ -5,7 +5,7 @@
  */
 
 import { assertEquals } from "@std/assert";
-import { defineTool, type MiniTool, type MCPToolMeta } from "./types.ts";
+import { defineTool, type MCPToolMeta, type MiniTool } from "./types.ts";
 
 Deno.test("defineTool - creates tool without _meta", () => {
   const tool = defineTool(
@@ -13,7 +13,7 @@ Deno.test("defineTool - creates tool without _meta", () => {
     "Test description",
     "util",
     { type: "object", properties: {} },
-    () => "result"
+    () => "result",
   );
 
   assertEquals(tool.name, "test_tool");
@@ -37,7 +37,7 @@ Deno.test("defineTool - creates tool with _meta.ui", () => {
     "database",
     { type: "object", properties: {} },
     () => "result",
-    meta
+    meta,
   );
 
   assertEquals(tool.name, "test_tool_ui");

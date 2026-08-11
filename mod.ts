@@ -8,16 +8,16 @@
 
 // Re-export client and tools
 export {
-  // Client
-  defaultClient,
-  MiniToolsClient,
-  MiniToolsMCP,
-  miniToolsMCP,
   // Tools
   allTools,
+  // Client
+  defaultClient,
   getCategories,
   getToolByName,
   getToolsByCategory,
+  MiniToolsClient,
+  MiniToolsMCP,
+  miniToolsMCP,
   toolsByCategory,
 } from "./src/client.ts";
 
@@ -25,6 +25,9 @@ export {
 export type {
   MCPClientBase,
   MCPTool,
+  MCPToolMeta,
+  MCPToolWireFormat,
+  McpUiToolMeta,
   MiniToolsClientOptions,
 } from "./src/client.ts";
 
@@ -38,56 +41,62 @@ export type {
 
 // Re-export individual tool arrays for direct access
 export {
-  // System tools
-  archiveTools,
-  cloudTools,
-  databaseTools,
-  dockerTools,
-  gitTools,
-  kubernetesTools,
-  mediaTools,
-  networkTools,
-  packagesTools,
-  pgliteTools,
-  closePgliteConnection,
-  processTools,
-  sshTools,
-  sysinfoTools,
-  textTools,
+  // Agent tools
+  agentTools,
   // Data tools
   algoTools,
+  // System tools
+  archiveTools,
+  closePgliteConnection,
+  cloudTools,
   collectionsTools,
-  cryptoTools,
-  datetimeTools,
-  formatTools,
-  httpTools,
-  jsonTools,
-  mathTools,
-  transformTools,
-  validationTools,
-  vfsTools,
   // New tools
   colorTools,
   compareTools,
-  dataTools,
-  diffTools,
-  fakerTools,
-  geoTools,
-  pathTools,
-  qrcodeTools,
-  resilienceTools,
-  schemaTools,
-  stateTools,
-  stringTools,
-  utilTools,
-  // Agent tools
-  agentTools,
   createAgenticSamplingClient,
-  setSamplingClient,
+  cryptoTools,
+  databaseTools,
+  dataTools,
+  datetimeTools,
+  devtoolsTools,
+  diffTools,
+  dockerTools,
+  encodingTools,
+  fakerTools,
+  formatTools,
+  geoTools,
+  gitTools,
+  httpTools,
+  iptoolsTools,
+  jsonTools,
+  kubernetesTools,
+  mathTools,
+  mediaTools,
+  networkTools,
+  packagesTools,
+  pathTools,
+  pgliteTools,
+  processTools,
   // Python tools
   pythonTools,
+  qrcodeTools,
+  resilienceTools,
   // Common utilities
   runCommand,
+  schemaTools,
+  securityTools,
+  setSamplingClient,
+  sshTools,
+  stateTools,
+  stringTools,
+  sysinfoTools,
+  textanalysisTools,
+  textTools,
+  timezoneTools,
+  transformTools,
+  utilTools,
+  validationTools,
+  vfsTools,
 } from "./src/tools/mod.ts";
 
 /** Alias for backward compatibility */
